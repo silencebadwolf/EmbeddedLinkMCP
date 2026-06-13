@@ -99,21 +99,52 @@ export interface SerialPortInfo {
   locationId?: string;
 }
 
-/** SSH 会话配置（敏感字段如密码/私钥单独传递，不持久化于此）。 */
+/**
+ * SSH 会话配置。
+ *
+ * **敏感字段（密码、私钥、密码短语）严禁出现在此结构中**——通过 `SshSessionOptions.credentials`
+ * 单独传递，仅在 `transport.open()` 调用瞬间持有，不入字段、不入 transcript（req §4.4 / §5.1）。
+ */
 export interface SshSessionConfig extends SessionConfig {
   type: 'ssh';
   host: string;
   port: number;
   username: string;
+  /** keep-alive 心跳间隔（毫秒）；0 或缺省 = 关闭。 */
+  keepaliveIntervalMs?: number;
+  /** ssh2 ready 握手超时（毫秒），缺省使用 DEFAULT_SSH_READY_TIMEOUT_MS。 */
+  readyTimeoutMs?: number;
+  /** 远端 PTY 的 TERM 类型，缺省使用 DEFAULT_TERM_TYPE。 */
+  term?: string;
+  /** 初始终端高度（行），缺省使用 DEFAULT_PTY_ROWS。 */
+  rows?: number;
+  /** 初始终端宽度（列），缺省使用 DEFAULT_PTY_COLS。 */
+  cols?: number;
 }
 
-/** 本地 Shell（PTY）会话配置。 */
+/**
+ * 本地 Shell（PTY）会话配置。
+ *
+ * 默认值：Unix 上 shell 解析为 `process.env.SHELL ?? '/bin/bash'`；
+ * Windows 上为 `process.env.COMSPEC ?? 'cmd.exe'`。
+ * env 缺省时**继承**完整 `process.env`；显式提供时**整体替换**（避免泄漏意外变量）。
+ */
 export interface LocalShellSessionConfig extends SessionConfig {
   type: 'local-shell';
-  /** Shell 可执行文件，默认值由 transport 决定（Unix=$SHELL，Windows=cmd.exe）。 */
+  /** Shell 可执行；缺省由 transport 按平台解析。 */
   shell?: string;
-  /** 工作目录；省略时使用 spawn 时的当前目录。 */
+  /** Shell 启动参数；缺省 []。 */
+  args?: readonly string[];
+  /** 工作目录；缺省 `process.cwd()`。 */
   cwd?: string;
+  /** 自定义环境变量；缺省继承 `process.env`，提供时整体替换。 */
+  env?: Readonly<Record<string, string>>;
+  /** PTY TERM 类型，缺省使用 DEFAULT_TERM_TYPE。 */
+  term?: string;
+  /** 初始终端高度（行），缺省使用 DEFAULT_PTY_ROWS。 */
+  rows?: number;
+  /** 初始终端宽度（列），缺省使用 DEFAULT_PTY_COLS。 */
+  cols?: number;
 }
 
 /** 三种会话配置的判别联合，IPC/MCP 接口使用此类型作为入参。 */

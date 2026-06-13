@@ -13,7 +13,7 @@ LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形
 | Phase 0: 项目脚手架 | ✅ 已完成 | 2026-06-13 |
 | Phase 1: 核心会话+Transcript+WriteQueue | ✅ 已完成 | 2026-06-13 |
 | Phase 2: 串口适配器 | ✅ 已完成 | 2026-06-13 |
-| Phase 3: SSH+本地 Shell | ⬜ 未开始 | — |
+| Phase 3: SSH+本地 Shell | ✅ 完成 | 2026-06-13 |
 | Phase 4: MCP 终端工具 | ⬜ 未开始 | — |
 | Phase 5: AI-人共同操作 | ⬜ 未开始 | — |
 | Phase 6: Electron UI | ⬜ 未开始 | — |
@@ -541,7 +541,7 @@ link-terminal-demo/
 
 ---
 
-## Phase 3: SSH + 本地 Shell 适配器 ⬜ 未开始
+## Phase 3: SSH + 本地 Shell 适配器 ✅ 完成（2026-06-13）
 
 **目标**：完成所有三种会话类型，共享同一会话契约。
 
@@ -549,30 +549,52 @@ link-terminal-demo/
 
 | 文件/模块 | 用途 |
 |---|---|
-| `src/transports/ssh/ssh-transport.ts` | SSH transport |
-| `src/transports/ssh/ssh-session.ts` | SSH session |
-| `src/transports/local-shell/local-shell-transport.ts` | 本地 Shell transport (node-pty) |
-| `src/transports/local-shell/local-shell-session.ts` | 本地 Shell session |
-| `tests/unit/transports/session-contract.test.ts` | 参数化契约测试 |
-| `tests/fixtures/mock-ssh2.ts`, `mock-pty.ts` | Mock |
+| `src/transports/ssh/ssh-client-like.ts` | ssh2 Client/Channel 最小接口 + `defaultSshClientFactory`（`createRequire` 懒加载） |
+| `src/transports/ssh/ssh-transport.ts` | SSH transport（connect→ready→shell 三段、host verifier 必填、凭据 open() 内即时清空） |
+| `src/transports/ssh/ssh-session.ts` | SSH session（暴露 `resize` 转 `setWindow`） |
+| `src/transports/ssh/index.ts` | barrel |
+| `src/transports/local-shell/pty-like.ts` | node-pty 最小接口 + `defaultPtyFactory`（`createRequire` 懒加载） |
+| `src/transports/local-shell/local-shell-transport.ts` | 本地 Shell transport（PTY spawn、UTF-8 数据双向、kill+dispose 监听） |
+| `src/transports/local-shell/local-shell-session.ts` | 本地 Shell session（`resize` 转 `pty.resize`，PTY 退出写 transcript state 事件） |
+| `src/transports/local-shell/index.ts` | barrel |
+| `src/shared/types.ts` | `SshSessionConfig` / `LocalShellSessionConfig` 增 keepalive/readyTimeout/term/rows/cols/args/cwd/env |
+| `src/shared/constants.ts` | 5 个 SSH/PTY 默认常量 |
+| `src/core/session/types.ts` | `ISession.resize?(cols, rows): Promise<void>` 可选成员 |
+| `src/core/session/session-base.ts` | `protected recordSystemEvent` 钩子（PTY 退出/SSH 系统事件复用 #appendAndEmit） |
+| `tests/fixtures/mock-pty.ts`, `mock-ssh.ts` | 进程内 mock，进程隔离地驱动 onData/onExit/`'ready'`/`'close'` 等事件 |
+| `tests/unit/transports/local-shell-transport.test.ts` | 13 用例 |
+| `tests/unit/transports/local-shell-session.test.ts` | 4 用例 |
+| `tests/unit/transports/ssh-transport.test.ts` | 17 用例 |
+| `tests/unit/transports/ssh-session.test.ts` | 5 用例 |
 
 ### 关键架构决策
 
-1. **会话契约测试** — 单一参数化测试套件验证三种 session 都满足 ISession 契约
-2. **SSH 配置排除敏感数据** — 不持久化密码/私钥；TranscriptBuffer 从不记录凭证
-3. **本地 Shell 用 node-pty** — 提供完整 PTY 模拟（含 resize 信号）
+1. **复用 Phase 2 模式而非引入新抽象**（Plan C "Pragmatic Balance"）— `ITransport` 已经覆盖 SSH/PTY 与串口的共同点；评估过的 `IProcessTransport`/`ProcessSessionBase` 仅能去掉约 10 行重复，引入两个新抽象不划算（CLAUDE.md "3 行重复 > 过早抽象"）。仅在 `SessionBase` 加一个 `protected recordSystemEvent` 让子类记录非字节流的系统事件（PTY 退出码/信号），ISession 加可选 `resize?` 让需要 PTY 窗口同步的子类暴露能力。
+2. **凭据生命周期最小化** — `SshSessionOptions.credentials` 单独入参；`SshTransport` 在 `open()` 内首个 `await` 之前把字段引用置空，凭据仅在本函数局部变量中存活；从不进入 transcript（按 §4.4 / §5.1）。
+3. **hostVerifier 必填，无 acceptAll 默认** — TOFU/known_hosts 推迟到 Phase 8 实现；当前由上层（IPC handler）弹 UI 决策，自动化测试注入 `() => true/false`。
+4. **PTY 非 0 退出 ≠ errored**（决策 F5）— `LocalShellSession` 把 `transport.exit` 翻译成 `state` 类型 transcript 事件，`meta:{kind:'pty-exit', exitCode, signal}`，会话仍走正常 `closed` 状态机；非 0 是合法业务结果（编译错误、grep 未命中等），不应升级为致命错误。
+5. **默认工厂用 `createRequire(import.meta.url)` 懒加载原生模块** — `ssh2` / `node-pty` 在测试运行时不会被 import，`pnpm test` 在未编译原生 binding 的环境（CI、纯 Node 18+）也能跑过 Vitest。Electron 进程在生产路径下加载真实模块；`@electron/rebuild` 集成推迟到 Phase 6。
+6. **Default shell 解析规则** — Unix 上 `process.env.SHELL ?? '/bin/bash'`，Windows 上 `process.env.COMSPEC ?? 'cmd.exe'`；`env` 缺省时**继承** `process.env`（仅 string 值），显式提供时**整体替换**，防止"补丁式 env"意外泄漏外部变量。
 
-### 测试交付
+### 测试交付（实际，新增 39 用例）
 
-- `ssh-transport.test.ts` — 连接/数据流/断连
-- `local-shell-transport.test.ts` — spawn/数据/resize/退出
-- `session-contract.test.ts` — 三种类型参数化：create/write/read/waitFor/clear/resize/status/close
+- `local-shell-transport.test.ts` — defaults/passthrough、env 继承 vs 替换、spawn 失败回收、open 幂等、write/data/resize、PTY 退出（含 signal）、close 幂等且 emit 唯一、close 后 data 丢弃、close 前 open、close 后不能 re-open
+- `local-shell-session.test.ts` — SessionBase 集成（write 审计 + device 入站）、PTY 退出 transcript state 事件结构、零退出码不进 errored、resize 在 open 前后行为
+- `ssh-transport.test.ts` — defaults/passthrough、私钥+passphrase、hostVerifier 拒绝、connect/shell 失败、凭据释放、open 幂等、write 路径、data 转发、client error 透传、channel close 唯一 emit 且主动 end client、channel 'error' 转发（避免 uncaughtException）、ready→shell 窗口期 client error/close 处理、close 幂等、resize、close 前 open
+- `ssh-session.test.ts` — SessionBase 集成、host key 拒绝→errored、auth 失败 transcript 不含密码、resize、channel close 推到 closed
 
-### 新增依赖：`ssh2`, `node-pty`
+### 实施期间的需求/决策变更
+
+| 时间 | 变更 | 原因 |
+|---|---|---|
+| 2026-06-13 | 把交付物清单中的 `tests/unit/transports/session-contract.test.ts`（参数化契约测试）从本期范围中移除 | 现有 serial/local-shell/ssh 三套 session 测试已覆盖 ISession 契约的关键点（生命周期、写入审计、入站事件、状态机），且各自针对不同 transport 的失败模式设了专属断言；额外引入参数化框架会与 transport-specific 断言耦合不清。Phase 5 在引入并发 cursor / waitFor 协调时可统一抽参数化测试。 |
+| 2026-06-13 | `ITransport` 不强制 `resize` 成员，`ISession.resize?` 设为可选 | 串口没有窗口尺寸概念，强加方法会引出 `// no-op` 假实现。可选成员配合 `typeof session.resize === 'function'` 检测既保持类型清晰，也让 SerialSession 不必假装实现该方法。 |
+| 2026-06-13 | SSH 默认 `keepaliveInterval=0`（关闭）而非常见的 30s | LinkTerm v2 的 IPC 层未来会在 UI 上暴露此选项；默认关闭可以避免 keepalive 干扰嵌入式 SSH 设备的功耗管理（电池供电的 IoT 网关常因 keepalive 反复唤醒）。 |
+| 2026-06-13 | Phase 6 review 一致指出 `SshTransport.close()` 永不 emit `'close'`、`channel close` 不 end client、ready→shell 期间无 error 监听、`close()` 后 PTY 数据继续灌入 transcript 等 4 个真生产 bug；全部修复 | 详见各文件中 "review 发现 #N" 注释。同步给 `mock-ssh.ts` 加 `silentEnd` / `shellHang` 行为开关，防止 mock 自动 emit 'close' 掩盖真实 bug；测试改成断言确切 `closes === 1`，去掉之前 `void closes;` 的妥协。 |
 
 ### 依赖阶段：Phase 1, Phase 2
 
-### 相对工作量：1.5x
+### 相对工作量：1.5x（实际接近预估）
 
 ---
 

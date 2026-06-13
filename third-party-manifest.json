@@ -37,6 +37,18 @@
       "version": "^13.0.0",
       "license": "MIT",
       "licenseFile": "licenses/serialport.LICENSE"
+    },
+    {
+      "name": "ssh2",
+      "version": "^1.16.0",
+      "license": "MIT",
+      "licenseFile": "licenses/ssh2.LICENSE"
+    },
+    {
+      "name": "node-pty",
+      "version": "^1.0.0",
+      "license": "MIT",
+      "licenseFile": "licenses/node-pty.LICENSE"
     }
   ]
 }

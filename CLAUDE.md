@@ -8,7 +8,7 @@ LinkTerm v2 is an Electron/TypeScript rewrite of a legacy Qt/C++ terminal, inten
 
 Authoritative specs live in `PROJECT_REQUIREMENTS.md` (requirements) and `DEVELOPMENT_PLAN.md` (13-phase plan with current status). **Always check `DEVELOPMENT_PLAN.md` before starting work** — it tracks which phases are completed (✅), in progress, or not started (⬜), and records every decision/variance from the original plan.
 
-Current state: **Phases 0–2 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC). Phases 3–12 not yet started. 72 Vitest tests cover `src/core/` and `src/transports/serial/`; the renderer is still a placeholder with no IPC bridge or terminal UI yet.
+Current state: **Phases 0–3 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters). Phases 4–12 not yet started. 114 Vitest tests cover `src/core/` and `src/transports/{serial,ssh,local-shell}/`; the renderer is still a placeholder with no IPC bridge or terminal UI yet.
 
 ## Common commands
 
@@ -60,7 +60,17 @@ shared/      Cross-process types and IPC channel names
 
 ### Transport adapters use factory-based dependency injection
 
-Every `ITransport` adapter (`SerialTransport`, future `SshTransport`, `LocalShellTransport`) takes its underlying native client through an optional factory parameter — see `SerialPortFactory` in `src/transports/serial/serial-port-like.ts` and how `SerialTransport` accepts `portFactory` in its constructor. Production code falls through to the real default factory; tests inject a fake (`tests/fixtures/mock-serialport.ts`) and drive events synchronously. **Do not import `serialport`/`ssh2`/`node-pty` directly inside session or core code** — only the adapter's `*-port-like.ts` interface and default factory may touch the native module. This is what keeps `src/core/` and the unit-test suite hardware-free.
+Every `ITransport` adapter (`SerialTransport`, `SshTransport`, `LocalShellTransport`) takes its underlying native client through an optional factory parameter — see `SerialPortFactory` in `src/transports/serial/serial-port-like.ts`, `SshClientFactory` in `src/transports/ssh/ssh-client-like.ts`, `PtyFactory` in `src/transports/local-shell/pty-like.ts`. Production code falls through to the real default factory; tests inject a fake (`tests/fixtures/mock-{serialport,ssh,pty}.ts`) and drive events synchronously. **Do not import `serialport`/`ssh2`/`node-pty` directly inside session or core code** — only the adapter's `*-{port,client}-like.ts` interface and default factory may touch the native module. Default factories use `createRequire(import.meta.url)` to load native modules lazily, so the unit-test suite runs without the native bindings being present.
+
+### Transport invariants (learned from Phase 3 review)
+
+- **Each adapter MUST emit `'close'` exactly once** — main-process consumers (SessionBase, IPC bridge) hang forever if it never fires. When `close()` is called, do NOT set the "closed" flag synchronously and let the underlying-library `'close'` event short-circuit itself away. Use a separate `#closeEmitted` flag, or schedule the emit via `queueMicrotask` so SessionBase has a tick to settle state first.
+- **All Duplex-like channels (ssh2 `ClientChannel`, pty data) need `'error'` listeners** — otherwise Node escalates them to `uncaughtException`.
+- **`close()` must dispose data listeners synchronously** — between SIGHUP and actual exit, a child PTY (or remote shell) keeps producing bytes; if the listener is still attached they leak into the transcript after `state==='closed'`. See `LocalShellTransport.#disposeListeners`.
+- **SSH credentials are field-only at construction**, then nulled inside `open()` before any `await`. Never put them on the config object, never let them reach `TranscriptBuffer` (req §4.4 / §5.1). `hostVerifier` is REQUIRED — there is no acceptAll default; TOFU/known_hosts is Phase 8 work.
+- **PTY non-zero exit ≠ errored** — `LocalShellSession` records exit as a `state` transcript event with `meta:{kind:'pty-exit', exitCode, signal}` and lets the session reach `closed` normally. Non-zero is a legitimate business outcome (compile errors, grep miss).
+- `SessionBase` exposes `protected recordSystemEvent(input)` for subclasses to push system-origin transcript events without exposing the private `#appendAndEmit`. Use this for PTY exit / future SSH banner-style events; do NOT bypass it by emitting on the EventEmitter directly.
+- `ISession.resize?(cols, rows)` is **optional** — serial sessions don't have a window concept. Callers must check `typeof session.resize === 'function'` before invoking.
 
 ### MCP tool surfaces are isolated
 

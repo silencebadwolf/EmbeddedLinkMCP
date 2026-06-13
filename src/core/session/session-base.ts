@@ -7,6 +7,7 @@ import type {
   ReadResult,
   SequenceCursor,
   TranscriptEvent,
+  TranscriptEventInput,
 } from '../transcript/types.js';
 import { WriteQueue } from '../write-queue/write-queue.js';
 import type { WriteAuditCallback } from '../write-queue/types.js';
@@ -220,7 +221,17 @@ export abstract class SessionBase extends EventEmitter implements ISession {
     });
   }
 
-  #appendAndEmit(input: Parameters<ITranscriptBuffer['append']>[0]): TranscriptEvent {
+  /**
+   * 子类专用：把一条 system 来源的事件追加到 transcript 并 emit 给订阅者。
+   *
+   * 用于 PTY 子进程退出、SSH banner 等"非字节流但需要审计可见"的事件。
+   * 直接复用 #appendAndEmit 通道，保证事件顺序与状态变更穿插一致。
+   */
+  protected recordSystemEvent(input: TranscriptEventInput): TranscriptEvent {
+    return this.#appendAndEmit(input);
+  }
+
+  #appendAndEmit(input: TranscriptEventInput): TranscriptEvent {
     const event = this.#transcript.append(input);
     this.emit('event', event);
     return event;

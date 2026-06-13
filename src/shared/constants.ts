@@ -46,3 +46,21 @@ export const SERIAL_DISCOVERY_POLL_INTERVAL_MS = 2000;
 
 /** SSH 默认监听端口。 */
 export const DEFAULT_SSH_PORT = 22;
+
+/** SSH ready 握手超时默认值（毫秒）。 */
+export const DEFAULT_SSH_READY_TIMEOUT_MS = 30_000;
+
+/**
+ * SSH keepalive 默认间隔（毫秒）。
+ * 0 = 关闭。ssh2 在此为 0 时不发送心跳；用户可在 SshSessionConfig 中覆盖。
+ */
+export const DEFAULT_SSH_KEEPALIVE_INTERVAL_MS = 0;
+
+/** SSH/PTY 默认 TERM 类型。xterm-256color 与 xterm.js 渲染器配套良好。 */
+export const DEFAULT_TERM_TYPE = 'xterm-256color';
+
+/** PTY/SSH shell 默认窗口高（行）。 */
+export const DEFAULT_PTY_ROWS = 24;
+
+/** PTY/SSH shell 默认窗口宽（列）。 */
+export const DEFAULT_PTY_COLS = 80;

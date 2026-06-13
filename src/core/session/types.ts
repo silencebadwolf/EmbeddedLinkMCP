@@ -34,6 +34,14 @@ export interface ISession {
   /** 在 transcript 中追加一条 clear 事件（不删除历史）。 */
   clear(origin: Origin): TranscriptEvent;
 
+  /**
+   * 调整远端/本地 PTY 终端窗口尺寸。
+   *
+   * 仅 SSH / 本地 Shell 等持有 PTY 的会话需要实现；串口会话不持有窗口概念，可省略此方法或在内部当作 no-op。
+   * 调用方（IPC handler）应允许此方法不存在，按 `typeof session.resize === 'function'` 判断。
+   */
+  resize?(cols: number, rows: number): Promise<void>;
+
   /** 注册事件订阅。SessionBase 继承自 EventEmitter，提供 off/once 等标准 API。 */
   on(event: 'event', listener: (event: TranscriptEvent) => void): this;
   on(event: 'state', listener: (state: SessionState) => void): this;
