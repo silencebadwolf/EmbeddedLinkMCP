@@ -8,7 +8,7 @@ LinkTerm v2 is an Electron/TypeScript rewrite of a legacy Qt/C++ terminal, inten
 
 Authoritative specs live in `PROJECT_REQUIREMENTS.md` (requirements) and `DEVELOPMENT_PLAN.md` (13-phase plan with current status). **Always check `DEVELOPMENT_PLAN.md` before starting work** — it tracks which phases are completed (✅), in progress, or not started (⬜), and records every decision/variance from the original plan.
 
-Current state: **Phase 0 (scaffolding) and Phase 1 (core session/transcript/write-queue) complete**. Phases 2–12 not yet started. The pure-logic core in `src/core/` is fully unit-tested (46 tests via Vitest); the renderer is still a placeholder with no IPC bridge or terminal UI yet.
+Current state: **Phases 0–2 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC). Phases 3–12 not yet started. 72 Vitest tests cover `src/core/` and `src/transports/serial/`; the renderer is still a placeholder with no IPC bridge or terminal UI yet.
 
 ## Common commands
 
@@ -57,6 +57,10 @@ shared/      Cross-process types and IPC channel names
 ```
 
 `src/core/` MUST stay free of Electron imports — it's pure TypeScript using `EventEmitter` and the `ITransport` interface, so it can be unit-tested without launching Electron, hardware, SSH servers, or J-Link devices (req §5.2).
+
+### Transport adapters use factory-based dependency injection
+
+Every `ITransport` adapter (`SerialTransport`, future `SshTransport`, `LocalShellTransport`) takes its underlying native client through an optional factory parameter — see `SerialPortFactory` in `src/transports/serial/serial-port-like.ts` and how `SerialTransport` accepts `portFactory` in its constructor. Production code falls through to the real default factory; tests inject a fake (`tests/fixtures/mock-serialport.ts`) and drive events synchronously. **Do not import `serialport`/`ssh2`/`node-pty` directly inside session or core code** — only the adapter's `*-port-like.ts` interface and default factory may touch the native module. This is what keeps `src/core/` and the unit-test suite hardware-free.
 
 ### MCP tool surfaces are isolated
 
