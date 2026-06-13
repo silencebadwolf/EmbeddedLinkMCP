@@ -1,8 +1,16 @@
 /**
  * Electron 主进程入口。
  *
- * 仅负责 BrowserWindow 生命周期；具体业务（IPC handler 注册、SessionManager、MCP server 启动）
- * 在 Phase 5 引入并由本文件协调。
+ * 负责 BrowserWindow 生命周期 + IPC/MCP server 初始化与释放。
+ *
+ * 启动顺序：
+ * 1. app.whenReady → registerIpcHandlers（创建 SessionManager；按 LINKTERM_MCP_STDIO 决定是否拉 MCP）
+ * 2. createMainWindow（渲染端可立即通过 IPC 操作同一 SessionManager）
+ *
+ * 退出顺序（will-quit）：先 stop MCP，再 destroyAll session，最后释放 SerialDiscovery。
+ *
+ * 注意：MCP stdio 默认**不**自动启动 —— 桌面应用占用 stdout 会破坏 console.log
+ * 与 Node 警告输出，进而污染 MCP JSON-RPC 帧。需要启用时设置 `LINKTERM_MCP_STDIO=1`。
  */
 import { app, BrowserWindow } from 'electron';
 import { createMainWindow, handleWindowClose } from './app-lifecycle.js';
@@ -11,8 +19,8 @@ import { registerIpcHandlers, type MainProcessContext } from './ipc/index.js';
 let mainWindow: BrowserWindow | null = null;
 let context: MainProcessContext | null = null;
 
-app.whenReady().then(() => {
-  context = registerIpcHandlers();
+app.whenReady().then(async () => {
+  context = await registerIpcHandlers();
   mainWindow = createMainWindow();
 
   mainWindow.on('closed', () => {
@@ -29,9 +37,16 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('will-quit', () => {
-  context?.dispose();
+app.on('will-quit', (event) => {
+  if (!context) return;
+  // dispose 是异步：阻塞 quit 等待 MCP server / 所有 session 干净关闭
+  event.preventDefault();
+  const ctx = context;
   context = null;
+  ctx
+    .dispose()
+    .catch(() => undefined)
+    .finally(() => app.quit());
 });
 
 app.on('activate', () => {

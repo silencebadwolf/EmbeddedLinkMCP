@@ -250,4 +250,40 @@ describe('SessionManager', () => {
     expect(s1.state).toBe('closed');
     expect(s2.state).toBe('closed');
   });
+
+  it('createAndOpen() emits session:created only after open succeeds', async () => {
+    const mgr = new SessionManager();
+    const transport = new MockTransport();
+    const created = vi.fn();
+    const destroyed = vi.fn();
+    mgr.on('session:created', created);
+    mgr.on('session:destroyed', destroyed);
+
+    const session = await mgr.createAndOpen((id) => new TestSession(id, transport));
+    expect(session.state).toBe('open');
+    expect(created).toHaveBeenCalledWith(session.id);
+    expect(destroyed).not.toHaveBeenCalled();
+  });
+
+  it('createAndOpen() rolls back without emitting any session:* event when open throws', async () => {
+    const mgr = new SessionManager();
+    const created = vi.fn();
+    const destroyed = vi.fn();
+    mgr.on('session:created', created);
+    mgr.on('session:destroyed', destroyed);
+
+    class FailingSession extends TestSession {
+      override async open(): Promise<void> {
+        throw new Error('boom');
+      }
+    }
+
+    await expect(
+      mgr.createAndOpen((id) => new FailingSession(id, new MockTransport())),
+    ).rejects.toThrow(/boom/);
+
+    expect(mgr.list()).toEqual([]);
+    expect(created).not.toHaveBeenCalled();
+    expect(destroyed).not.toHaveBeenCalled();
+  });
 });

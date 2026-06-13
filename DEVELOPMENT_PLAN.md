@@ -14,7 +14,7 @@ LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形
 | Phase 1: 核心会话+Transcript+WriteQueue | ✅ 已完成 | 2026-06-13 |
 | Phase 2: 串口适配器 | ✅ 已完成 | 2026-06-13 |
 | Phase 3: SSH+本地 Shell | ✅ 完成 | 2026-06-13 |
-| Phase 4: MCP 终端工具 | ⬜ 未开始 | — |
+| Phase 4: MCP 终端工具 | ✅ 已完成 | 2026-06-13 |
 | Phase 5: AI-人共同操作 | ⬜ 未开始 | — |
 | Phase 6: Electron UI | ⬜ 未开始 | — |
 | Phase 7: 终端规则+sendAndWait | ⬜ 未开始 | — |
@@ -598,7 +598,7 @@ link-terminal-demo/
 
 ---
 
-## Phase 4: MCP 终端工具 ⬜ 未开始
+## Phase 4: MCP 终端工具 ✅ 已完成（2026-06-13）
 
 **目标**：通过 MCP 协议将会话操作暴露给 AI。
 
@@ -627,21 +627,35 @@ link-terminal-demo/
 
 ### 结构化结果格式
 
-每个工具返回：`{ success, sessionId?, state?, evidence: { kind, data, cursor }, error?, correlationId, origin: 'ai' }`
+每个工具返回：`{ success, sessionId?, state?, evidence: { kind, data, cursor }, error?, correlationId, origin: 'ai', schemaVersion }`
 
 ### 关键架构决策
 
 1. **MCP 工具不直接接触 transport** — 全部通过 SessionManager，硬安全边界
-2. **Schema 版本在 server 启动时声明** — 版本不匹配拒绝危险操作
+2. **Schema 版本在 server 启动时声明** — 版本不匹配拒绝危险操作；`linkterm-mcp/1.0.0` semver
 3. **本阶段 sendAndWait 为基础版** — 跨 chunk 完成检测在 Phase 7 增强
+4. **MCP stdio 默认不自动启动** — 由 `LINKTERM_MCP_STDIO=1` 显式启用，避免桌面 stdout 污染协议帧
+
+### 变更记录（相对原计划）
+
+- **2026-06-13** — Phase 4 实施 + 复审。澄清问题落定如下决策：仅 Stdio transport（暂不做本地 TCP）；snake_case 工具名；close_session 仅关闭 transport 保留 transcript；send_and_wait 基础版仅等首条 device 输出 + timeout。
+- **2026-06-13 (修正)** — 复审发现 7 类问题并全部修复：
+  1. `server.ts` 加 `stopping` Promise 防并发关闭；`start()` 失败时清空 `starting`；start 看到正在 stop 时先等待。
+  2. `registerIpcHandlers()` 启动 MCP 失败时回滚已注册的 IPC handler 和 SerialDiscovery，避免 "already registered" 撞车。
+  3. `decodeDataPayload` 严格校验 base64 字符与 padding，非法值抛 `INVALID_ARGUMENT`，避免 Buffer 静默截断写入错字节。
+  4. `SessionManager` 新增 `createAndOpen()`：open 成功才广播 `session:created`；open 失败既不入表也不发任何 `session:*` 事件，消除 UI 端"幽灵 session"。
+  5. **移除 `acceptUnknownHostKey` 选项** — Phase 4 无 known_hosts，true 等价于 acceptAll，违反 "no acceptAll default" 不变量。MCP 入口 SSH `hostVerifier` 一律返回 false，等到 Phase 8 引入持久化信任后再开放。
+  6. `redactSensitive` 扩展为按入参精确替换 password / passphrase / privateKey 字面量（之前只剥 PEM 头）。
+  7. MCP stdio 默认不自动启动，改为环境变量 `LINKTERM_MCP_STDIO=1` 触发；`registerIpcHandlers` 的 `autoStartMcp` 选项语义改为 "覆盖 env"。
 
 ### 测试交付
 
-- `terminal-tools.test.ts` — 每个工具 + mock SessionManager，验证结构化结果
+- `terminal-tools.test.ts` — 8 个工具 + mock SessionManager，验证结构化结果、错误码（NOT_FOUND / NOT_OPEN / INVALID_ARGUMENT / TIMEOUT / VERSION_MISMATCH）、凭据不泄漏
 - `version-check.test.ts` — 版本匹配/不匹配安全拒绝
-- `mcp-session-roundtrip.test.ts` — 集成：MCP open→write→read 完整回路
+- `mcp-session-roundtrip.test.ts` — 集成：MCP open→write→read 完整回路（用 LocalShellSession + FakePty）
+- `session-manager.test.ts` 扩展 — `createAndOpen` 成功广播 / 失败静默回滚
 
-### 新增依赖：`@modelcontextprotocol/sdk`
+### 新增依赖：`@modelcontextprotocol/sdk`@^1.29.0、`zod`@^4.4.3
 
 ### 依赖阶段：Phase 1-3
 

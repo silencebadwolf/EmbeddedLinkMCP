@@ -3,6 +3,12 @@
   "generatedAt": "2026-06-13",
   "dependencies": [
     {
+      "name": "@modelcontextprotocol/sdk",
+      "version": "^1.29.0",
+      "license": "MIT",
+      "licenseFile": "licenses/modelcontextprotocol-sdk.LICENSE"
+    },
+    {
       "name": "react",
       "version": "^19.2.7",
       "license": "MIT",

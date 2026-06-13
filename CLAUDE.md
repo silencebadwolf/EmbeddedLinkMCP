@@ -8,7 +8,7 @@ LinkTerm v2 is an Electron/TypeScript rewrite of a legacy Qt/C++ terminal, inten
 
 Authoritative specs live in `PROJECT_REQUIREMENTS.md` (requirements) and `DEVELOPMENT_PLAN.md` (13-phase plan with current status). **Always check `DEVELOPMENT_PLAN.md` before starting work** — it tracks which phases are completed (✅), in progress, or not started (⬜), and records every decision/variance from the original plan.
 
-Current state: **Phases 0–3 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters). Phases 4–12 not yet started. 114 Vitest tests cover `src/core/` and `src/transports/{serial,ssh,local-shell}/`; the renderer is still a placeholder with no IPC bridge or terminal UI yet.
+Current state: **Phases 0–4 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters, MCP terminal surface with 8 tools). Phases 5–12 not yet started. 139 Vitest tests cover `src/core/`, `src/transports/{serial,ssh,local-shell}/`, and `src/mcp/`; the renderer is still a placeholder with no IPC bridge or terminal UI yet.
 
 ## Common commands
 

@@ -53,6 +53,40 @@ export class SessionManager extends EventEmitter {
    * @throws 当 factory 返回的 session.id 与生成的 id 不一致，或同一 id 重复注册时
    */
   create(factory: SessionFactory): ISession {
+    const session = this.#registerNew(factory);
+    this.emit('session:created', session.id);
+    return session;
+  }
+
+  /**
+   * 创建会话并立即 open；只有 open 成功后才广播 `session:created`。
+   *
+   * 用于 MCP `open_session` 等"创建即开"的入口：
+   * - open 成功 → manager 内可见，外界先看到 `session:created`，状态转换事件随后；
+   * - open 失败 → 会话从未进入 manager，`session:created` / `session:destroyed` 都不广播，
+   *   外界订阅者不会观察到"幽灵 session"。
+   *
+   * @param factory 工厂函数（同 {@link create}）
+   * @returns 已 open 的 ISession
+   * @throws factory 校验失败 / open 抛错时透传
+   */
+  async createAndOpen(factory: SessionFactory): Promise<ISession> {
+    const session = this.#registerNew(factory);
+    try {
+      await session.open();
+    } catch (err) {
+      // open 失败：撤销注册，不广播任何 session:* 事件
+      this.#unsubscribers.get(session.id)?.();
+      this.#unsubscribers.delete(session.id);
+      this.#sessions.delete(session.id);
+      throw err;
+    }
+    this.emit('session:created', session.id);
+    return session;
+  }
+
+  /** 内部：分配 id、订阅事件、入表，但**不**广播 'session:created'。供 create / createAndOpen 共用。 */
+  #registerNew(factory: SessionFactory): ISession {
     const id = `sess_${randomUUID()}`;
     const session = factory(id);
     if (session.id !== id) {
@@ -74,13 +108,11 @@ export class SessionManager extends EventEmitter {
     session.on('event', onEvent);
     session.on('state', onState);
     this.#unsubscribers.set(id, () => {
-      // ISession 继承自 EventEmitter（SessionBase）；用 cast 避免在公开接口中暴露 off 重载。
       const emitter = session as unknown as EventEmitter;
       emitter.off('event', onEvent);
       emitter.off('state', onState);
     });
 
-    this.emit('session:created', id);
     return session;
   }
 
