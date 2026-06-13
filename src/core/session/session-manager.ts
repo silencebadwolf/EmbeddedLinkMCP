@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type { Origin, SessionId } from '../../shared/types.js';
-import type { SequenceCursor, TranscriptEvent } from '../transcript/types.js';
+import type { ReadResult, SequenceCursor, TranscriptEvent } from '../transcript/types.js';
 import type { ISession, SessionWriteOptions } from './types.js';
 
 /**
@@ -11,14 +11,61 @@ import type { ISession, SessionWriteOptions } from './types.js';
 export type SessionFactory = (id: SessionId) => ISession;
 
 /**
+ * 长寿命 reader（IPC 渲染端订阅、MCP 客户端会话）的标识。
+ * 由调用方自行决定（通常用 webContents id / MCP correlationId / UUID）。
+ *
+ * Manager 内部仅以此为 key 维护 `Map<subscriberId, Map<sessionId, cursor>>`，
+ * 不关心字符串内容。
+ */
+export type SubscriberId = string;
+
+/**
+ * `SessionManager.waitFor()` 的判定结果。
+ *
+ * - `match`:   匹配到目标事件，调用方拿到该事件本体。
+ * - `timeout`: 超时未匹配，调用方拿到截至超时时刻该会话的最新 cursor。
+ * - `closed`:  predicate 不命中之前会话进入终态（closed/errored），调用方拿到截至该时刻的最新 cursor。
+ *              本字段使等待方能立即解除阻塞，而不必等满 timeoutMs。
+ */
+export type WaitForOutcome =
+  | { kind: 'match'; event: TranscriptEvent }
+  | { kind: 'timeout'; lastCursor: SequenceCursor }
+  | { kind: 'closed'; lastCursor: SequenceCursor; state: 'closed' | 'errored' };
+
+/** `SessionManager.waitFor()` 选项。 */
+export interface WaitForOptions {
+  /** 超时（毫秒）；缺省 30_000。0 / 负数视为非法。 */
+  timeoutMs?: number;
+  /**
+   * 是否回放 cursor 到当前 latest 之间的历史事件给 predicate。
+   * - `true`（默认）：先用 cursor 之后的历史事件喂 predicate；命中则立即 resolve。
+   * - `false`：仅监听新到达的事件。
+   *
+   * 用于"先 readSince(cursor)，再 waitFor"两步式协议时关掉历史回放。
+   */
+  replayHistorySince?: SequenceCursor;
+}
+
+/**
  * 集中管理所有活跃会话：注册、查找、销毁，并把每个 session 的事件流转发到全局订阅者。
  *
  * 设计上不持有 transport 类型枚举：SessionManager 只关心 ISession 契约。
  * 这样 Phase 2/3 增加 SerialSession / SshSession 时无需修改本类。
+ *
+ * Phase 5 起额外承担两个职责：
+ * 1. **多客户端 cursor 追踪**：通过 `subscribe()` / `unsubscribe()` / `readForSubscriber()`，
+ *    每个长寿命 reader（渲染端订阅 / MCP 客户端会话）持有独立 cursor，互不干扰。
+ * 2. **并发 waitFor 协调**：`waitFor()` 让调用方对 transcript 事件流做谓词等待，
+ *    多个并发等待之间互相独立（Phase 7 的 sendAndWait 在此之上构建终端规则）。
  */
 export class SessionManager extends EventEmitter {
   readonly #sessions: Map<SessionId, ISession> = new Map();
   readonly #unsubscribers: Map<SessionId, () => void> = new Map();
+  /**
+   * 每个 subscriber 持有的 (sessionId → cursor) 映射。
+   * subscriberId 由调用方自行命名（如 webContents id、MCP 客户端 ID）。
+   */
+  readonly #subscriberCursors: Map<SubscriberId, Map<SessionId, SequenceCursor>> = new Map();
 
   /** 当前活跃的 session id 列表（含 idle/open/errored）。 */
   list(): SessionId[] {
@@ -131,6 +178,11 @@ export class SessionManager extends EventEmitter {
       this.#unsubscribers.get(id)?.();
       this.#unsubscribers.delete(id);
       this.#sessions.delete(id);
+      // 清掉所有订阅者持有的该 session cursor，避免下次 destroyed-then-recreated 时
+      // 残留旧 sequence 让 readForSubscriber 误以为"已读到 N"
+      for (const cursors of this.#subscriberCursors.values()) {
+        cursors.delete(id);
+      }
       this.emit('session:destroyed', id);
     }
   }
@@ -155,10 +207,10 @@ export class SessionManager extends EventEmitter {
    *
    * @param id 会话 id
    * @param cursor 上次读取的最大 sequence；0 表示从最早可见事件开始
-   * @returns ReadResult（events / cursor / truncated）
+   * @returns ReadResult（events / cursor / truncated / oldestAvailableSequence）
    * @throws 会话不存在时抛 `Session not found`
    */
-  read(id: SessionId, cursor: SequenceCursor): ReturnType<ISession['read']> {
+  read(id: SessionId, cursor: SequenceCursor): ReadResult {
     return this.#requireSession(id).read(cursor);
   }
 
@@ -172,6 +224,175 @@ export class SessionManager extends EventEmitter {
    */
   clear(id: SessionId, origin: Origin): TranscriptEvent {
     return this.#requireSession(id).clear(origin);
+  }
+
+  /**
+   * 注册一个长寿命 subscriber。幂等：同一个 subscriberId 多次调用不会重置已记录的 cursor。
+   *
+   * 用于 IPC `transcript:subscribe` 与 MCP 多客户端场景：每个 subscriber 各自维护
+   * (sessionId → 已读 cursor)，避免单一全局 cursor 在多客户端下相互干扰。
+   *
+   * @param subscriberId 订阅者标识（webContents id / MCP correlationId / UUID）
+   */
+  subscribe(subscriberId: SubscriberId): void {
+    if (!this.#subscriberCursors.has(subscriberId)) {
+      this.#subscriberCursors.set(subscriberId, new Map());
+    }
+  }
+
+  /**
+   * 取消订阅，清掉该 subscriber 的所有 cursor 记录。幂等。
+   * @param subscriberId 订阅者标识
+   */
+  unsubscribe(subscriberId: SubscriberId): void {
+    this.#subscriberCursors.delete(subscriberId);
+  }
+
+  /**
+   * 查询 subscriber 当前持有的 cursor。未注册的 subscriber 返回 0。
+   * @param subscriberId 订阅者标识
+   * @param sessionId 会话 id
+   */
+  getSubscriberCursor(subscriberId: SubscriberId, sessionId: SessionId): SequenceCursor {
+    return this.#subscriberCursors.get(subscriberId)?.get(sessionId) ?? 0;
+  }
+
+  /**
+   * 以 subscriber 当前 cursor 为起点读取，并把 cursor 自动推进到本次返回的 latest。
+   *
+   * 第一次调用（cursor=0）相当于 `snapshot()`；之后每次只拿增量。
+   * 跨多次调用之间不会丢事件（除非环形 buffer 早已淘汰），truncated=true 时
+   * 调用方应当结合 `result.oldestAvailableSequence` 判断是否需要提示用户。
+   *
+   * 自动注册 subscriber（若尚未注册）。
+   *
+   * @param subscriberId 订阅者标识
+   * @param sessionId 会话 id
+   * @returns ReadResult（events / cursor / truncated / oldestAvailableSequence）
+   * @throws 会话不存在时抛 `Session not found`
+   */
+  readForSubscriber(subscriberId: SubscriberId, sessionId: SessionId): ReadResult {
+    this.subscribe(subscriberId);
+    const session = this.#requireSession(sessionId);
+    const cursors = this.#subscriberCursors.get(subscriberId);
+    if (!cursors) {
+      // 不应发生（subscribe() 刚保证存在），但留个 fallback 以免空指针
+      throw new Error(`Subscriber state lost: ${subscriberId}`);
+    }
+    const lastCursor = cursors.get(sessionId) ?? 0;
+    const result = session.read(lastCursor);
+    cursors.set(sessionId, result.cursor);
+    return result;
+  }
+
+  /**
+   * 等待会话 transcript 中第一条满足 predicate 的事件。
+   *
+   * 多次并发 waitFor 互相独立 —— 每个调用持有自己的 listener 与 timer，
+   * 第一次匹配的调用不会"消费"事件让其它调用看不到。
+   *
+   * 行为：
+   * 1. 若提供 `replayHistorySince`，先把 `(replayHistorySince, latest]` 区间的历史事件
+   *    依次喂给 predicate；命中则立即 resolve。
+   * 2. 然后挂 EventEmitter 监听新事件，命中或超时为止。
+   * 3. 监听 'state' 事件：若 session 在 predicate 命中前进入 closed/errored，
+   *    立即返回 `{ kind: 'closed', lastCursor, state }`，避免调用方等满 timeoutMs。
+   *    sendAndWait 之类的上层只需关心"目标设备已不可达"这一事实，无需区分原因。
+   * 4. 超时返回 `{ kind: 'timeout', lastCursor }`，不抛错——调用方决定是否当作错误。
+   *
+   * @param sessionId 会话 id
+   * @param predicate 谓词；第一条让它返回 true 的事件触发 resolve
+   * @param options 超时与回放选项
+   * @returns 匹配事件 / 超时 / session 中途关闭
+   * @throws 会话不存在时抛 `Session not found`；timeoutMs 非法时抛
+   */
+  waitFor(
+    sessionId: SessionId,
+    predicate: (event: TranscriptEvent) => boolean,
+    options: WaitForOptions = {},
+  ): Promise<WaitForOutcome> {
+    const session = this.#requireSession(sessionId);
+    const timeoutMs = options.timeoutMs ?? 30_000;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return Promise.reject(new Error(`waitFor.timeoutMs must be positive, got ${timeoutMs}`));
+    }
+
+    return new Promise<WaitForOutcome>((resolve) => {
+      let settled = false;
+      const timerRef: { current: ReturnType<typeof setTimeout> | undefined } = {
+        current: undefined,
+      };
+      const sessionEmitter = session as unknown as EventEmitter;
+
+      const cleanup = (): void => {
+        if (timerRef.current !== undefined) clearTimeout(timerRef.current);
+        sessionEmitter.off('event', onEvent);
+        sessionEmitter.off('state', onState);
+      };
+
+      const finish = (outcome: WaitForOutcome): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(outcome);
+      };
+
+      const readLastCursor = (): SequenceCursor => {
+        try {
+          return session.read(0).cursor;
+        } catch {
+          return 0;
+        }
+      };
+
+      const onEvent = (event: TranscriptEvent): void => {
+        try {
+          if (predicate(event)) finish({ kind: 'match', event });
+        } catch {
+          // predicate 抛错视为不匹配，不污染等待方
+        }
+      };
+
+      const onState = (next: ISession['state']): void => {
+        if (next === 'closed' || next === 'errored') {
+          finish({ kind: 'closed', lastCursor: readLastCursor(), state: next });
+        }
+      };
+
+      // 进入函数前 session 可能已经处于终态——避免错过通知
+      if (session.state === 'closed' || session.state === 'errored') {
+        finish({
+          kind: 'closed',
+          lastCursor: readLastCursor(),
+          state: session.state,
+        });
+        return;
+      }
+
+      // Step 1：历史回放
+      if (options.replayHistorySince !== undefined) {
+        const history = session.read(options.replayHistorySince);
+        for (const event of history.events) {
+          try {
+            if (predicate(event)) {
+              finish({ kind: 'match', event });
+              return;
+            }
+          } catch {
+            // 同上
+          }
+        }
+      }
+
+      // Step 2：监听新事件 + 状态终态
+      sessionEmitter.on('event', onEvent);
+      sessionEmitter.on('state', onState);
+
+      // Step 3：超时
+      timerRef.current = setTimeout(() => {
+        finish({ kind: 'timeout', lastCursor: readLastCursor() });
+      }, timeoutMs);
+    });
   }
 
   /** 销毁所有 session（应用退出 / 测试 teardown）。并行执行，不区分单个 destroy 的成败。 */

@@ -8,7 +8,7 @@ LinkTerm v2 is an Electron/TypeScript rewrite of a legacy Qt/C++ terminal, inten
 
 Authoritative specs live in `PROJECT_REQUIREMENTS.md` (requirements) and `DEVELOPMENT_PLAN.md` (13-phase plan with current status). **Always check `DEVELOPMENT_PLAN.md` before starting work** — it tracks which phases are completed (✅), in progress, or not started (⬜), and records every decision/variance from the original plan.
 
-Current state: **Phases 0–4 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters, MCP terminal surface with 8 tools). Phases 5–12 not yet started. 139 Vitest tests cover `src/core/`, `src/transports/{serial,ssh,local-shell}/`, and `src/mcp/`; the renderer is still a placeholder with no IPC bridge or terminal UI yet.
+Current state: **Phases 0–5 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters, MCP terminal surface with 8 tools, AI-human coop hardening with priority/backpressure/multi-subscriber). Phases 6–12 not yet started. 172 Vitest tests cover `src/core/`, `src/transports/{serial,ssh,local-shell}/`, `src/mcp/`, and the AI-human coop integration scenarios; the renderer is still a placeholder with no IPC bridge or terminal UI yet.
 
 ## Common commands
 
@@ -37,7 +37,27 @@ Current state: **Phases 0–4 complete** (scaffolding, core session/transcript/w
 
 Every write to a session — whether from the UI (origin=human) or from MCP (origin=ai) — MUST flow through `SessionManager.write` → `WriteQueue` → transport. The `WriteQueue` is the single serialization point that guarantees consistent ordering between AI and human inputs and produces the audit trail. **Never let MCP tools or IPC handlers touch transports directly.** This is a hard security boundary (req §4.4, §5.1).
 
-`TranscriptBuffer` is append-only with a monotonically increasing sequence cursor. Clear events are recorded in the buffer (not deletions) so MCP clients reading from an old cursor still see history boundaries (req §4.5 — clear must not lose AI-readable evidence).
+`TranscriptBuffer` is append-only with a monotonically increasing sequence cursor. Clear events are recorded in the buffer (not deletions) so MCP clients reading from an old cursor still see history boundaries (req §4.5 — clear must not lose AI-readable evidence). Clear events carry `meta.kind: 'clear'` and `meta.precedingCursor` (the last sequence visible before the clear) — these fields are forced by `TranscriptBuffer.append` regardless of caller-supplied meta. When a reader's cursor falls below the ring buffer's earliest sequence, `readSince()` returns `{ events, truncated: true, oldestAvailableSequence }` instead of throwing — clients use that sequence minus one as their new cursor to recover.
+
+### WriteQueue priority & backpressure (Phase 5)
+
+`WriteQueue.enqueue(item)` accepts `priority: 'high' | 'normal'` (default `normal`) and a `maxDepth` cap (default 1024). Two FIFO lanes; if the high lane is non-empty, the next item drained is from high. **`priority: 'high'` is exempt from `maxDepth`** — the high lane is reserved for user-initiated Ctrl-C / abort signals that MUST get through when normal traffic has saturated the queue. Don't use `'high'` for routine MCP writes; the audit notes in `src/core/write-queue/types.ts` are the contract. When `maxDepth` is hit on the normal lane, enqueue rejects synchronously with `WriteQueueFullError` (`code: 'QUEUE_FULL'`); callers decide retry/backoff. The `priority` field is plumbed end-to-end: `SessionWriteOptions.priority` → `SessionBase.write` → `WriteQueue.enqueue`. The IPC `session:write` handler accepts it from the renderer (still forces `origin='human'`); MCP tools currently always submit `normal`.
+
+### Session error taxonomy
+
+`SessionBase.write` throws `SessionNotOpenError` (`code: 'NOT_OPEN'`, exported from `src/core/session/index.ts`) when the session isn't in the `open` state. Both the IPC `session:write` handler and the MCP `write_to_session` tool translate this via `instanceof` to a structured `{ code: 'NOT_OPEN', sessionState }` result — keep using the named error rather than string-matching the message, so renames don't silently break the taxonomy.
+
+### Multi-subscriber transcript reads (Phase 5)
+
+For long-lived consumers (renderer windows, MCP clients) `SessionManager` exposes `subscribe(subscriberId)` / `unsubscribe(subscriberId)` / `readForSubscriber(subscriberId, sessionId)` / `getSubscriberCursor(...)`. Internally it tracks `Map<subscriberId, Map<sessionId, cursor>>`. The IPC `session:transcript:subscribe` handler assigns one subscriberId per `webContents` and auto-unsubscribes when the renderer's `webContents` emits `'destroyed'` (registered with `if (!subscribers.has(wc.id))` so repeat subscribes don't pile up `'destroyed'` once-listeners). Short-lived MCP `read_from_session` calls still pass cursor explicitly and use `TranscriptBuffer.readSince` directly — both paths coexist.
+
+### `SessionManager.waitFor`
+
+`waitFor(sessionId, predicate, opts)` returns a `WaitForOutcome` with `kind: 'matched' | 'timeout' | 'closed'`. It listens to both transcript events AND session `'state'` transitions: if the session enters `closed` or `errored` while waiting, it settles immediately as `{ kind: 'closed', state, lastCursor }` rather than waiting out the full timeout. This matters for Phase 7's `sendAndWait` — needing to distinguish "predicate didn't fire in time" from "the device is gone." Concurrent `waitFor` calls on the same session are independent (each registers its own predicate + state listeners; cleanup is per-call).
+
+### IPC origin enforcement (req §4.4 / §5.1 hard boundary)
+
+The renderer is trusted but **must not be able to forge AI identity**. The IPC `session:write` handler hardcodes `origin: 'human'` and ignores any `origin` field in the request payload. AI writes go through MCP tools (origin: `'ai'`); the two channels are strictly separated and recorded distinctly in transcripts.
 
 ### Module layout (`src/`)
 

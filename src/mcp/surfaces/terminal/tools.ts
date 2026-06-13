@@ -14,6 +14,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { EventEmitter } from 'node:events';
 import type { SessionManager } from '../../../core/session/session-manager.js';
 import type { ISession } from '../../../core/session/types.js';
+import { SessionNotOpenError } from '../../../core/session/types.js';
 import type { TranscriptEvent } from '../../../core/transcript/types.js';
 import type { SerialDiscovery } from '../../../transports/serial/serial-discovery.js';
 import { SerialSession } from '../../../transports/serial/serial-session.js';
@@ -151,6 +152,12 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
           correlationId: input.correlationId,
         });
       } catch (err) {
+        if (err instanceof SessionNotOpenError) {
+          throw new ToolError('NOT_OPEN', err.message, {
+            sessionId: input.sessionId,
+            state: err.sessionState,
+          });
+        }
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes('is not open')) {
           throw new ToolError('NOT_OPEN', message, { sessionId: input.sessionId, state: session.state });
@@ -188,9 +195,12 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
           data: {
             events: result.events.map(serializeEvent),
             truncated: result.truncated,
+            oldestAvailableSequence: result.oldestAvailableSequence,
           },
           cursor: result.cursor,
-          meta: result.truncated ? { truncated: true } : undefined,
+          meta: result.truncated
+            ? { truncated: true, oldestAvailableSequence: result.oldestAvailableSequence }
+            : undefined,
         },
       });
     },

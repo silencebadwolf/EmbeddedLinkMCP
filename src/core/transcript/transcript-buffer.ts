@@ -45,12 +45,31 @@ export class TranscriptBuffer implements ITranscriptBuffer {
   /**
    * 追加事件到 buffer 尾部。容量耗尽时覆盖最旧事件并更新 droppedUpTo。
    *
+   * 对于 type==='clear' 的事件，本方法**强制**写入
+   * `{ kind: 'clear', precedingCursor: <写入前的 latestCursor> }`，
+   * 即便调用方在 input.meta 中显式给出了 `kind` 也会被覆盖 ——
+   * 'clear' 事件在 transcript 流中是审计边界标记，不允许被误标为其它 kind，
+   * AI/UI 才能可靠地用 `meta.kind === 'clear'` 识别清屏边界。
+   * 调用方提供的其它 meta 字段（如自定义 reason）保留原样。
+   *
    * @param input 事件输入（type/origin 必填，其余可选）
    * @returns 写入后的完整事件，含分配好的 sequence 与 timestamp
    */
   append(input: TranscriptEventInput): TranscriptEvent {
+    let meta = input.meta;
+    if (input.type === 'clear') {
+      const precedingCursor = this.latestCursor();
+      // kind/precedingCursor 必须由本方法决定；调用方传入的同名字段被覆盖
+      meta = {
+        ...(meta ?? {}),
+        kind: 'clear',
+        precedingCursor,
+      };
+    }
+
     const event: TranscriptEvent = {
       ...input,
+      ...(meta !== undefined ? { meta } : {}),
       sequence: this.#nextSequence,
       timestamp: Date.now(),
     };
@@ -78,6 +97,7 @@ export class TranscriptBuffer implements ITranscriptBuffer {
    *
    * @param cursor 上次读取的最大 sequence；0 表示从最早可见事件开始
    * @returns events 列表 + 最新 cursor + truncated 标志（cursor 落入已丢弃区间时为 true）
+   *          + oldestAvailableSequence（buffer 中第一条仍可读的 sequence，便于过期 cursor 恢复）
    * @throws 当 cursor 为负数或非有限值时
    */
   readSince(cursor: SequenceCursor): ReadResult {
@@ -86,8 +106,9 @@ export class TranscriptBuffer implements ITranscriptBuffer {
     }
 
     const latest = this.latestCursor();
+    const oldestAvailableSequence = this.#count === 0 ? latest + 1 : this.earliestCursor();
     if (this.#count === 0) {
-      return { events: [], cursor: latest, truncated: false };
+      return { events: [], cursor: latest, truncated: false, oldestAvailableSequence };
     }
 
     const earliest = this.earliestCursor();
@@ -97,7 +118,7 @@ export class TranscriptBuffer implements ITranscriptBuffer {
     const startSeq = Math.max(cursor + 1, earliest);
 
     if (startSeq > latest) {
-      return { events: [], cursor: latest, truncated };
+      return { events: [], cursor: latest, truncated, oldestAvailableSequence };
     }
 
     const out: TranscriptEvent[] = [];
@@ -107,7 +128,15 @@ export class TranscriptBuffer implements ITranscriptBuffer {
       if (slot) out.push(slot);
     }
 
-    return { events: out, cursor: latest, truncated };
+    return { events: out, cursor: latest, truncated, oldestAvailableSequence };
+  }
+
+  /**
+   * 拿一份"从最早可见事件起"的全量快照。
+   * 语义等同 `readSince(0)`，但更适合"新 reader 初次加载 transcript"的调用点。
+   */
+  snapshot(): ReadResult {
+    return this.readSince(0);
   }
 
   /** @returns 当前最新事件的 sequence；空 buffer 返回已丢弃区间的最大 sequence（初始为 0）。 */

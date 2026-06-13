@@ -124,4 +124,111 @@ describe('TranscriptBuffer', () => {
       expect(r.events[0]?.sequence).toBe(cursors[i]! + 1);
     });
   });
+
+  describe('clear cursor boundary', () => {
+    it('auto-fills clear meta with kind:"clear" and precedingCursor', () => {
+      const buf = new TranscriptBuffer({ sessionId: 's1' });
+      buf.append({ type: 'data', origin: 'human', data: utf8('a') });
+      buf.append({ type: 'data', origin: 'device', data: utf8('b') });
+      const clearEvent = buf.append({ type: 'clear', origin: 'human' });
+      expect(clearEvent.meta).toMatchObject({ kind: 'clear', precedingCursor: 2 });
+    });
+
+    it('clear precedingCursor is 0 when buffer was empty', () => {
+      const buf = new TranscriptBuffer({ sessionId: 's1' });
+      const clearEvent = buf.append({ type: 'clear', origin: 'ai' });
+      expect(clearEvent.meta).toMatchObject({ kind: 'clear', precedingCursor: 0 });
+    });
+
+    it('preserves caller-provided meta keys around the auto-filled clear meta', () => {
+      const buf = new TranscriptBuffer({ sessionId: 's1' });
+      buf.append({ type: 'data', origin: 'human', data: utf8('a') });
+      const clearEvent = buf.append({
+        type: 'clear',
+        origin: 'human',
+        meta: { reason: 'user-pressed-ctrl-l' },
+      });
+      expect(clearEvent.meta).toMatchObject({
+        kind: 'clear',
+        precedingCursor: 1,
+        reason: 'user-pressed-ctrl-l',
+      });
+    });
+
+    it('overrides caller-provided kind/precedingCursor on clear events', () => {
+      const buf = new TranscriptBuffer({ sessionId: 's1' });
+      buf.append({ type: 'data', origin: 'human', data: utf8('a') });
+      const clearEvent = buf.append({
+        type: 'clear',
+        origin: 'human',
+        // 调用方故意传入错误 kind / 旧 cursor，应当被强制覆盖
+        meta: { kind: 'not-a-clear', precedingCursor: 999, reason: 'custom' },
+      });
+      expect(clearEvent.meta).toMatchObject({
+        kind: 'clear',
+        precedingCursor: 1,
+        reason: 'custom',
+      });
+    });
+
+    it('readSince(cursorBeforeClear) yields clear event as a boundary marker', () => {
+      const buf = new TranscriptBuffer({ sessionId: 's1' });
+      buf.append({ type: 'data', origin: 'human', data: utf8('a') });
+      const before = buf.latestCursor();
+      buf.append({ type: 'clear', origin: 'human' });
+      buf.append({ type: 'data', origin: 'device', data: utf8('b') });
+      const result = buf.readSince(before);
+      expect(result.events.map((e) => e.type)).toEqual(['clear', 'data']);
+      expect(result.events[0]?.meta).toMatchObject({ kind: 'clear', precedingCursor: before });
+    });
+  });
+
+  describe('expired cursor recovery', () => {
+    it('returns oldestAvailableSequence so callers can resume after truncation', () => {
+      const buf = new TranscriptBuffer({ sessionId: 's1', capacity: 3 });
+      for (let i = 0; i < 5; i += 1) {
+        buf.append({ type: 'data', origin: 'human', data: utf8(String(i)) });
+      }
+      const result = buf.readSince(1); // 1 已被丢弃
+      expect(result.truncated).toBe(true);
+      expect(result.oldestAvailableSequence).toBe(3);
+      // 客户端可据此从 oldestAvailableSequence-1 续读，无 truncated 标志
+      const recovery = buf.readSince(result.oldestAvailableSequence - 1);
+      expect(recovery.truncated).toBe(false);
+      expect(recovery.events.map((e) => e.sequence)).toEqual([3, 4, 5]);
+    });
+
+    it('oldestAvailableSequence equals latestCursor+1 on empty buffer', () => {
+      const buf = new TranscriptBuffer({ sessionId: 's1' });
+      const result = buf.readSince(0);
+      expect(result.events).toEqual([]);
+      expect(result.oldestAvailableSequence).toBe(buf.latestCursor() + 1);
+      expect(result.oldestAvailableSequence).toBe(1);
+    });
+
+    it('oldestAvailableSequence advances after eviction and stays consistent', () => {
+      const buf = new TranscriptBuffer({ sessionId: 's1', capacity: 2 });
+      buf.append({ type: 'data', origin: 'human', data: utf8('a') });
+      buf.append({ type: 'data', origin: 'human', data: utf8('b') });
+      let result = buf.readSince(0);
+      expect(result.oldestAvailableSequence).toBe(1);
+      buf.append({ type: 'data', origin: 'human', data: utf8('c') });
+      result = buf.readSince(0);
+      expect(result.oldestAvailableSequence).toBe(2);
+    });
+  });
+
+  describe('snapshot()', () => {
+    it('returns the same shape as readSince(0)', () => {
+      const buf = new TranscriptBuffer({ sessionId: 's1' });
+      buf.append({ type: 'data', origin: 'human', data: utf8('a') });
+      buf.append({ type: 'data', origin: 'device', data: utf8('b') });
+      const snap = buf.snapshot();
+      const ref = buf.readSince(0);
+      expect(snap.events.map((e) => e.sequence)).toEqual(ref.events.map((e) => e.sequence));
+      expect(snap.cursor).toBe(ref.cursor);
+      expect(snap.truncated).toBe(ref.truncated);
+      expect(snap.oldestAvailableSequence).toBe(ref.oldestAvailableSequence);
+    });
+  });
 });

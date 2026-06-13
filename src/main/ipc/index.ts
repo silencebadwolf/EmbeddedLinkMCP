@@ -2,6 +2,7 @@ import { SessionManager } from '../../core/session/session-manager.js';
 import { createMcpServer, type LinkTermMcpServer } from '../../mcp/index.js';
 import { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
 import { registerSerialIpc } from './serial-ipc.js';
+import { registerSessionIpc } from './session-ipc.js';
 
 /**
  * 主进程持有的全局依赖容器：随 IPC handler 一起初始化、随退出统一清理。
@@ -50,6 +51,7 @@ export async function registerIpcHandlers(
   const mcpServer = createMcpServer({ sessionManager, serialDiscovery });
 
   const unregisterSerial = registerSerialIpc(serialDiscovery);
+  const unregisterSession = registerSessionIpc(sessionManager);
 
   const shouldAutoStart =
     options.autoStartMcp ?? process.env.LINKTERM_MCP_STDIO === '1';
@@ -59,6 +61,7 @@ export async function registerIpcHandlers(
     } catch (err) {
       // 回滚已注册的 IPC handler 与 SerialDiscovery，避免重复 register / handler 泄漏
       unregisterSerial();
+      unregisterSession();
       serialDiscovery.dispose();
       throw err;
     }
@@ -66,6 +69,7 @@ export async function registerIpcHandlers(
 
   const dispose = async (): Promise<void> => {
     unregisterSerial();
+    unregisterSession();
     // 先停 MCP，避免 destroyAll 期间还有新工具调用进来
     await mcpServer.stop().catch(() => undefined);
     await sessionManager.destroyAll().catch(() => undefined);

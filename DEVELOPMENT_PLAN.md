@@ -15,7 +15,7 @@ LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形
 | Phase 2: 串口适配器 | ✅ 已完成 | 2026-06-13 |
 | Phase 3: SSH+本地 Shell | ✅ 完成 | 2026-06-13 |
 | Phase 4: MCP 终端工具 | ✅ 已完成 | 2026-06-13 |
-| Phase 5: AI-人共同操作 | ⬜ 未开始 | — |
+| Phase 5: AI-人共同操作 | ✅ 已完成 | 2026-06-13 |
 | Phase 6: Electron UI | ⬜ 未开始 | — |
 | Phase 7: 终端规则+sendAndWait | ⬜ 未开始 | — |
 | Phase 8: 工作区配置 | ⬜ 未开始 | — |
@@ -663,7 +663,79 @@ link-terminal-demo/
 
 ---
 
-## Phase 5: AI 与人共同操作加固 ⬜ 未开始
+## Phase 5: AI 与人共同操作加固 ✅ 已完成（2026-06-13）
+
+**目标**：验证和加固 AI-人共享会话模型，处理并发访问、cursor 一致性、清屏审计保留、多客户端协调。
+
+### 实际交付物
+
+| 文件/模块 | 状态 | 说明 |
+|---|---|---|
+| `src/core/write-queue/types.ts` 扩展 | ✅ | `priority: 'high' \| 'normal'`、`maxDepth` 选项、`WriteQueueFullError`（code `QUEUE_FULL`）、correlationId 透传字段 |
+| `src/core/write-queue/write-queue.ts` 重写 | ✅ | 双 lane FIFO（high 非空先取 high）、背压 reject、close() drain 仍保持 |
+| `src/core/transcript/types.ts` 扩展 | ✅ | `ReadResult.oldestAvailableSequence` 字段、`ClearMeta` 含 `kind:'clear' + precedingCursor` |
+| `src/core/transcript/transcript-buffer.ts` 增强 | ✅ | clear 自动补 `meta.kind='clear'+precedingCursor`；`snapshot()` 新方法；过期 cursor 不抛错而返回 oldestAvailableSequence |
+| `src/core/session/session-manager.ts` 增强 | ✅ | `subscribe/unsubscribe/getSubscriberCursor/readForSubscriber/waitFor`；多客户端 cursor 用 `Map<subscriberId, Map<sessionId, cursor>>` |
+| `src/main/ipc/session-ipc.ts` 新增 | ✅ | 8 个 IPC handler（write/read/clear/list/status/resize/destroy/transcript:subscribe），强制 `origin='human'`，按 webContents 分配 subscriberId |
+| `src/main/ipc/index.ts` | ✅ | 接入 `registerSessionIpc`，dispose 时统一回滚 |
+| `src/mcp/surfaces/terminal/tools.ts` | ✅ | `read_from_session` 把 `oldestAvailableSequence` 透传给 AI 客户端 |
+| `tests/integration/ai-human-coop.test.ts` | ✅ | 6 个核心场景 + 3 个并发协调附加（waitFor、active vs stale subscriber） |
+| `tests/unit/core/write-queue.test.ts` 扩展 | ✅ | priority、correlationId、背压共 +12 用例 |
+| `tests/unit/core/transcript-buffer.test.ts` 扩展 | ✅ | clear 边界、过期 cursor 恢复、snapshot 共 +5 用例 |
+
+### 关键架构决策（详见 `docs/phase-decisions/Phase5.md`）
+
+1. **WriteQueue 两级优先级**（`'high' | 'normal'`）— 用户手动 abort/Ctrl-C 走 high，AI 默认 normal；双 lane FIFO 避免饿死
+2. **背压策略**：`maxDepth` 默认 1024，超过 reject 携带 `code: 'QUEUE_FULL'`，由调用方决定退避/重试
+3. **清屏边界**：保留 clear 事件本体在事件流中，meta 加 `kind:'clear'+precedingCursor`；不引入额外 `clearBoundaries` 字段
+4. **过期 cursor 恢复**：`readSince` 不抛错，返回 `truncated: true + oldestAvailableSequence`，客户端可用 N-1 续读
+5. **多客户端 cursor**：SessionManager 内部 `Map<subscriberId, Map<sessionId, cursor>>`，同时保留显式 read 接口（MCP 现有 8 个工具不破坏）
+6. **`waitFor` 通用化**：仅"事件流断言+timeout"，不混入 Phase 7 的终端规则/sendAndWait FSM
+7. **IPC origin 强制**：`session:write` IPC 强制 `origin='human'`，渲染端不能伪造 AI 身份
+
+### 实施期间的需求/决策变更
+
+| 变更项 | 原计划 | 实际 | 原因 |
+|---|---|---|---|
+| 子代理选型 | `feature-dev:feature-dev` | **`backend-developer`** | `feature-dev:feature-dev` 是 skill 不是 agent；后端并发模型/队列/IPC 最对口 |
+| `session-ipc.ts` 范围 | 全套 session 操作 IPC | **不含 `session:create`** | 创建会话依赖 SerialSession/SshSession/LocalShellSession 路由，留给 Phase 6 接 UI 时实装；本期 8 个 handler 已满足并发验证 |
+| IPC handler 端到端测试 | 计划暗示 | **未写** | `ipcMain` 在 Vitest（无 Electron）下需 mock 整个 `electron`；策略性测试放在 `ai-human-coop.test.ts` 直接打 SessionManager API（IPC 是薄壳）。Phase 6 接 UI 时再补 |
+| `waitFor` 与 sendAndWait | 计划提及"并发 waitFor 协调" | **仅做通用 waitFor，不接 send_and_wait** | 终端规则/完成检测属 Phase 7；本期只做"事件流断言+timeout"以验证并发协调 |
+
+### 验收标准（全部通过）
+
+- ✅ `pnpm run lint`：0 错误 0 警告
+- ✅ `pnpm test`：172 个测试通过（139 + 33），534ms
+- ✅ `pnpm run build`：main + renderer 双侧编译成功，renderer 193 KB
+- ✅ `pnpm run validate:licenses`：9/9 依赖许可证完整
+- ✅ 6 个核心验证场景全部通过（人↔AI 双向可见、并发有序、清屏审计保留、多客户端独立 cursor、过期 cursor 恢复）
+- ✅ `src/core/` 仍零 Electron 依赖
+- ✅ Code review 后第二轮：H1+H2 修复、M1–M4 修复、新增 7 个回归测试
+
+### Code review 第二轮修复（2026-06-13）
+
+详见 `docs/phase-decisions/Phase5.md` 决策 9–12：
+
+- **H1**：`WriteQueue.enqueue` 中 `priority==='high'` 豁免 `maxDepth` 检查 — 修复 Ctrl-C 通道在背压时被拒的真生产 bug
+- **H2**：IPC `session:write` 的 `priority` 字段端到端打通（`SessionWriteOptions` 增字段 → `SessionBase.write` 透传 → IPC handler 接收）
+- **M1**：`TranscriptBuffer.append` clear 事件 meta 合并顺序改为强制覆盖 `kind:'clear'+precedingCursor`
+- **M2**：`SessionManager.waitFor` 监听 `'state'` 事件，session 进入 closed/errored 立即返回新 `kind:'closed'` outcome（避免等满 30s）
+- **M3**：新建 `SessionNotOpenError`（`code:'NOT_OPEN'`）从 SessionBase 抛出，IPC/MCP 用 `instanceof` 共享翻译，错误归类与 MCP 工具一致
+- **M4**：`transcript:subscribe` handler 用 `if (!subscribers.has(wc.id))` 守卫，避免 'destroyed' once 监听器累积
+
+### 遗留事项（不阻塞 Phase 5 完成）
+
+1. **`session:create` IPC handler**：Phase 6 接 UI 时实装；建议把 `buildSession` 从 MCP 工具提到 `src/main/session-factory.ts` 共享
+2. **session-ipc.test.ts**：Phase 6 接 UI 后补端到端测试
+3. **`waitFor.replayHistorySince` 接入 `send_and_wait`**：Phase 7 终端规则范畴
+
+### 相对工作量：2x（与计划一致）
+
+---
+
+## Phase 5（原始）：AI 与人共同操作加固
+
+> 以下为原始计划文本，保留作为历史参考。实际交付以上方"已完成"小节为准。
 
 **目标**：验证和加固 AI-人共享会话模型，处理并发访问、cursor 一致性、清屏审计保留、多客户端协调。
 

@@ -17,6 +17,7 @@ import type {
   SessionStateMeta,
   SessionWriteOptions,
 } from './types.js';
+import { SessionNotOpenError } from './types.js';
 
 export interface SessionBaseOptions {
   id: SessionId;
@@ -134,24 +135,28 @@ export abstract class SessionBase extends EventEmitter implements ISession {
   }
 
   /**
-   * 写入数据。必须在 state==='open' 时调用，否则抛错。
+   * 写入数据。必须在 state==='open' 时调用，否则抛 {@link SessionNotOpenError}。
    *
    * 实际字节通过 WriteQueue 串行送达 transport；写入成功后由 audit 回调
    * 把字节追加到 transcript（origin = options.origin），从而保证 AI 与 human 的
    * 输入在 transcript 中按队列顺序可见 —— 这是 §4.5 审计不变量的核心。
    *
    * @param data 待写入字节
-   * @param options origin 必填（human/ai/system）；correlationId 可选，AI 调用应填以便外部关联
-   * @throws session 未打开时立即抛错；底层 writer 失败按原异常透传给调用方
+   * @param options origin 必填（human/ai/system）；correlationId 可选，AI 调用应填以便外部关联；
+   *                priority 可选（缺省 'normal'），仅 Ctrl-C/abort 等中断场景填 'high'，
+   *                由 WriteQueue 调度先于 normal lane drain
+   * @throws {SessionNotOpenError} session 当前不在 'open' 状态时立即抛出（含 `code:'NOT_OPEN'`）
+   * @throws {Error} 底层 writer 失败时按原异常透传给调用方
    */
   async write(data: Uint8Array, options: SessionWriteOptions): Promise<void> {
     if (this.#state !== 'open') {
-      throw new Error(`Session ${this.id} is not open (state=${this.#state})`);
+      throw new SessionNotOpenError(this.id, this.#state);
     }
     await this.#writeQueue.enqueue({
       origin: options.origin,
       data,
       correlationId: options.correlationId,
+      priority: options.priority,
     });
   }
 

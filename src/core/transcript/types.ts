@@ -49,6 +49,15 @@ export interface ReadResult {
    * 调用方需要据此提示 AI/UI "历史不完整"。
    */
   truncated: boolean;
+  /**
+   * 当前 buffer 中能直接读到的最早 sequence。
+   *
+   * 用法：调用方收到 truncated=true 时，可以把 cursor 重置为 `oldestAvailableSequence - 1`，
+   * 下次 readSince 即可从 buffer 中第一条仍存在的事件开始无缝续读，无需重新协商。
+   *
+   * 空 buffer 时为 latestCursor + 1（表示"下一条会落在哪里"）。
+   */
+  oldestAvailableSequence: SequenceCursor;
 }
 
 /**
@@ -63,6 +72,12 @@ export interface ITranscriptBuffer {
    * cursor=0 表示从最早可见事件开始；返回 cursor 等于最后一条事件的 sequence（无新事件时等于入参）。
    */
   readSince(cursor: SequenceCursor): ReadResult;
+
+  /**
+   * 取一份"从最早可见事件起的全量快照"。
+   * 等同 `readSince(0)`，仅在语义上让"新接入的 reader / UI 初次加载"更直观。
+   */
+  snapshot(): ReadResult;
 
   /** 当前最新事件的 sequence；buffer 为空时返回 0。 */
   latestCursor(): SequenceCursor;
@@ -80,4 +95,16 @@ export interface TranscriptBufferOptions {
   sessionId: SessionId;
   /** 环形容量上限。默认 MAX_TRANSCRIPT_EVENTS。 */
   capacity?: number;
+}
+
+/**
+ * clear 事件的 meta 形状（写入端可选附加；读取端按 `kind==='clear'` 识别）。
+ *
+ * `precedingCursor` 是清屏发生时已写入的最大 sequence，
+ * 让 UI / MCP 客户端能直接拿到"清屏前最后可见 sequence"。
+ */
+export interface ClearMeta {
+  kind: 'clear';
+  /** 清屏前最后一条事件的 sequence；首次清屏（buffer 为空）时为 0。 */
+  precedingCursor: SequenceCursor;
 }

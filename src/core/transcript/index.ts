@@ -1,5 +1,6 @@
 export { TranscriptBuffer } from './transcript-buffer.js';
 export type {
+  ClearMeta,
   EventType,
   ITranscriptBuffer,
   ReadResult,

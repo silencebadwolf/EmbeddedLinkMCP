@@ -1,5 +1,6 @@
 import type { Origin, SessionId, SessionState } from '../../shared/types.js';
 import type { ReadResult, SequenceCursor, TranscriptEvent } from '../transcript/types.js';
+import type { WritePriority } from '../write-queue/types.js';
 
 /**
  * 会话写入选项。
@@ -8,6 +9,14 @@ export interface SessionWriteOptions {
   /** 写入来源标签。必填 —— 调用层（IPC/MCP）必须显式标注 origin。 */
   origin: Origin;
   correlationId?: string;
+  /**
+   * 写入优先级；缺省 `'normal'`。
+   *
+   * 仅在用户显式触发的中断场景（Ctrl-C / abort）填 `'high'`；
+   * SessionBase 把它原样透传到 WriteQueue.enqueue，
+   * 受 WriteQueue 单一序列化点约束（仍走同一通道，仅决定 lane 选择）。
+   */
+  priority?: WritePriority;
 }
 
 /**
@@ -66,3 +75,25 @@ export type SessionStateMeta = {
   from: SessionState;
   to: SessionState;
 };
+
+/**
+ * 会话未处于 `open` 状态时调用 `write()` 抛出的具名错误。
+ *
+ * 上层（IPC handler / MCP tool）通过 `err instanceof SessionNotOpenError` 或
+ * `code === 'NOT_OPEN'` 识别它，并向客户端返回结构化错误码 `'NOT_OPEN'`，
+ * 而不是让它落到通用 `INTERNAL` 桶。这样 IPC 通道与 MCP 工具表层对"非 open
+ * 状态写入"返回一致的错误码（req §5.4 错误归类）。
+ */
+export class SessionNotOpenError extends Error {
+  readonly code = 'NOT_OPEN' as const;
+  /** 触发时会话当下状态，便于客户端展示提示。 */
+  readonly sessionState: SessionState;
+  readonly sessionId: SessionId;
+
+  constructor(sessionId: SessionId, state: SessionState) {
+    super(`Session ${sessionId} is not open (state=${state})`);
+    this.name = 'SessionNotOpenError';
+    this.sessionId = sessionId;
+    this.sessionState = state;
+  }
+}
