@@ -11,7 +11,7 @@ LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形
 | 阶段 | 状态 | 完成日期 |
 |---|---|---|
 | Phase 0: 项目脚手架 | ✅ 已完成 | 2026-06-13 |
-| Phase 1: 核心会话+Transcript+WriteQueue | ⬜ 未开始 | — |
+| Phase 1: 核心会话+Transcript+WriteQueue | ✅ 已完成 | 2026-06-13 |
 | Phase 2: 串口适配器 | ⬜ 未开始 | — |
 | Phase 3: SSH+本地 Shell | ⬜ 未开始 | — |
 | Phase 4: MCP 终端工具 | ⬜ 未开始 | — |
@@ -322,7 +322,74 @@ link-terminal-demo/
 
 ---
 
-## Phase 1: 核心会话抽象 + TranscriptBuffer + WriteQueue ⬜ 未开始
+## Phase 1: 核心会话抽象 + TranscriptBuffer + WriteQueue ✅ 已完成（2026-06-13）
+
+**目标**：构建所有后续阶段依赖的基础类型和类。这是最重要的阶段。
+
+### 实际交付物
+
+| 文件/模块 | 状态 | 说明 |
+|---|---|---|
+| `src/shared/types.ts` 扩展 | ✅ | 新增 `SessionState` 联合类型（idle/opening/open/closing/closed/errored） |
+| `src/shared/constants.ts` 扩展 | ✅ | 新增 `MAX_EVENT_DATA_BYTES`；`MAX_TRANSCRIPT_EVENTS` 注释更新 |
+| `src/transports/types.ts` | ✅ | `ITransport` 接口（EventEmitter + Promise 风格）+ `TransportEvents` |
+| `src/transports/index.ts` | ✅ | 桶导出 |
+| `src/core/transcript/types.ts` | ✅ | `EventType`（不含 truncated 哨兵）/`SequenceCursor=number`/`TranscriptEvent`/`ITranscriptBuffer` |
+| `src/core/transcript/transcript-buffer.ts` | ✅ | 环形缓冲实现，sequence 单调递增；溢出通过 `ReadResult.truncated` 标志暴露 |
+| `src/core/transcript/index.ts` | ✅ | 桶导出 |
+| `src/core/write-queue/types.ts` | ✅ | `IWriteQueue`/`WriteQueueItem`/`WriteAuditCallback` |
+| `src/core/write-queue/write-queue.ts` | ✅ | Promise 链 FIFO 串行；单 item 失败不卡死后续；close() drain |
+| `src/core/write-queue/index.ts` | ✅ | 桶导出 |
+| `src/core/session/types.ts` | ✅ | `ISession`/`SessionWriteOptions`/`SessionErrorMeta`/`SessionStateMeta` |
+| `src/core/session/session-base.ts` | ✅ | 抽象基类，串联 transport↔TranscriptBuffer↔WriteQueue；error/close 路径自动释放资源 |
+| `src/core/session/session-manager.ts` | ✅ | 注册/查找/销毁/事件转发；`crypto.randomUUID()` 生成 ID |
+| `src/core/session/index.ts` | ✅ | 桶导出 |
+| `src/core/index.ts` | ✅ | core 桶导出 |
+| `tests/fixtures/mock-transport.ts` | ✅ | 完整 ITransport mock，支持 failOnOpen/writeBehavior/pushIncoming/pushError/triggerClose |
+| `tests/unit/core/transcript-buffer.test.ts` | ✅ | 11 个测试覆盖 cursor 边界/环形溢出/多 reader |
+| `tests/unit/core/write-queue.test.ts` | ✅ | 10 个测试覆盖 FIFO/串行/失败传播/close drain/AI+人交替 |
+| `tests/unit/core/session-manager.test.ts` | ✅ | 19 个测试覆盖状态机/资源释放/transport 错误链路 |
+
+### 关键架构决策
+
+1. **TranscriptBuffer 追加写入 + 单调递增 sequence** — clear/error/state 都作为事件追加，不删除历史
+2. **环形缓冲溢出通过 ReadResult.truncated 标志暴露**（不在 buffer 内插入哨兵事件，避免"双倍丢弃"）
+3. **WriteQueue 是所有会话写入的单一瓶颈**，FIFO 串行；origin 是 §4.5 审计不变量的载体
+4. **SequenceCursor 形态：每会话独立的 number**（最易测、最易序列化、最易调试）
+5. **core 层零 Electron 依赖** — 仅依赖 `node:events` 与 `node:crypto`
+6. **transport 错误/主动 close 时自动释放队列与底层连接**（fire-and-forget），避免句柄泄漏
+
+### Phase 1 实施期间的需求/决策变更
+
+| 变更项 | 原计划 | 实际 | 原因 |
+|---|---|---|---|
+| Buffer 容量策略 | 未明示 | **环形缓冲 + 软上限**：满时丢最旧，readSince 通过 truncated 标志暴露 | 用户确认：内存可预测、Phase 5 再做压缩 |
+| Cursor 形态 | 未明示 | **每会话独立的 number**，从 1 起分配，0 表示"未读取过" | 用户确认：最易测试与调试 |
+| 并发写入模型 | 未明示 | **FIFO + per-session 串行**，origin 仅作审计标签（不做优先级） | 用户确认；Phase 5 再加优先级/背压 |
+| ITransport 风格 | 未明示 | **EventEmitter + Promise**（'data'/'error'/'close' 事件 + open/close/write Promise） | 用户确认：与 serialport/ssh2/node-pty 生态对齐 |
+| 错误传递 | 未明示 | transport 'error' → transcript 记录 EventType.error + state='errored' + **fire-and-forget 释放底层** | 用户确认 + 审查发现：errored 后必须自动 close 句柄 |
+| `EventType` 含 'truncated' | 计划 v1 草稿曾出现 | **已删除**，与实现保持一致 | 审查发现合同与实现互相矛盾，统一为"标志暴露" |
+| `SessionDeps`/`SessionEventEmitter`/`writeQueueFactory` | 临时引入 | **已删除** | 审查发现是死代码，且 writeQueueFactory 会绕过 audit 破坏审计不变量 |
+
+### 验收标准（全部通过）
+
+- ✅ `pnpm test`：46 个测试通过，324ms（远低于 5 秒上限）
+- ✅ `pnpm run lint`：0 错误 0 警告
+- ✅ `pnpm run build`：main + renderer 双侧 tsc strict 编译通过
+- ✅ `pnpm run validate:licenses`：5/5 依赖许可证完整
+- ✅ `src/core/` 零 Electron 依赖（grep 确认）
+- ✅ 测试不依赖硬件、串口、SSH、Electron
+- ✅ TranscriptBuffer 支持多 cursor 并发读取
+- ✅ WriteQueue 单 item 失败不阻塞后续；close() 真 drain
+- ✅ SessionBase 在 error/close 路径自动释放队列与 transport（避免 Phase 2 真适配器场景下的句柄泄漏）
+
+### 相对工作量：3x
+
+---
+
+## Phase 1（原始）：核心会话抽象 + TranscriptBuffer + WriteQueue
+
+> 以下为原始计划文本，保留作为历史参考。实际交付以上方"已完成"小节为准。
 
 **目标**：构建所有后续阶段依赖的基础类型和类。这是最重要的阶段。
 

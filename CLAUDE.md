@@ -8,7 +8,7 @@ LinkTerm v2 is an Electron/TypeScript rewrite of a legacy Qt/C++ terminal, inten
 
 Authoritative specs live in `PROJECT_REQUIREMENTS.md` (requirements) and `DEVELOPMENT_PLAN.md` (13-phase plan with current status). **Always check `DEVELOPMENT_PLAN.md` before starting work** — it tracks which phases are completed (✅), in progress, or not started (⬜), and records every decision/variance from the original plan.
 
-Current state: **Phase 0 (scaffolding) complete**. All other phases (1-12) not yet started.
+Current state: **Phase 0 (scaffolding) and Phase 1 (core session/transcript/write-queue) complete**. Phases 2–12 not yet started. The pure-logic core in `src/core/` is fully unit-tested (46 tests via Vitest); the renderer is still a placeholder with no IPC bridge or terminal UI yet.
 
 ## Common commands
 
@@ -75,6 +75,22 @@ Each MCP tool returns `{ success, sessionId?, state?, evidence: { kind, data, cu
 - **Tailwind v4** uses `@tailwindcss/postcss` (separate package), NOT `tailwindcss` directly as a PostCSS plugin. CSS uses `@import 'tailwindcss';`.
 - TypeScript is strict mode. ESLint uses flat config (`eslint.config.js`) with `typescript-eslint`.
 
+### Path alias `@/` is asymmetric — don't use it everywhere
+
+`@/*` → `src/*` is configured in `tsconfig.json`, `vite.config.ts`, and `vitest.config.ts`. But **`tsc` does not rewrite path aliases in emitted JS** — it only resolves them at type-check time. The main process is built by `tsc` and run directly by Node/Electron with no bundler in the loop, so `@/foo` in a main-process source file becomes a literal `@/foo` in `dist/` that Node cannot resolve at runtime.
+
+Rule:
+- **Renderer code and tests**: use `@/...` freely (Vite and Vitest rewrite it).
+- **Main process and `src/core/` code**: use **relative imports** (`../shared/types.js`), with `.js` extension as required by ESM.
+
+If you "globally replace `../../` with `@/`" again, the build will pass `tsc -b` but the app will crash at startup with `ERR_MODULE_NOT_FOUND`.
+
+### Dev mode startup ordering and CSP
+
+`pnpm run dev` only starts Vite — main process still needs `pnpm run build:main` (or full `pnpm run build`) before `pnpm start`. Electron may launch before Vite is ready; `src/main/app-lifecycle.ts` handles this with a `did-fail-load` retry loop (500ms × 20). Do not remove the retry without ensuring Vite is up first, or the renderer ends up stuck on a `chrome-error://` page that can't even reload localhost (different origin).
+
+CSP is injected as a response header via `session.defaultSession.webRequest.onHeadersReceived`, with different policies for dev (loose, allows Vite HMR `'unsafe-eval'` + `ws:`) and prod (`default-src 'self'`). **Don't put a `<meta http-equiv="Content-Security-Policy">` in `index.html`** — it would block Vite HMR in dev.
+
 ## Licensing discipline
 
 Every runtime third-party dependency MUST be recorded in `third-party-manifest.json` AND have its license file present at `licenses/<name>.LICENSE`. `pnpm run validate:licenses` enforces this bidirectionally. **When you add a runtime dependency, update both files in the same change** — CI/validation will fail otherwise (req §4.10).
@@ -97,3 +113,4 @@ Open-source projects can be referenced for design ideas, but source code copying
 5. 任何第三方依赖都必须符合项目的许可证要求，并且需要在 `third-party-manifest.json` 中进行记录，同时在 `licenses/` 目录下添加对应的许可证文件
 6. 在实现 MCP 工具时，必须严格遵守项目的安全边界要求，确保所有 MCP 请求都通过 LinkTerm 自有抽象层进行处理，避免直接调用系统工具，确保安全性和可维护性
 7. 在设计 UI 时，必须确保不同连接类型的参数字段清晰展示，避免用户混淆，同时提供明确的模式选择和说明，提升用户体验
+8. 用中文回复我
