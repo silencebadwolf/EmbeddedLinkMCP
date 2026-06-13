@@ -6,10 +6,13 @@
  */
 import { app, BrowserWindow } from 'electron';
 import { createMainWindow, handleWindowClose } from './app-lifecycle.js';
+import { registerIpcHandlers, type MainProcessContext } from './ipc/index.js';
 
 let mainWindow: BrowserWindow | null = null;
+let context: MainProcessContext | null = null;
 
 app.whenReady().then(() => {
+  context = registerIpcHandlers();
   mainWindow = createMainWindow();
 
   mainWindow.on('closed', () => {
@@ -24,6 +27,11 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('will-quit', () => {
+  context?.dispose();
+  context = null;
 });
 
 app.on('activate', () => {

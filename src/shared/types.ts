@@ -52,6 +52,15 @@ export interface SessionConfig {
   label?: string;
 }
 
+/** 串口数据位，常见嵌入式场景为 8。 */
+export type SerialDataBits = 5 | 6 | 7 | 8;
+
+/** 串口停止位，常见嵌入式场景为 1。 */
+export type SerialStopBits = 1 | 1.5 | 2;
+
+/** 串口校验位。'mark'/'space' 部分平台不支持，由 transport 层在 open 时校验。 */
+export type SerialParity = 'none' | 'even' | 'odd' | 'mark' | 'space';
+
 /** 串口会话配置。 */
 export interface SerialSessionConfig extends SessionConfig {
   type: 'serial';
@@ -61,6 +70,33 @@ export interface SerialSessionConfig extends SessionConfig {
   baudRate: number;
   /** 工作模式：normal 透传 / terminal 启用嵌入式规则。 */
   mode: SerialMode;
+  /** 数据位，默认 8。 */
+  dataBits?: SerialDataBits;
+  /** 停止位，默认 1。 */
+  stopBits?: SerialStopBits;
+  /** 校验位，默认 'none'。 */
+  parity?: SerialParity;
+  /** 硬件 RTS/CTS 流控，默认 false。 */
+  rtscts?: boolean;
+  /** 软件 XON 流控，默认 false。 */
+  xon?: boolean;
+  /** 软件 XOFF 流控，默认 false。 */
+  xoff?: boolean;
+}
+
+/**
+ * 串口枚举单条信息。从 `serialport` 的 PortInfo 子集裁剪而来，
+ * 仅包含 IPC/MCP 上下文需要的字段，避免暴露平台/驱动相关的 native 字段。
+ */
+export interface SerialPortInfo {
+  /** 系统设备路径，如 `/dev/tty.usbserial-XXX` 或 `COM3`。 */
+  path: string;
+  manufacturer?: string;
+  serialNumber?: string;
+  pnpId?: string;
+  vendorId?: string;
+  productId?: string;
+  locationId?: string;
 }
 
 /** SSH 会话配置（敏感字段如密码/私钥单独传递，不持久化于此）。 */

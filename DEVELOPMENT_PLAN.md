@@ -12,7 +12,7 @@ LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形
 |---|---|---|
 | Phase 0: 项目脚手架 | ✅ 已完成 | 2026-06-13 |
 | Phase 1: 核心会话+Transcript+WriteQueue | ✅ 已完成 | 2026-06-13 |
-| Phase 2: 串口适配器 | ⬜ 未开始 | — |
+| Phase 2: 串口适配器 | ✅ 已完成 | 2026-06-13 |
 | Phase 3: SSH+本地 Shell | ⬜ 未开始 | — |
 | Phase 4: MCP 终端工具 | ⬜ 未开始 | — |
 | Phase 5: AI-人共同操作 | ⬜ 未开始 | — |
@@ -434,7 +434,79 @@ link-terminal-demo/
 
 ---
 
-## Phase 2: 串口适配器 ⬜ 未开始
+## Phase 2: 串口适配器 ✅ 已完成（2026-06-13）
+
+**目标**：实现第一个真实 transport，证明会话抽象端到端可用。
+
+### 实际交付物
+
+| 文件/模块 | 状态 | 说明 |
+|---|---|---|
+| `src/shared/types.ts` 扩展 | ✅ | `SerialSessionConfig` 新增 `dataBits/stopBits/parity/rtscts/xon/xoff`；新增 `SerialDataBits/SerialStopBits/SerialParity/SerialPortInfo` |
+| `src/shared/constants.ts` 扩展 | ✅ | 新增 `DEFAULT_SERIAL_DATA_BITS/STOP_BITS/PARITY`、`SERIAL_DISCOVERY_POLL_INTERVAL_MS` |
+| `src/transports/serial/serial-port-like.ts` | ✅ | `SerialPortLike` 最小接口面 + `SerialPortFactory` 注入点（E1 决策） |
+| `src/transports/serial/serial-transport.ts` | ✅ | `SerialTransport implements ITransport`；write+drain 双步语义；幂等 close；物理拔出走 closed 状态而非 errored（F1） |
+| `src/transports/serial/serial-discovery.ts` | ✅ | 引用计数轮询；2s 间隔；默认 noop error 监听器避免无 listener 崩进程；`unref()` 让进程可退出 |
+| `src/transports/serial/serial-session.ts` | ✅ | `SerialSession extends SessionBase`；保留 `mode` 只读字段供 Phase 7 使用 |
+| `src/transports/serial/index.ts` | ✅ | 桶导出 |
+| `src/transports/index.ts` 扩展 | ✅ | 新增 `export * from './serial/index.js'` |
+| `src/main/ipc/serial-ipc.ts` | ✅ | `SERIAL_LIST_PORTS` invoke + `SERIAL_PORT_CHANGED` 广播；薄壳 |
+| `src/main/ipc/index.ts` 重构 | ✅ | `registerIpcHandlers()` 返回 `MainProcessContext`，含 `serialDiscovery` 与 `dispose` |
+| `src/main/index.ts` 接入 | ✅ | `app.whenReady` 注册 IPC，`app.will-quit` 调用 `context.dispose()` |
+| `tests/fixtures/mock-serialport.ts` | ✅ | `FakeSerialPort` + `createMockSerialPortFactory`；`writes/drainCalls/closeCalls` 计数 |
+| `tests/unit/transports/serial-transport.test.ts` | ✅ | 16 个测试覆盖 open/write+drain/close 各路径 + 错误 + 物理拔出与 SessionBase 错误恢复交错 |
+| `tests/unit/transports/serial-discovery.test.ts` | ✅ | 7 个测试覆盖 listPorts、引用计数轮询、变更检测、order-independence、瞬时错误恢复 |
+| `tests/unit/transports/serial-session.test.ts` | ✅ | 3 个测试覆盖 mode 字段、SessionBase 集成、transport 错误后 fd 释放 |
+| `third-party-manifest.json` 扩展 | ✅ | 新增 `serialport ^13.0.0` |
+| `licenses/serialport.LICENSE` | ✅ | MIT 许可证文件 |
+
+### 关键架构决策
+
+1. **`SerialPortLike` 最小接口面 + 工厂注入** — `SerialTransport` 不直接 `new SerialPort`；测试通过 `portFactory` 传 `FakeSerialPort`。这与 Phase 9 的 J-Link backend 注入模式一致
+2. **write 语义：write→drain 两步成功才 resolve** — WriteQueue 已串行化，无吞吐顾虑；保证 SessionBase 把审计事件落 transcript 时字节确实已发出
+3. **物理断连 → `'close'`（不升级 `'error'`）** — 物理拔出属于正常生命周期，session 走 `closed`；用户重连即可
+4. **SerialDiscovery 引用计数自动启停轮询** — 第一个 `'change'` 订阅者出现启动 `setInterval`，最后一个移除时清掉 timer；避免无人订阅时的常驻消耗
+5. **SerialDiscovery 内置 noop `'error'` 监听器** — 防止瞬时 `SerialPort.list()` 失败让 `EventEmitter` 抛 uncaught 把主进程崩了；外部仍可附加真实诊断 listener
+6. **IPC 在 Phase 2 仅做端口发现** — `serial-ipc.ts` 是薄壳；session 相关 IPC 留给 Phase 5
+
+### Phase 2 实施期间的需求/决策变更
+
+| 变更项 | 原计划 | 实际 | 原因 |
+|---|---|---|---|
+| 串口字段 | 仅 baudRate/mode | **加全 dataBits/stopBits/parity/rtscts/xon/xoff** | 用户决策 A1：嵌入式串口常用 7E1/奇校验/流控，后期再加成本高 |
+| terminal 模式 | 未明示 | **Phase 2 仅作字段透传，行为与 normal 一致** | 用户决策 B1：避免 Phase 6/7 又改 schema |
+| watchPorts 实现时机 | 未明示 | **Phase 2 实现 + 2s 轮询 + 引用计数自动启停** | 用户决策 C1/C2：满足 §6 热插拔 + §4.9 手动刷新最小集 |
+| write drain 语义 | 未明示 | **每次 write 后 await drain()** | 用户决策 D1：WriteQueue 已串行，优先满足 §4.5 审计不变量 |
+| SerialPort 注入 | 未明示 | **构造函数 portFactory 显式 DI** | 用户决策 E1：与 J-Link backend 模式一致 |
+| 物理拔出分类 | 未明示 | **走 'close' 不升级 'error'** | 用户决策 F1：物理断开属正常生命周期 |
+| serial-ipc.ts 范围 | 未明示 | **Phase 2 仅 LIST_PORTS + PORT_CHANGED 薄壳** | 用户决策 G1：让 Phase 6 已有可用 IPC |
+| `@electron/rebuild` | 未明示 | **暂不引入，Phase 6 启动 UI 时再加** | 用户决策 H1：避免 CI/开发机不必要本地编译 |
+| SerialSession 子类 | 计划中保留 | **保留，但 Phase 2 仅工厂职责** | 用户决策 I1：Phase 7 加 sendAndWait 时不需重构 |
+| Phase 5 review 修复 | — | **C1 noop error 监听器、I1 双重 normalize 去重、I2/I3/I4/I5 简化、测试 I6/I7/I8 加强** | 三路 code-reviewer 审查发现，全部修复 |
+
+### 新增依赖
+
+**运行时**：`serialport ^13.0.0`（MIT，已登记 manifest + 落地 license 文件）
+
+### 验收标准（全部通过）
+
+- ✅ `pnpm test`：72 个测试通过（46 旧 + 26 新增），330ms
+- ✅ `pnpm run lint`：0 错误 0 警告
+- ✅ `pnpm run build`：main + renderer 双侧 tsc strict 编译通过
+- ✅ `pnpm run validate:licenses`：6/6 依赖许可证完整
+- ✅ `src/transports/serial/` 零 Electron 依赖（grep 确认）
+- ✅ 测试不依赖真实串口硬件（全部走 FakeSerialPort）
+- ✅ SerialTransport 与 SessionBase 集成：open/write 审计/device 入站/close 状态机全链路
+- ✅ SerialTransport 在物理拔出 + SessionBase 错误恢复两条交错路径上 'close' 仅 emit 一次
+- ✅ SerialDiscovery 引用计数启停轮询、order-independent 比较、瞬时错误不停轮询
+
+### 相对工作量：2x（与计划一致）
+
+---
+
+## Phase 2（原始）：串口适配器
+
+> 以下为原始计划文本，保留作为历史参考。实际交付以上方"已完成"小节为准。
 
 **目标**：实现第一个真实 transport，证明会话抽象端到端可用。
 

@@ -28,5 +28,21 @@ export const MAX_EVENT_DATA_BYTES = 64 * 1024;
 /** 串口默认波特率（嵌入式开发常用 115200）。 */
 export const DEFAULT_SERIAL_BAUD_RATE = 115200;
 
+/** 串口默认数据位。 */
+export const DEFAULT_SERIAL_DATA_BITS = 8;
+
+/** 串口默认停止位。 */
+export const DEFAULT_SERIAL_STOP_BITS = 1;
+
+/** 串口默认校验位。 */
+export const DEFAULT_SERIAL_PARITY = 'none';
+
+/**
+ * SerialDiscovery 轮询间隔（毫秒）。
+ * `serialport` 不提供 hot-plug 通知，需要轮询 list 检测增删；
+ * 仅当存在订阅者时启动定时器，无订阅时停止以避免常驻消耗。
+ */
+export const SERIAL_DISCOVERY_POLL_INTERVAL_MS = 2000;
+
 /** SSH 默认监听端口。 */
 export const DEFAULT_SSH_PORT = 22;

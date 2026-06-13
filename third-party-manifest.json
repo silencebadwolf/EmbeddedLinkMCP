@@ -31,6 +31,12 @@
       "version": "^4.4.3",
       "license": "MIT",
       "licenseFile": "licenses/zod.LICENSE"
+    },
+    {
+      "name": "serialport",
+      "version": "^13.0.0",
+      "license": "MIT",
+      "licenseFile": "licenses/serialport.LICENSE"
     }
   ]
 }
