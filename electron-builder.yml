@@ -1,0 +1,24 @@
+appId: com.linkterm.v2
+productName: LinkTerm v2
+directories:
+  buildResources: resources
+  output: release
+files:
+  - dist/**/*
+  - package.json
+extraMetadata:
+  main: dist/main/index.js
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+win:
+  target:
+    - nsis
+    - portable
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development

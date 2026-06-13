@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist/main",
+    "rootDir": "src",
+    "composite": true,
+    "types": ["node"],
+    "lib": ["ES2022"]
+  },
+  "include": [
+    "src/main/**/*.ts",
+    "src/core/**/*.ts",
+    "src/transports/**/*.ts",
+    "src/mcp/**/*.ts",
+    "src/jlink/**/*.ts",
+    "src/shared/**/*.ts"
+  ]
+}
