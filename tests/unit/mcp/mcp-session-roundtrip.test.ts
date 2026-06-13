@@ -128,11 +128,11 @@ describe('MCP session roundtrip (open → write → read)', () => {
       arguments: { sessionId: session.id, cursor: cursorAfterFirstRead },
     })).structuredContent as Record<string, unknown>;
     const evs = (readOut3.evidence as {
-      data: { events: { type: string; origin: string; data?: string; dataEncoding?: string }[] };
+      data: { events: { type: string; origin: string; dataBase64?: string }[] };
     }).data.events;
     const deviceEv = evs.find((e) => e.type === 'data' && e.origin === 'device');
     expect(deviceEv).toBeDefined();
-    expect(Buffer.from(deviceEv!.data!, 'base64').toString('utf-8')).toBe('done\n');
+    expect(Buffer.from(deviceEv!.dataBase64!, 'base64').toString('utf-8')).toBe('done\n');
 
     // 6) close_session：transport 关闭，但 transcript 仍可读
     const closeOut = (await client.callTool({

@@ -3,8 +3,17 @@ import type { SessionManager } from '../../core/session/session-manager.js';
 import type { TranscriptEvent } from '../../core/transcript/types.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import { WriteQueueFullError } from '../../core/write-queue/types.js';
-import { SessionNotOpenError } from '../../core/session/types.js';
-import type { SessionId } from '../../shared/types.js';
+import { SessionNotOpenError, SessionNotFoundError } from '../../core/session/types.js';
+import type { SessionId, SessionState } from '../../shared/types.js';
+import {
+  serializeTranscriptEvent,
+  type SerializedTranscriptEvent,
+} from '../../shared/transcript-ipc-types.js';
+import type {
+  PreloadResult,
+  PreloadFail,
+} from '../../shared/preload-api.js';
+import { ERROR_CODES } from '../../shared/error-codes.js';
 
 /** session:write 入参契约。data 通过 IPC 传 base64 字符串，避免 Buffer 序列化平台差异。 */
 interface SessionWriteRequest {
@@ -48,14 +57,6 @@ interface TranscriptSubscribeRequest {
 }
 
 /**
- * IPC 错误响应格式。客户端按 `success:false` 路径处理，避免 Electron 的默认抛错语义。
- *
- * 之所以不直接 throw：ipcRenderer.invoke 在被拒绝时会把 stack 整个 dump 给渲染端，
- * 既泄漏路径又难以国际化。改用结构化错误更稳定。
- */
-type IpcResult<T> = { success: true; data: T } | { success: false; error: { code: string; message: string } };
-
-/**
  * 注册所有 session 相关 IPC handler 与 transcript 推送。
  *
  * 承担两层职责：
@@ -81,9 +82,10 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
   const subscriberIdOf = (wc: WebContents): string => `wc:${wc.id}`;
 
   const onSessionEvent = (sessionId: SessionId, event: TranscriptEvent): void => {
+    const serialized = serializeTranscriptEvent(event);
     for (const wc of subscribers.values()) {
       if (!wc.isDestroyed()) {
-        wc.send(IPC_CHANNELS.TRANSCRIPT_EVENT, { sessionId, event });
+        wc.send(IPC_CHANNELS.TRANSCRIPT_EVENT, { sessionId, event: serialized });
       }
     }
   };
@@ -108,19 +110,19 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
     try {
       return new Uint8Array(Buffer.from(s, 'base64'));
     } catch (err) {
-      throw new IpcError('INVALID_PAYLOAD', err instanceof Error ? err.message : String(err));
+      throw new IpcError(ERROR_CODES.INVALID_PAYLOAD, err instanceof Error ? err.message : String(err));
     }
   };
 
   ipcMain.handle(
     IPC_CHANNELS.SESSION_WRITE,
-    async (_event, req: SessionWriteRequest): Promise<IpcResult<{ bytesWritten: number }>> =>
+    async (_event, req: SessionWriteRequest): Promise<PreloadResult<{ bytesWritten: number }>> =>
       wrap(async () => {
         const data = decodeBase64(req.dataBase64);
         // 安全边界：origin 在主进程强制 'human'，不接受渲染端任何覆盖
         const session = sessionManager.get(req.sessionId);
         if (!session) {
-          throw new IpcError('SESSION_NOT_FOUND', `Session not found: ${req.sessionId}`);
+          throw new IpcError(ERROR_CODES.SESSION_NOT_FOUND, `Session not found: ${req.sessionId}`);
         }
         try {
           await session.write(data, {
@@ -130,10 +132,10 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
           });
         } catch (err) {
           if (err instanceof WriteQueueFullError) {
-            throw new IpcError('QUEUE_FULL', err.message);
+            throw new IpcError(ERROR_CODES.QUEUE_FULL, err.message);
           }
           if (err instanceof SessionNotOpenError) {
-            throw new IpcError('NOT_OPEN', err.message);
+            throw new IpcError(ERROR_CODES.NOT_OPEN, err.message);
           }
           throw err;
         }
@@ -147,7 +149,7 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
       _event,
       req: SessionReadRequest,
     ): Promise<
-      IpcResult<{
+      PreloadResult<{
         events: ReadonlyArray<SerializedTranscriptEvent>;
         cursor: number;
         truncated: boolean;
@@ -157,7 +159,7 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
       wrap(async () => {
         const result = sessionManager.read(req.sessionId, req.cursor ?? 0);
         return {
-          events: result.events.map(serializeEvent),
+          events: result.events.map(serializeTranscriptEvent),
           cursor: result.cursor,
           truncated: result.truncated,
           oldestAvailableSequence: result.oldestAvailableSequence,
@@ -167,7 +169,7 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
 
   ipcMain.handle(
     IPC_CHANNELS.SESSION_CLEAR,
-    async (_event, req: SessionClearRequest): Promise<IpcResult<{ sequence: number }>> =>
+    async (_event, req: SessionClearRequest): Promise<PreloadResult<{ sequence: number }>> =>
       wrap(async () => {
         const event = sessionManager.clear(req.sessionId, 'human');
         return { sequence: event.sequence };
@@ -176,7 +178,7 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
 
   ipcMain.handle(
     IPC_CHANNELS.SESSION_LIST,
-    async (): Promise<IpcResult<{ sessionIds: ReadonlyArray<SessionId> }>> =>
+    async (): Promise<PreloadResult<{ sessionIds: ReadonlyArray<SessionId> }>> =>
       wrap(async () => ({ sessionIds: sessionManager.list() })),
   );
 
@@ -185,11 +187,11 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
     async (
       _event,
       req: SessionStatusRequest,
-    ): Promise<IpcResult<{ sessionId: SessionId; state: string; latestCursor: number }>> =>
+    ): Promise<PreloadResult<{ sessionId: SessionId; state: SessionState; latestCursor: number }>> =>
       wrap(async () => {
         const session = sessionManager.get(req.sessionId);
         if (!session) {
-          throw new IpcError('SESSION_NOT_FOUND', `Session not found: ${req.sessionId}`);
+          throw new IpcError(ERROR_CODES.SESSION_NOT_FOUND, `Session not found: ${req.sessionId}`);
         }
         const result = session.read(0);
         return {
@@ -202,11 +204,11 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
 
   ipcMain.handle(
     IPC_CHANNELS.SESSION_RESIZE,
-    async (_event, req: SessionResizeRequest): Promise<IpcResult<{ resized: boolean }>> =>
+    async (_event, req: SessionResizeRequest): Promise<PreloadResult<{ resized: boolean }>> =>
       wrap(async () => {
         const session = sessionManager.get(req.sessionId);
         if (!session) {
-          throw new IpcError('SESSION_NOT_FOUND', `Session not found: ${req.sessionId}`);
+          throw new IpcError(ERROR_CODES.SESSION_NOT_FOUND, `Session not found: ${req.sessionId}`);
         }
         if (typeof session.resize !== 'function') {
           // 串口 session 没有窗口概念；返回 resized=false 而非抛错让前端兼容写法更简洁
@@ -219,7 +221,7 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
 
   ipcMain.handle(
     IPC_CHANNELS.SESSION_DESTROY,
-    async (_event, req: SessionDestroyRequest): Promise<IpcResult<{ destroyed: true }>> =>
+    async (_event, req: SessionDestroyRequest): Promise<PreloadResult<{ destroyed: true }>> =>
       wrap(async () => {
         await sessionManager.destroy(req.sessionId);
         return { destroyed: true };
@@ -232,7 +234,7 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
       event: IpcMainInvokeEvent,
       req: TranscriptSubscribeRequest,
     ): Promise<
-      IpcResult<{
+      PreloadResult<{
         events: ReadonlyArray<SerializedTranscriptEvent>;
         cursor: number;
         truncated: boolean;
@@ -256,7 +258,7 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
         }
         const result = sessionManager.readForSubscriber(subscriberIdOf(wc), req.sessionId);
         return {
-          events: result.events.map(serializeEvent),
+          events: result.events.map(serializeTranscriptEvent),
           cursor: result.cursor,
           truncated: result.truncated,
           oldestAvailableSequence: result.oldestAvailableSequence,
@@ -280,34 +282,11 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
 }
 
 /** 序列化 TranscriptEvent 给 IPC：data 改为 base64 字符串，避免 Buffer 跨 worker 复制。 */
-export interface SerializedTranscriptEvent {
-  type: TranscriptEvent['type'];
-  origin: TranscriptEvent['origin'];
-  sequence: number;
-  timestamp: number;
-  evidenceKind?: TranscriptEvent['evidenceKind'];
-  /** base64 编码；data 字段不存在或为空时省略此键。 */
-  dataBase64?: string;
-  meta?: TranscriptEvent['meta'];
-}
+export type { SerializedTranscriptEvent } from '../../shared/transcript-ipc-types.js';
 
-/** 把 TranscriptEvent 序列化为 IPC 安全格式（Uint8Array → base64 字符串）。 */
-export function serializeEvent(event: TranscriptEvent): SerializedTranscriptEvent {
-  const out: SerializedTranscriptEvent = {
-    type: event.type,
-    origin: event.origin,
-    sequence: event.sequence,
-    timestamp: event.timestamp,
-  };
-  if (event.evidenceKind) out.evidenceKind = event.evidenceKind;
-  if (event.data && event.data.byteLength > 0) {
-    out.dataBase64 = Buffer.from(event.data).toString('base64');
-  }
-  if (event.meta) out.meta = event.meta;
-  return out;
-}
-
-/** 主进程内部错误类型；包装成 IPC 标准错误响应时使用。 */
+/**
+ * 主进程内部错误类型；包装成 IPC 标准错误响应时使用。
+ */
 class IpcError extends Error {
   constructor(public readonly code: string, message: string) {
     super(message);
@@ -318,22 +297,37 @@ class IpcError extends Error {
 /**
  * 把 handler 抛出的异常包装为统一 `{ success:false, error }`，
  * 让渲染端永远拿到结构化结果而非 Electron 默认的 stack dump。
+ *
+ * Phase 6 评审 M3：原 fallback 用 `/not found/i` 嗅探消息映射到 SESSION_NOT_FOUND；
+ * 现统一通过 `SessionNotFoundError` 命名错误识别，删除字符串 fallback。
  */
-async function wrap<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
+async function wrap<T>(fn: () => Promise<T>): Promise<PreloadResult<T>> {
   try {
     const data = await fn();
     return { success: true, data };
   } catch (err) {
     if (err instanceof IpcError) {
-      return { success: false, error: { code: err.code, message: err.message } };
+      return failOf(err.code, err.message);
+    }
+    if (err instanceof SessionNotFoundError) {
+      return failOf(ERROR_CODES.SESSION_NOT_FOUND, err.message);
+    }
+    if (err instanceof SessionNotOpenError) {
+      return failOf(ERROR_CODES.NOT_OPEN, err.message);
+    }
+    if (err instanceof WriteQueueFullError) {
+      return failOf(ERROR_CODES.QUEUE_FULL, err.message);
     }
     const message = err instanceof Error ? err.message : String(err);
-    if (/not found/i.test(message)) {
-      return { success: false, error: { code: 'SESSION_NOT_FOUND', message } };
-    }
-    return { success: false, error: { code: 'INTERNAL', message } };
+    return failOf(ERROR_CODES.INTERNAL, message);
   }
 }
 
+/** 构造 PreloadFail；保留这一辅助函数让 wrap 主体更短、可读性更高。 */
+function failOf(code: string, message: string): PreloadFail {
+  return { success: false, error: { code, message } };
+}
+
 /** 测试用导出：让主进程之外的工具（不依赖 Electron）也能消费这一组类型。 */
-export type { SessionWriteRequest, SessionReadRequest, IpcResult };
+export type { SessionWriteRequest, SessionReadRequest };
+export type { PreloadResult as IpcResult } from '../../shared/preload-api.js';

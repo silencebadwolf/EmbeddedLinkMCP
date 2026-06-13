@@ -16,7 +16,7 @@ LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形
 | Phase 3: SSH+本地 Shell | ✅ 完成 | 2026-06-13 |
 | Phase 4: MCP 终端工具 | ✅ 已完成 | 2026-06-13 |
 | Phase 5: AI-人共同操作 | ✅ 已完成 | 2026-06-13 |
-| Phase 6: Electron UI | ⬜ 未开始 | — |
+| Phase 6: Electron UI | ✅ 已完成 | 2026-06-13 |
 | Phase 7: 终端规则+sendAndWait | ⬜ 未开始 | — |
 | Phase 8: 工作区配置 | ⬜ 未开始 | — |
 | Phase 9: J-Link MCP | ⬜ 未开始 | — |
@@ -767,7 +767,47 @@ link-terminal-demo/
 
 ---
 
-## Phase 6: Electron UI ⬜ 未开始
+## Phase 6: Electron UI ✅ 已完成（2026-06-13）
+
+**实际交付物**（决策记录详见 `docs/phase-decisions/Phase6.md`）：
+
+| 类别 | 文件 / 模块 |
+|---|---|
+| Main 进程 | `src/main/preload.ts`（contextBridge 暴露 `window.linkterm.*`）；`src/main/ipc/session-create-handler.ts`；`src/main/ipc/serial-ipc.ts`（包装 `wrap()` 走 PreloadResult）；`src/main/ipc/session-ipc.ts`（共享 serializeTranscriptEvent） |
+| Core 抽离 | `src/core/session/factory.ts`（buildSession，从 main 迁入 core，MCP 与 IPC 共享）；`src/core/session/types.ts` 新增 `SessionNotFoundError` |
+| Shared 契约 | `src/shared/preload-api.ts`（PreloadResult 单一来源 + SessionCreateRequestConfig 含 SSH credentials）；`src/shared/transcript-ipc-types.ts`（统一 serializeTranscriptEvent）；`src/shared/error-codes.ts`（错误码常量集中） |
+| Renderer 业务组件 | `TerminalView.tsx` / `ConnectionDialog.tsx` / `SessionTabBar.tsx` / `SerialPortPicker.tsx` / `OriginIndicator.tsx` |
+| Renderer 基建 | `src/renderer/store/app-store.ts`（Zustand 单 store + SessionState 类型）；`src/renderer/i18n/{en,zh,index}.ts`；`src/renderer/lib/{cn,render-event}.ts`；`src/renderer/hooks/{useSession,useSerialDiscovery,useTranscript}.ts` |
+| shadcn 子集 | `src/renderer/components/ui/{dialog,button,tabs,select,input,label,form-field}.tsx` |
+| 测试基建 | `vitest.config.ts` `environmentMatchGlobs` happy-dom；`tests/setup-renderer.ts`；`tests/fixtures/mock-preload-api.ts` |
+| 单测 | tests/unit/{main,renderer,mcp}/ 多个文件；237/237 通过（+72 vs Phase 5） |
+| 许可证 | 10 个新 runtime 包同步 `third-party-manifest.json` + `licenses/`；version 范围对齐 |
+
+**关键架构决策**（详见 `docs/phase-decisions/Phase6.md`）：
+- 架构方案：**Pragmatic Balance**（vs Minimal / Clean）— preload 命名空间分组 + Zustand 单 store + hook 集中 base64 解码 + shared `PreloadAPI` 类型双向消费
+- 13 项 Clarifying 决策（shadcn 子集 / 自建 minimal i18n hook / Zustand 单 store / 命名空间 preload / 主进程派生 subscriberId / xterm 订阅快照混合 / clear 分隔符 / 单页对话框 / 自动扫描+manual / happy-dom 测试 / origin 行级前缀 + 呼吸灯 / 测试基建本期补齐）
+
+**实施期需求/决策变更**：
+- session-factory **从 `src/main/` 迁到 `src/core/session/factory.ts`**（review H5）— 避免 mcp 反向依赖 main，回归 "core 零 Electron" 边界
+- xterm `useTranscript` 启动序**从"read+subscribe 混合"改为"仅 subscribe"**（review C1）— subscribe 返回 atomic 历史快照 + cursor，消除竞态丢首屏事件
+- ConnectionDialog SSH 凭据**通过 `SessionCreateRequestConfig` 联合类型携带**（review H2）— 消除双层 cast 走私
+- MCP serializeEvent 与 IPC serializeEvent **统一收敛到 shared `dataBase64`**（review H3）— evidence schema 一致
+
+**Code review 处置摘要**（3 路并行 reviewer A/B/C）：
+- Critical: 1（C1 read+subscribe 竞态）已修
+- High: 5（H1 跨事件前缀注入、H2 凭据 cast、H3 schema 不一致、H4 IpcResult 双写、H5 跨层倒挂）全部修
+- Medium: 9（M1 TextDecoder stream、M2 listPorts wrap、M3 字符串匹配 fallback、M4 markOriginActivity 节流、M5 错误码常量集中、M6 manifest 版本对齐、M7 shadcn JSDoc、M8 SessionState 类型、M9 FormField 抽出）全部修
+- Low: 6 项推迟（推迟理由记录在决策文件）
+
+**验收**：
+- `pnpm run lint` clean
+- `pnpm test` 237/237 passed（24 test files；Phase 5: 172 → Phase 6: 237，+65）
+- `pnpm run build` tsc + vite 双绿
+- `pnpm run validate:licenses` 19/19 PASS
+
+---
+
+## Phase 6（原始计划）
 
 **目标**：构建 xterm.js 终端渲染 UI、连接对话框、串口发现和中英文支持。
 

@@ -8,7 +8,7 @@ LinkTerm v2 is an Electron/TypeScript rewrite of a legacy Qt/C++ terminal, inten
 
 Authoritative specs live in `PROJECT_REQUIREMENTS.md` (requirements) and `DEVELOPMENT_PLAN.md` (13-phase plan with current status). **Always check `DEVELOPMENT_PLAN.md` before starting work** — it tracks which phases are completed (✅), in progress, or not started (⬜), and records every decision/variance from the original plan.
 
-Current state: **Phases 0–5 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters, MCP terminal surface with 8 tools, AI-human coop hardening with priority/backpressure/multi-subscriber). Phases 6–12 not yet started. 172 Vitest tests cover `src/core/`, `src/transports/{serial,ssh,local-shell}/`, `src/mcp/`, and the AI-human coop integration scenarios; the renderer is still a placeholder with no IPC bridge or terminal UI yet.
+Current state: **Phases 0–6 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters, MCP terminal surface with 8 tools, AI-human coop hardening, Electron renderer UI with xterm.js + connection dialog + i18n + shadcn primitives). Phases 7–12 not yet started. 237 Vitest tests cover `src/core/`, `src/transports/{serial,ssh,local-shell}/`, `src/mcp/`, AI-human coop integration, the renderer (happy-dom hooks/components), and `session:create` IPC.
 
 ## Common commands
 
@@ -100,6 +100,16 @@ Three independent surfaces, never mixed:
 - **UI surface** — `ui_configure` (whitelisted: language/connection-type/field values only) and `ui_screenshot` (PNG via `BrowserWindow.webContents.capturePage()`). Output is `EvidenceKind.ui_screenshot`.
 
 Each MCP tool returns `{ success, sessionId?, state?, evidence: { kind, data, cursor }, error?, correlationId, origin: 'ai' }`.
+
+### Renderer ↔ preload contract (Phase 6)
+
+The only renderer→main channel is `window.linkterm`, injected by `src/main/preload.ts` via `contextBridge.exposeInMainWorld`. The shape lives in `src/shared/preload-api.ts` (`PreloadAPI` interface + `declare global`). Both sides import this single source of truth — adding a new IPC method means updating preload-api.ts FIRST, then preload.ts and the renderer caller; otherwise the type assertion silently drifts.
+
+**Browser-mode safety**: `window.linkterm` is undefined when the renderer is loaded outside Electron (Vite dev server in a plain browser tab, Storybook, Playwright). Every renderer call site MUST use `getLinkterm()` from `src/renderer/lib/linkterm-bridge.ts` and early-return when it's null — do NOT chain optional access (`window.linkterm?.session?.write?.(...)`) at the call site, since that pattern hides legitimate "preload missing in production" bugs.
+
+**Transcript hydration is subscribe-only**: `useTranscript` registers `transcript.onEvent` BEFORE calling `session.subscribe`, then renders the snapshot returned in `subscribe()`'s `events` field — there is no `read({cursor:0})` path. Phase 6 review C1 removed the original read+subscribe combo because of an unfixable race: events arriving between `read` resolving and `subscribe` registering would either be lost or replayed on top of the read snapshot.
+
+**Origin/credentials boundary recap**: the renderer is trusted but its IPC payload is sanitized server-side. `session:write` ignores any caller-supplied `origin` and forces `'human'`; `session:create` for SSH receives `credentials` as a separate top-level field (`SessionCreateRequestConfig`'s SSH branch), and `buildSession()` in `src/core/session/factory.ts` wipes them before any await. Never reintroduce a flow that puts credentials inside `SshSessionConfig` proper.
 
 ## Build configuration peculiarities
 

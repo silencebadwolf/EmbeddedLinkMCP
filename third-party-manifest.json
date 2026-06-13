@@ -55,6 +55,66 @@
       "version": "^1.0.0",
       "license": "MIT",
       "licenseFile": "licenses/node-pty.LICENSE"
+    },
+    {
+      "name": "@xterm/xterm",
+      "version": "^5.5.0",
+      "license": "MIT",
+      "licenseFile": "licenses/xterm.LICENSE"
+    },
+    {
+      "name": "@xterm/addon-fit",
+      "version": "^0.10.0",
+      "license": "MIT",
+      "licenseFile": "licenses/xterm-addon-fit.LICENSE"
+    },
+    {
+      "name": "@radix-ui/react-dialog",
+      "version": "^1.1.16",
+      "license": "MIT",
+      "licenseFile": "licenses/radix-ui-react-dialog.LICENSE"
+    },
+    {
+      "name": "@radix-ui/react-tabs",
+      "version": "^1.1.14",
+      "license": "MIT",
+      "licenseFile": "licenses/radix-ui-react-tabs.LICENSE"
+    },
+    {
+      "name": "@radix-ui/react-select",
+      "version": "^2.3.0",
+      "license": "MIT",
+      "licenseFile": "licenses/radix-ui-react-select.LICENSE"
+    },
+    {
+      "name": "@radix-ui/react-label",
+      "version": "^2.1.9",
+      "license": "MIT",
+      "licenseFile": "licenses/radix-ui-react-label.LICENSE"
+    },
+    {
+      "name": "@radix-ui/react-slot",
+      "version": "^1.2.5",
+      "license": "MIT",
+      "licenseFile": "licenses/radix-ui-react-slot.LICENSE"
+    },
+    {
+      "name": "class-variance-authority",
+      "version": "^0.7.1",
+      "license": "Apache-2.0",
+      "licenseFile": "licenses/class-variance-authority.LICENSE"
+    },
+    {
+      "name": "clsx",
+      "version": "^2.1.1",
+      "license": "MIT",
+      "licenseFile": "licenses/clsx.LICENSE"
+    },
+    {
+      "name": "tailwind-merge",
+      "version": "^3.6.0",
+      "license": "MIT",
+      "licenseFile": "licenses/tailwind-merge.LICENSE"
     }
   ]
 }

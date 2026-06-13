@@ -113,6 +113,11 @@ export function createMainWindow(): BrowserWindow {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      // ESM preload 需要 sandbox=false（Electron 20+ 默认 sandbox 不支持 ES modules）。
+      // 主防线仍是 contextIsolation + nodeIntegration=false：渲染上下文里 process / require 都拿不到。
+      sandbox: false,
+      // tsconfig.main.json 把 src/main/preload.ts 编译到 dist/main/main/preload.js（rootDir 模型双 main）
+      preload: join(__dirname, 'preload.js'),
     },
   });
 

@@ -97,3 +97,22 @@ export class SessionNotOpenError extends Error {
     this.sessionState = state;
   }
 }
+
+/**
+ * 会话不存在（已 destroy 或从未注册）时 SessionManager 抛出的具名错误。
+ *
+ * Phase 6 评审 M3：原 SessionManager 抛 `Error('Session not found: ...')`，
+ * 上层用正则 `/not found/i` 嗅探消息——脆弱（任何消息改动都会让 fallback 失效）。
+ * 改为命名错误后，IPC handler / MCP tool 用 `instanceof` 识别并映射到
+ * `ERROR_CODES.SESSION_NOT_FOUND`。
+ */
+export class SessionNotFoundError extends Error {
+  readonly code = 'SESSION_NOT_FOUND' as const;
+  readonly sessionId: SessionId;
+
+  constructor(sessionId: SessionId) {
+    super(`Session not found: ${sessionId}`);
+    this.name = 'SessionNotFoundError';
+    this.sessionId = sessionId;
+  }
+}

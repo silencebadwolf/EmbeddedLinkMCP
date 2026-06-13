@@ -154,7 +154,7 @@ describe('MCP terminal tools', () => {
     expect(transport.writes[0]).toEqual(bytes);
   });
 
-  it('write_to_session returns NOT_FOUND for unknown session id', async () => {
+  it('write_to_session returns SESSION_NOT_FOUND for unknown session id', async () => {
     const out = await callTool(harness.client, 'write_to_session', {
       sessionId: 'sess_nonexistent',
       payload: { encoding: 'utf-8', data: 'x' },
@@ -162,7 +162,7 @@ describe('MCP terminal tools', () => {
 
     expect(out.success).toBe(false);
     const error = out.error as { code: string; message: string };
-    expect(error.code).toBe('NOT_FOUND');
+    expect(error.code).toBe('SESSION_NOT_FOUND');
     expect(error.message).toMatch(/sess_nonexistent/);
   });
 
@@ -210,14 +210,14 @@ describe('MCP terminal tools', () => {
 
     expect(out.success).toBe(true);
     const evidence = out.evidence as {
-      data: { events: { type: string; origin: string; data?: string; dataEncoding?: string }[] };
+      data: { events: { type: string; origin: string; dataBase64?: string }[] };
       cursor: number;
     };
     const dataEvents = evidence.data.events.filter((e) => e.type === 'data');
     expect(dataEvents).toHaveLength(1);
     expect(dataEvents[0]!.origin).toBe('device');
-    expect(dataEvents[0]!.dataEncoding).toBe('base64');
-    expect(fromB64(dataEvents[0]!.data!)).toEqual(utf8('hello'));
+    expect(dataEvents[0]!.dataBase64).toBeDefined();
+    expect(fromB64(dataEvents[0]!.dataBase64!)).toEqual(utf8('hello'));
     expect(evidence.cursor).toBeGreaterThan(0);
   });
 
@@ -238,7 +238,7 @@ describe('MCP terminal tools', () => {
     });
     expect(readOut.success).toBe(true);
     const dataEvents = (readOut.evidence as {
-      data: { events: { type: string; origin: string; data?: string }[] };
+      data: { events: { type: string; origin: string; dataBase64?: string }[] };
     }).data.events.filter((e) => e.type === 'data' && e.origin === 'device');
     expect(dataEvents).toHaveLength(1);
 

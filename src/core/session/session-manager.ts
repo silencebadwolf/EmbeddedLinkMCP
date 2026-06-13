@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Origin, SessionId } from '../../shared/types.js';
 import type { ReadResult, SequenceCursor, TranscriptEvent } from '../transcript/types.js';
 import type { ISession, SessionWriteOptions } from './types.js';
+import { SessionNotFoundError } from './types.js';
 
 /**
  * Session 工厂函数。SessionManager 不感知具体的 transport 类型 —— 由调用层（IPC handler / MCP tool）
@@ -401,10 +402,10 @@ export class SessionManager extends EventEmitter {
     await Promise.all(ids.map((id) => this.destroy(id)));
   }
 
-  /** 内部：按 id 取 session，找不到立即抛错。供需要"必须存在"语义的方法（write/read/clear）共用。 */
+  /** 内部：按 id 取 session，找不到立即抛具名错误。供需要"必须存在"语义的方法（write/read/clear）共用。 */
   #requireSession(id: SessionId): ISession {
     const session = this.#sessions.get(id);
-    if (!session) throw new Error(`Session not found: ${id}`);
+    if (!session) throw new SessionNotFoundError(id);
     return session;
   }
 }

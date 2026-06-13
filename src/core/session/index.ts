@@ -13,4 +13,4 @@ export type {
   SessionStateMeta,
   SessionWriteOptions,
 } from './types.js';
-export { SessionNotOpenError } from './types.js';
+export { SessionNotOpenError, SessionNotFoundError } from './types.js';

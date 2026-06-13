@@ -31,6 +31,7 @@ import {
  */
 export type ToolErrorCode =
   | 'NOT_FOUND'
+  | 'SESSION_NOT_FOUND'
   | 'NOT_OPEN'
   | 'NOT_IMPLEMENTED'
   | 'INVALID_ARGUMENT'

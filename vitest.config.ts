@@ -9,9 +9,10 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    // 默认 node 环境；renderer 测试通过文件首行 `// @vitest-environment happy-dom` 切换
     environment: 'node',
-    include: ['tests/**/*.test.ts'],
-    setupFiles: ['tests/unit/setup.ts'],
+    include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
+    setupFiles: ['tests/unit/setup.ts', 'tests/setup-renderer.ts'],
     coverage: {
       provider: 'v8',
       include: ['src/core/**/*.ts', 'src/transports/**/*.ts', 'src/mcp/**/*.ts'],

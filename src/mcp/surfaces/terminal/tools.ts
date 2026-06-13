@@ -14,14 +14,14 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { EventEmitter } from 'node:events';
 import type { SessionManager } from '../../../core/session/session-manager.js';
 import type { ISession } from '../../../core/session/types.js';
-import { SessionNotOpenError } from '../../../core/session/types.js';
+import { SessionNotOpenError, SessionNotFoundError } from '../../../core/session/types.js';
 import type { TranscriptEvent } from '../../../core/transcript/types.js';
 import type { SerialDiscovery } from '../../../transports/serial/serial-discovery.js';
-import { SerialSession } from '../../../transports/serial/serial-session.js';
-import { SshSession } from '../../../transports/ssh/ssh-session.js';
-import { LocalShellSession } from '../../../transports/local-shell/local-shell-session.js';
-import type { SshHostVerifier, SshCredentials } from '../../../transports/ssh/ssh-client-like.js';
+import { buildSession } from '../../../core/session/factory.js';
+import type { SessionCreateRequestConfig } from '../../../shared/preload-api.js';
+import { serializeTranscriptEvent } from '../../../shared/transcript-ipc-types.js';
 import { DEFAULT_TIMEOUT_MS } from '../../../shared/constants.js';
+import { ERROR_CODES } from '../../../shared/error-codes.js';
 import {
   registerTool,
   ToolError,
@@ -94,11 +94,14 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
       let session: ISession;
       try {
         // 使用 createAndOpen：open 失败时 session 不入 manager、不广播 created/destroyed —— 避免幽灵 session
-        session = await sessionManager.createAndOpen((id) => buildSession(id, input));
+        // input.config 的形态由 zod 强校验，等价于 SessionCreateRequestConfig；
+        // 显式 cast 把匿名联合类型贴到 shared 命名类型，让 buildSession 跨入口签名一致。
+        const config = input.config as unknown as SessionCreateRequestConfig;
+        session = await sessionManager.createAndOpen((id) => buildSession(id, config));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         throw new ToolError(
-          'INTERNAL',
+          ERROR_CODES.INTERNAL,
           `Failed to open session: ${redactSensitive(message, input)}`,
         );
       }
@@ -153,14 +156,15 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
         });
       } catch (err) {
         if (err instanceof SessionNotOpenError) {
-          throw new ToolError('NOT_OPEN', err.message, {
+          throw new ToolError(ERROR_CODES.NOT_OPEN, err.message, {
             sessionId: input.sessionId,
             state: err.sessionState,
           });
         }
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.includes('is not open')) {
-          throw new ToolError('NOT_OPEN', message, { sessionId: input.sessionId, state: session.state });
+        if (err instanceof SessionNotFoundError) {
+          throw new ToolError(ERROR_CODES.SESSION_NOT_FOUND, err.message, {
+            sessionId: input.sessionId,
+          });
         }
         throw err;
       }
@@ -294,75 +298,7 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
   });
 }
 
-/** open_session 的工厂分支：按 type 构造对应 ISession。 */
-function buildSession(id: string, input: OpenSessionInput): ISession {
-  const cfg = input.config;
-  switch (cfg.type) {
-    case 'serial':
-      return new SerialSession({
-        id,
-        config: {
-          type: 'serial',
-          port: cfg.port,
-          baudRate: cfg.baudRate,
-          mode: cfg.mode,
-          dataBits: cfg.dataBits,
-          stopBits: cfg.stopBits,
-          parity: cfg.parity,
-          rtscts: cfg.rtscts,
-          xon: cfg.xon,
-          xoff: cfg.xoff,
-          label: cfg.label,
-        },
-      });
-    case 'ssh': {
-      const credentials: SshCredentials =
-        cfg.credentials.kind === 'password'
-          ? { kind: 'password', password: cfg.credentials.password }
-          : {
-              kind: 'privateKey',
-              privateKey: cfg.credentials.privateKey,
-              passphrase: cfg.credentials.passphrase,
-            };
-      // Phase 4：MCP 入口不暴露任何"信任未知主机"开关 —— 无 known_hosts 持久层，统一拒绝。
-      // Phase 8 引入持久化信任后会改为按指纹比对。这里保持显式 reject 而非 throw，让上层
-      // SshTransport 走标准 error 路径，并在 transcript 中留下完整审计。
-      const hostVerifier: SshHostVerifier = () => false;
-      return new SshSession({
-        id,
-        config: {
-          type: 'ssh',
-          host: cfg.host,
-          port: cfg.port,
-          username: cfg.username,
-          keepaliveIntervalMs: cfg.keepaliveIntervalMs,
-          readyTimeoutMs: cfg.readyTimeoutMs,
-          term: cfg.term,
-          rows: cfg.rows,
-          cols: cfg.cols,
-          label: cfg.label,
-        },
-        credentials,
-        hostVerifier,
-      });
-    }
-    case 'local-shell':
-      return new LocalShellSession({
-        id,
-        config: {
-          type: 'local-shell',
-          shell: cfg.shell,
-          args: cfg.args,
-          cwd: cfg.cwd,
-          env: cfg.env,
-          term: cfg.term,
-          rows: cfg.rows,
-          cols: cfg.cols,
-          label: cfg.label,
-        },
-      });
-  }
-}
+/** open_session 的工厂分支已抽到 `src/main/session-factory.ts`，由 IPC 与 MCP 共用。 */
 
 /**
  * 等待 session 下一条 origin='device' 的 data 事件；若 timeoutMs 内未到则返回 timeout。
@@ -422,7 +358,7 @@ function waitForDeviceOutput(
 function requireSession(manager: SessionManager, id: string): ISession {
   const session = manager.get(id);
   if (!session) {
-    throw new ToolError('NOT_FOUND', `Session not found: ${id}`, { sessionId: id });
+    throw new ToolError(ERROR_CODES.SESSION_NOT_FOUND, `Session not found: ${id}`, { sessionId: id });
   }
   return session;
 }
@@ -433,7 +369,7 @@ function decodeOrFail(payload: { encoding: 'utf-8' | 'base64'; data: string }): 
     return decodeDataPayload(payload);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new ToolError('INVALID_ARGUMENT', message);
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENT, message);
   }
 }
 
@@ -442,19 +378,15 @@ function latestCursor(session: ISession): number {
   return session.read(0).cursor;
 }
 
-/** 把 TranscriptEvent 序列化为 JSON 安全形态：data 字段用 base64 编码。 */
+/**
+ * 把 TranscriptEvent 序列化为 evidence 安全形态。
+ *
+ * Phase 6 评审 H3：MCP 与 IPC 共享 `serializeTranscriptEvent`，输出统一含 `dataBase64`
+ * 字段（取代旧的 `data + dataEncoding`），避免两条通道 schema 漂移。AI 客户端读取
+ * `dataBase64` 与渲染端逻辑一致。
+ */
 function serializeEvent(event: TranscriptEvent): Record<string, unknown> {
-  const { type, origin, evidenceKind, sequence, timestamp, meta, data } = event;
-  return {
-    type,
-    origin,
-    evidenceKind,
-    sequence,
-    timestamp,
-    meta,
-    data: data ? Buffer.from(data).toString('base64') : undefined,
-    dataEncoding: data ? ('base64' as const) : undefined,
-  };
+  return serializeTranscriptEvent(event) as unknown as Record<string, unknown>;
 }
 
 /**

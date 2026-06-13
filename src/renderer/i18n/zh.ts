@@ -1,0 +1,60 @@
+import type { TranslationTable } from './en.js';
+
+/** 中文翻译表（与 en.ts 同构）。 */
+export const zh: TranslationTable = {
+  'app.title': 'LinkTerm v2',
+  'app.subtitle': '桌面终端与 MCP 自动化平台',
+  'header.locale.en': 'EN',
+  'header.locale.zh': '中文',
+  'tabs.new': '新建',
+  'tabs.empty.title': '暂无活跃会话',
+  'tabs.empty.subtitle': '点击「新建」开始一个连接',
+  'session.state.idle': '空闲',
+  'session.state.opening': '连接中',
+  'session.state.open': '已连接',
+  'session.state.closing': '断开中',
+  'session.state.closed': '已断开',
+  'session.state.errored': '出错',
+  'dialog.title': '新建连接',
+  'dialog.description': '配置串口、SSH 或本地 Shell 会话。',
+  'dialog.cancel': '取消',
+  'dialog.create': '创建',
+  'dialog.creating': '创建中...',
+  'dialog.type.label': '连接类型',
+  'dialog.type.serial': '串口',
+  'dialog.type.ssh': 'SSH',
+  'dialog.type.local-shell': '本地 Shell',
+  'dialog.label.label': '标签（可选）',
+  'dialog.label.placeholder': '我的设备',
+  // 串口字段
+  'dialog.serial.port': '端口',
+  'dialog.serial.baudRate': '波特率',
+  'dialog.serial.mode': '模式',
+  'dialog.serial.mode.normal': '普通',
+  'dialog.serial.mode.terminal': '终端',
+  // SSH 字段
+  'dialog.ssh.host': '主机',
+  'dialog.ssh.port': '端口',
+  'dialog.ssh.username': '用户名',
+  'dialog.ssh.auth': '认证方式',
+  'dialog.ssh.auth.password': '密码',
+  'dialog.ssh.auth.privateKey': '私钥',
+  'dialog.ssh.password': '密码',
+  'dialog.ssh.privateKey': '私钥（PEM）',
+  'dialog.ssh.passphrase': '密码短语（可选）',
+  // 本地 Shell
+  'dialog.local.shell': 'Shell（可选）',
+  'dialog.local.cwd': '工作目录（可选）',
+  // 串口选择
+  'serial.picker.auto': '自动扫描',
+  'serial.picker.manual': '手动输入',
+  'serial.picker.refresh': '刷新',
+  'serial.picker.empty': '未检测到串口 —— 请切换到手动输入。',
+  'serial.picker.placeholder': '/dev/tty.usbserial-XXX',
+  // 来源指示
+  'origin.label.A': 'AI',
+  'origin.label.H': '人类',
+  'origin.label.S': '系统',
+  // 错误
+  'error.create.failed': '会话创建失败',
+};
