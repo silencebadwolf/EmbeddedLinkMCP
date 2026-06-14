@@ -128,12 +128,13 @@ const noopErrorListener = (): void => {
 function normalizePortInfo(p: SerialPortInfo): SerialPortInfo {
   return {
     path: p.path,
-    manufacturer: p.manufacturer,
-    serialNumber: p.serialNumber,
-    pnpId: p.pnpId,
-    vendorId: p.vendorId,
-    productId: p.productId,
-    locationId: p.locationId,
+    ...(p.friendlyName !== undefined ? { friendlyName: p.friendlyName } : {}),
+    ...(p.manufacturer !== undefined ? { manufacturer: p.manufacturer } : {}),
+    ...(p.serialNumber !== undefined ? { serialNumber: p.serialNumber } : {}),
+    ...(p.pnpId !== undefined ? { pnpId: p.pnpId } : {}),
+    ...(p.vendorId !== undefined ? { vendorId: p.vendorId } : {}),
+    ...(p.productId !== undefined ? { productId: p.productId } : {}),
+    ...(p.locationId !== undefined ? { locationId: p.locationId } : {}),
   };
 }
 

@@ -24,11 +24,13 @@ describe('SerialDiscovery', () => {
   it('listPorts() returns the underlying list normalized to SerialPortInfo', async () => {
     const listFn = vi.fn().mockResolvedValue([
       port('/dev/ttyUSB0', { manufacturer: 'FTDI', vendorId: '0403', extra: 'drop' as never }),
+      port('COM8', { friendlyName: 'USB-Enhanced-SERIAL CH343 (COM8)' }),
     ]);
     const d = new SerialDiscovery({ listFn });
     const ports = await d.listPorts();
     expect(ports).toEqual([
       { path: '/dev/ttyUSB0', manufacturer: 'FTDI', vendorId: '0403' },
+      { path: 'COM8', friendlyName: 'USB-Enhanced-SERIAL CH343 (COM8)' },
     ]);
     // 调用 listPorts 不应启动定时器
     expect(vi.getTimerCount()).toBe(0);

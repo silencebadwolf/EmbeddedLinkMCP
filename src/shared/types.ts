@@ -96,6 +96,8 @@ export interface SerialSessionConfig extends SessionConfig {
 export interface SerialPortInfo {
   /** 系统设备路径，如 `/dev/tty.usbserial-XXX` 或 `COM3`。 */
   path: string;
+  /** 系统提供的可读设备名，如 Windows 设备管理器友好名称。 */
+  friendlyName?: string;
   manufacturer?: string;
   serialNumber?: string;
   pnpId?: string;

@@ -5,16 +5,14 @@
  * 这里通过 `linkterm.serial.onPortChanged` 订阅，从而触发主进程开始扫描。
  */
 
-import { useCallback, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useAppStore } from '../store/app-store.js';
 import { getLinkterm } from '../lib/linkterm-bridge.js';
 import type { SerialPortInfo } from '../../shared/types.js';
 
-/** useSerialDiscovery 暴露：当前端口列表 + 手动刷新函数。 */
+/** useSerialDiscovery 暴露：当前端口列表。 */
 export interface UseSerialDiscoveryResult {
   ports: ReadonlyArray<SerialPortInfo>;
-  /** 手动触发一次扫描（不影响订阅状态）。 */
-  refresh(): Promise<ReadonlyArray<SerialPortInfo>>;
 }
 
 /**
@@ -26,18 +24,6 @@ export interface UseSerialDiscoveryResult {
 export function useSerialDiscovery(): UseSerialDiscoveryResult {
   const ports = useAppStore((s) => s.serialPorts);
   const setSerialPorts = useAppStore((s) => s.setSerialPorts);
-
-  const refresh = useCallback(async (): Promise<ReadonlyArray<SerialPortInfo>> => {
-    const api = getLinkterm();
-    if (!api) return [];
-    const result = await api.serial.listPorts();
-    if (!result.success) {
-      // 主进程返回结构化错误时不污染缓存：保留之前 store 里的 ports，避免端口列表瞬间清空
-      return [];
-    }
-    setSerialPorts(result.data);
-    return result.data;
-  }, [setSerialPorts]);
 
   useEffect(() => {
     const api = getLinkterm();
@@ -65,5 +51,5 @@ export function useSerialDiscovery(): UseSerialDiscoveryResult {
     };
   }, [setSerialPorts]);
 
-  return { ports, refresh };
+  return { ports };
 }

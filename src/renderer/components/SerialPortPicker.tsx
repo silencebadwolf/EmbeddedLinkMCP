@@ -4,7 +4,7 @@
  * 行为（决策 9，详见 docs/phase-decisions/Phase6.md）：
  * - 默认 auto 模式：渲染下拉列表；为空时自动切到 manual 模式
  * - manual 模式：渲染文本输入框，用户自行输入 `/dev/ttyUSB0` / `COM3`
- * - 永远显示 Refresh 按钮（auto 模式下手动触发一次扫描）
+ * - 串口扫描由 useSerialDiscovery 自动执行并订阅热插拔变化，不再提供手动刷新按钮
  */
 
 import * as React from 'react';
@@ -22,16 +22,26 @@ export interface SerialPortPickerProps {
   /** 受控变化回调。 */
   onChange(path: string): void;
   /**
-   * 测试用注入：直接传入 ports，跳过 useSerialDiscovery 的 IPC 路径。
+   * 测试用注入：直接传入 ports，跳过 useSerialDiscovery 的 store 结果。
    * 生产代码不要传此 prop。
    */
   ports?: ReadonlyArray<SerialPortInfo>;
-  /** 同上，注入手动 refresh 实现。 */
-  refresh?: () => Promise<unknown>;
   className?: string;
 }
 
 type PickerMode = 'auto' | 'manual';
+
+/**
+ * 生成串口下拉项显示名称，优先使用系统友好名，回退到厂商名。
+ *
+ * @param port 串口枚举信息。
+ * @returns 用于 UI 显示的可读串口标签。
+ */
+function formatSerialPortLabel(port: SerialPortInfo): string {
+  if (port.friendlyName) return `${port.path} (${port.friendlyName})`;
+  if (port.manufacturer) return `${port.path} (${port.manufacturer})`;
+  return port.path;
+}
 
 /**
  * 串口选择器组件。
@@ -40,13 +50,11 @@ export function SerialPortPicker({
   value,
   onChange,
   ports: portsOverride,
-  refresh: refreshOverride,
   className,
 }: SerialPortPickerProps): React.ReactElement {
   const t = useT();
   const discovery = useSerialDiscovery();
   const ports = portsOverride ?? discovery.ports;
-  const refresh = refreshOverride ?? discovery.refresh;
 
   // 初始模式：扫描结果空 → manual；否则 auto
   const [mode, setMode] = React.useState<PickerMode>(ports.length > 0 ? 'auto' : 'manual');
@@ -88,17 +96,6 @@ export function SerialPortPicker({
             {t('serial.picker.manual')}
           </Button>
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            void refresh();
-          }}
-          data-testid="picker-refresh"
-        >
-          {t('serial.picker.refresh')}
-        </Button>
       </div>
 
       <div className="mt-2">
@@ -115,8 +112,7 @@ export function SerialPortPicker({
               <SelectContent>
                 {ports.map((p) => (
                   <SelectItem key={p.path} value={p.path}>
-                    {p.path}
-                    {p.manufacturer ? ` — ${p.manufacturer}` : ''}
+                    {formatSerialPortLabel(p)}
                   </SelectItem>
                 ))}
               </SelectContent>
