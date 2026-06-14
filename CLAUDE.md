@@ -8,7 +8,7 @@ LinkTerm v2 is an Electron/TypeScript rewrite of a legacy Qt/C++ terminal, inten
 
 Authoritative specs live in `PROJECT_REQUIREMENTS.md` (requirements) and `DEVELOPMENT_PLAN.md` (13-phase plan with current status). **Always check `DEVELOPMENT_PLAN.md` before starting work** — it tracks which phases are completed (✅), in progress, or not started (⬜), and records every decision/variance from the original plan.
 
-Current state: **Phases 0–10 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters, MCP terminal surface with 8 tools, AI-human coop hardening, Electron renderer UI with xterm.js + connection dialog + i18n + shadcn primitives, embedded terminal rules + sendAndWait FSM, workspace config persistence with 3 MCP tools, J-Link MCP debug surface with 28 tools + NullBackend default, **UI MCP surface with `ui_configure` 4-action discriminatedUnion + `ui_screenshot` 16 MiB-capped PNG + UI_NOT_AVAILABLE always-register policy**). Phases 11–12 not yet started. 462 Vitest tests cover `src/core/`, `src/transports/{serial,ssh,local-shell}/`, `src/core/terminal-rules/`, `src/core/workspace/`, `src/jlink/`, `src/mcp/`, AI-human coop integration, send-and-wait integration, the renderer (happy-dom hooks/components), `session:create` IPC, and Phase 10 UI bridge + ui surface.
+Current state: **Phases 0–11 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters, MCP terminal surface with 8 tools, AI-human coop hardening, Electron renderer UI with xterm.js + connection dialog + i18n + shadcn primitives, embedded terminal rules + sendAndWait FSM, workspace config persistence with 3 MCP tools, J-Link MCP debug surface with 28 tools + NullBackend default, UI MCP surface with `ui_configure` 4-action discriminatedUnion + `ui_screenshot` 16 MiB-capped PNG + UI_NOT_AVAILABLE always-register policy, **bidirectional license validation: manifest ↔ package.json + version strict equality + EXTRA_RUNTIME_DEPS allowlist for electron**). Phase 12 not yet started. 473 Vitest tests cover `src/core/`, `src/transports/{serial,ssh,local-shell}/`, `src/core/terminal-rules/`, `src/core/workspace/`, `src/jlink/`, `src/mcp/`, AI-human coop integration, send-and-wait integration, the renderer (happy-dom hooks/components), `session:create` IPC, Phase 10 UI bridge + ui surface, and Phase 11 license-validation script (11 unit tests).
 
 ## Common commands
 
@@ -210,6 +210,15 @@ CSP is injected as a response header via `session.defaultSession.webRequest.onHe
 ## Licensing discipline
 
 Every runtime third-party dependency MUST be recorded in `third-party-manifest.json` AND have its license file present at `licenses/<name>.LICENSE`. `pnpm run validate:licenses` enforces this bidirectionally. **When you add a runtime dependency, update both files in the same change** — CI/validation will fail otherwise (req §4.10).
+
+**Bidirectional validation contract (Phase 11)**: `scripts/validate-licenses.ts` exports a pure `validateLicenses({ manifestPath, packageJsonPath, rootDir })` function (the entry `main()` is just a thin wrapper) and enforces 4 invariants:
+
+1. **Manifest internal consistency** — every entry has `name/version/license/licenseFile` and the file exists at `<rootDir>/<licenseFile>`.
+2. **package.json → manifest (missing detection)** — every key in `package.json.dependencies` (plus `EXTRA_RUNTIME_DEPS` allowlist) must appear in `manifest.dependencies`.
+3. **manifest → package.json (extra/stale detection)** — every manifest entry must be in `package.json.dependencies` or in the allowlist; deleting a dep without removing its manifest entry fails.
+4. **Version strict equality** — `manifest.version === package.json.dependencies[name]` (string comparison, no semver). Bump-without-relicense fails.
+
+`EXTRA_RUNTIME_DEPS = ['electron']` is the allowlist for "in devDependencies but runtime-distributed" — adding to it requires the dep actually exist somewhere in package.json (anti-stale check). Error messages distinguish `(from package.json)` vs `(from EXTRA_RUNTIME_DEPS allowlist)` to avoid self-contradiction when an allowlist item is removed from package.json. The script is unit-tested via `tests/unit/scripts/validate-licenses.test.ts` (11 cases covering all 4 invariants + missing/corrupt JSON + multi-error accumulation); use `mkdtempSync` + `afterEach rm -rf` fixtures, not real-repo paths.
 
 Open-source projects can be referenced for design ideas, but source code copying requires prior license review and attribution. The `jlinkmcp` repo (https://github.com/daikw/JLinkMCP) has no declared license — design references only, no source copying (req §4.11).
 

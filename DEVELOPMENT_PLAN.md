@@ -21,7 +21,7 @@ LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形
 | Phase 8: 工作区配置 | ✅ 已完成 2026-06-14 | 363 测试通过 |
 | Phase 9: J-Link MCP | ✅ 已完成 2026-06-14 | 420 测试通过 |
 | Phase 10: UI MCP 工具 | ✅ 已完成 | 2026-06-14 |
-| Phase 11: 许可证管理 | 🟨 部分完成（Phase 0 已建立基础） | — |
+| Phase 11: 许可证管理 | ✅ 已完成 | 2026-06-14 |
 | Phase 12: 集成+收尾 | ⬜ 未开始 | — |
 
 ---
@@ -1119,7 +1119,55 @@ diagnostics (2): `snapshot_capture/crash_diagnose`
 
 ---
 
-## Phase 11: 许可证管理 🟨 部分完成（Phase 0 已建立基础）
+## Phase 11: 许可证管理 ✅ 已完成（2026-06-14）
+
+**核心交付**：将既有 manifest→license 单向校验升级为 manifest ↔ package.json 真双向校验，并补 11 个 vitest 单测固化回归。
+
+### 实际交付物
+
+| 文件 | 变更 |
+|---|---|
+| `scripts/validate-licenses.ts` | 重构：抽 `validateLicenses(opts)` 纯函数 + DI；新增 4 类校验（缺失 / 多余 / 版本严格相等 / EXTRA_RUNTIME_DEPS allowlist 反 stale） |
+| `tests/unit/scripts/validate-licenses.test.ts` | **新增**：11 个用例（happy / missing / extra / version-mismatch / missing-license / electron-allowlist / stale-allowlist / missing-manifest / missing-package.json / corrupt-json / multi-error-accumulation） |
+
+### 关键架构决策
+
+- **Pragmatic 风格 → Minimal Changes**（0.5x 工作量、单文件）。详见 [docs/phase-decisions/Phase11.md](docs/phase-decisions/Phase11.md)
+- **DI 纯函数 + 入口 main()**：`validateLicenses({ manifestPath, packageJsonPath, rootDir })` 导出便于测试，main() 仅做 path 拼装 + exit
+- **EXTRA_RUNTIME_DEPS allowlist**：仅 `['electron']`（在 devDeps 但运行时分发）；allowlist 项必须实际存在于 package.json 任一 dep 字段，防 stale
+- **版本严格字符串相等**：`manifest.version === package.json.dependencies[name]`，防 bump 后忘了重新审核 license
+- **错误消息区分来源**：`(from package.json)` vs `(from EXTRA_RUNTIME_DEPS allowlist)`，避免自相矛盾
+- **ESM 标准派生 `__dirname`**：`dirname(fileURLToPath(import.meta.url))`（不依赖 Node 20.11+ 的 `import.meta.dirname`）
+- **`isDirectExecution` 跨平台**：`pathToFileURL(argv[1]).href === import.meta.url`（Windows / 软链场景可靠）
+
+### Code review 处置摘要
+
+- High：H1（跨平台 + ESM `__dirname`）+ H2（错误消息矛盾）→ 已修
+- Medium：M1（补 3 个边界测试）+ M2（删同义反复测试）+ M3（interface JSDoc）+ M4（合并入 H1）→ 已修
+- Low：L1-L6（错误消息风格、ESLint scripts/、manifest 重复 name 等）→ 推迟到 Phase 12 backlog
+
+### 验收标准对勾
+
+- ✅ `pnpm run validate:licenses` 通过（19 deps PASS）
+- ✅ 缺少许可证文件 → 校验失败（test: missing-license-file）
+- ✅ 新增依赖未更新清单 → 校验失败（test: missing-in-manifest）
+- ✅ 删依赖未删 manifest → 校验失败（test: extra-in-manifest，新增覆盖）
+- ✅ bump 依赖未 bump manifest → 校验失败（test: version-mismatch，新增覆盖）
+
+### 验收命令结果（2026-06-14）
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm run lint` | ✅ exit 0 |
+| `pnpm test` | ✅ 473 个测试通过（baseline 462 + 11 个 license 单测） |
+| `pnpm run build` | ✅ tsc -b + vite build 双侧成功 |
+| `pnpm run validate:licenses` | ✅ PASS: All 19 dependencies have valid license entries |
+
+### 相对工作量：0.5x（实际符合预估）
+
+---
+
+## Phase 11（原始）
 
 **目标**：实现第三方许可证归因、清单维护和校验。
 
