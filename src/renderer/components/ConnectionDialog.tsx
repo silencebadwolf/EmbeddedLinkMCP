@@ -30,21 +30,56 @@ import {
 import { SerialPortPicker } from './SerialPortPicker.js';
 import { useAppStore } from '../store/app-store.js';
 import { useSessions } from '../hooks/useSession.js';
+import { getLinkterm } from '../lib/linkterm-bridge.js';
 import { useT } from '../i18n/index.js';
-import type { ConnectionType, SerialMode } from '../../shared/types.js';
+import type {
+  ConnectionType,
+  SerialDataBits,
+  SerialMode,
+  SerialParity,
+  SerialStopBits,
+} from '../../shared/types.js';
 import type {
   NonSensitivePrefill,
+  SavedConnectionSummary,
   SessionCreateRequestConfig,
 } from '../../shared/preload-api.js';
+
+const COMMON_BAUD_RATES = [
+  '9600',
+  '19200',
+  '38400',
+  '57600',
+  '115200',
+  '230400',
+  '460800',
+  '921600',
+  '1000000',
+  '2000000',
+] as const;
+
+const DATA_BITS = ['5', '6', '7', '8'] as const;
+const STOP_BITS = ['1', '1.5', '2'] as const;
+const PARITIES = ['none', 'even', 'odd', 'mark', 'space'] as const;
+
+type FormDataBits = (typeof DATA_BITS)[number];
+type FormStopBits = (typeof STOP_BITS)[number];
 
 /** 表单内部使用的连接类型 → SessionConfig 的中间状态。 */
 interface FormState {
   type: ConnectionType;
   label: string;
+  saveProfile: boolean;
   // serial
   serialPort: string;
   baudRate: string;
   serialMode: SerialMode;
+  dataBits: FormDataBits;
+  stopBits: FormStopBits;
+  parity: SerialParity;
+  rtscts: boolean;
+  xon: boolean;
+  xoff: boolean;
   // ssh
   sshHost: string;
   sshPort: string;
@@ -61,9 +96,16 @@ interface FormState {
 const INITIAL_FORM: FormState = {
   type: 'serial',
   label: '',
+  saveProfile: false,
   serialPort: '',
   baudRate: '115200',
-  serialMode: 'normal',
+  serialMode: 'terminal',
+  dataBits: '8',
+  stopBits: '1',
+  parity: 'none',
+  rtscts: false,
+  xon: false,
+  xoff: false,
   sshHost: '',
   sshPort: '22',
   sshUsername: '',
@@ -74,6 +116,20 @@ const INITIAL_FORM: FormState = {
   localShell: '',
   localCwd: '',
 };
+
+function parseBaudRate(value: string): number | null {
+  if (!/^\d+$/.test(value.trim())) return null;
+  const baudRate = Number(value.trim());
+  return Number.isSafeInteger(baudRate) && baudRate > 0 ? baudRate : null;
+}
+
+function parseDataBits(value: FormDataBits): SerialDataBits {
+  return Number(value) as SerialDataBits;
+}
+
+function parseStopBits(value: FormStopBits): SerialStopBits {
+  return Number(value) as SerialStopBits;
+}
 
 /**
  * 把表单状态翻译成主进程可接受的 SessionCreateRequestConfig；返回 null 表示必填字段缺失。
@@ -87,13 +143,19 @@ function buildConfig(form: FormState): SessionCreateRequestConfig | null {
   switch (form.type) {
     case 'serial': {
       const port = form.serialPort.trim();
-      const baudRate = parseInt(form.baudRate, 10);
-      if (!port || !Number.isFinite(baudRate) || baudRate <= 0) return null;
+      const baudRate = parseBaudRate(form.baudRate);
+      if (!port || baudRate === null) return null;
       return {
         type: 'serial',
         port,
         baudRate,
         mode: form.serialMode,
+        dataBits: parseDataBits(form.dataBits),
+        stopBits: parseStopBits(form.stopBits),
+        parity: form.parity,
+        rtscts: form.rtscts,
+        xon: form.xon,
+        xoff: form.xoff,
         label,
       };
     }
@@ -145,6 +207,28 @@ function inferType(p: NonSensitivePrefill): ConnectionType | undefined {
   return undefined;
 }
 
+function defaultProfileLabel(config: SessionCreateRequestConfig): string {
+  switch (config.type) {
+    case 'serial':
+      return `${config.port} · ${config.baudRate}`;
+    case 'ssh':
+      return `${config.username}@${config.host}:${config.port}`;
+    case 'local-shell':
+      return config.shell || config.cwd || 'Local shell';
+  }
+}
+
+function describeProfile(profile: SavedConnectionSummary): string {
+  switch (profile.config.type) {
+    case 'serial':
+      return `${profile.config.port} · ${profile.config.baudRate} · ${profile.config.mode}`;
+    case 'ssh':
+      return `${profile.config.username}@${profile.config.host}:${profile.config.port}${profile.hasCredential ? ' · credential saved' : ''}`;
+    case 'local-shell':
+      return [profile.config.shell, profile.config.cwd].filter(Boolean).join(' · ') || 'local shell';
+  }
+}
+
 /**
  * ConnectionDialog 组件：受控于 store 的 dialogOpen。
  */
@@ -155,8 +239,17 @@ export function ConnectionDialog(): React.ReactElement {
   const { create } = useSessions();
 
   const [form, setForm] = React.useState<FormState>(INITIAL_FORM);
+  const [savedProfiles, setSavedProfiles] = React.useState<ReadonlyArray<SavedConnectionSummary>>([]);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [baudListOpen, setBaudListOpen] = React.useState(false);
+
+  const loadSavedProfiles = React.useCallback(async (): Promise<void> => {
+    const api = getLinkterm();
+    if (!api) return;
+    const result = await api.connections.list();
+    if (result.success) setSavedProfiles(result.data);
+  }, []);
 
   // 关闭对话框时重置表单 + 主动清零敏感字段；
   // 打开时一次性合并 store 中的 MCP prefill（来自 ui_configure），随后立刻 clearPrefill
@@ -167,8 +260,10 @@ export function ConnectionDialog(): React.ReactElement {
       setForm(INITIAL_FORM);
       setError(null);
       setSubmitting(false);
+      setBaudListOpen(false);
       return;
     }
+    void loadSavedProfiles();
     // open === true 边沿：在 effect 内读最新 prefill（避免依赖列表）。
     const prefill = useAppStore.getState().connectionDialogPrefill;
     if (!prefill) return;
@@ -194,6 +289,54 @@ export function ConnectionDialog(): React.ReactElement {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  const addCreatedSession = (
+    sessionId: string,
+    state: 'idle' | 'opening' | 'open' | 'closing' | 'closed' | 'errored',
+    profileOrConfig: SavedConnectionSummary | SessionCreateRequestConfig,
+    label: string | undefined,
+  ): void => {
+    useAppStore.getState().addSession({
+      id: sessionId,
+      label: label || sessionId.slice(-4),
+      connectionType: profileOrConfig.type,
+      state,
+    });
+    useAppStore.getState().setActive(sessionId);
+  };
+
+  const openSavedProfile = async (profile: SavedConnectionSummary): Promise<void> => {
+    setError(null);
+    setSubmitting(true);
+    try {
+      const api = getLinkterm();
+      if (!api) {
+        setError(t('error.create.failed'));
+        return;
+      }
+      const result = await api.connections.open({ profileId: profile.id });
+      if (!result.success) {
+        setError(result.error.message || t('error.create.failed'));
+        return;
+      }
+      addCreatedSession(result.data.sessionId, result.data.state, result.data.profile, result.data.profile.label);
+      closeDialog();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const deleteSavedProfile = async (profileId: string): Promise<void> => {
+    setError(null);
+    const api = getLinkterm();
+    if (!api) return;
+    const result = await api.connections.delete({ profileId });
+    if (!result.success) {
+      setError(result.error.message || t('error.create.failed'));
+      return;
+    }
+    await loadSavedProfiles();
+  };
+
   const onSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError(null);
@@ -204,6 +347,31 @@ export function ConnectionDialog(): React.ReactElement {
     }
     setSubmitting(true);
     try {
+      if (form.saveProfile) {
+        const api = getLinkterm();
+        if (!api) {
+          setError(t('error.create.failed'));
+          return;
+        }
+        const result = await api.connections.saveAndOpen({
+          config,
+          label: form.label.trim() || defaultProfileLabel(config),
+          saveCredentials: config.type === 'ssh',
+        });
+        if (!result.success) {
+          setError(result.error.message || t('error.create.failed'));
+          return;
+        }
+        addCreatedSession(
+          result.data.sessionId,
+          result.data.state,
+          result.data.profile,
+          result.data.profile.label,
+        );
+        closeDialog();
+        return;
+      }
+
       const id = await create({ config, label: form.label.trim() || undefined });
       // 成功 / open 失败都关闭对话框（open 失败的 errored tab 由 SessionTabBar 处理）
       if (id !== null) {
@@ -232,6 +400,47 @@ export function ConnectionDialog(): React.ReactElement {
         </DialogHeader>
 
         <form onSubmit={onSubmit} className="space-y-3">
+          {savedProfiles.length > 0 && (
+            <section className="rounded-md border border-gray-800 bg-gray-900/60 p-3">
+              <p className="mb-2 text-sm font-medium text-gray-200">
+                {t('dialog.saved.title')}
+              </p>
+              <div className="space-y-2">
+                {savedProfiles.map((profile) => (
+                  <div
+                    key={profile.id}
+                    className="flex items-center justify-between gap-2 rounded border border-gray-800 px-2 py-1.5"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm text-gray-100">{profile.label}</p>
+                      <p className="truncate text-xs text-gray-500">{describeProfile(profile)}</p>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={submitting}
+                        onClick={() => void openSavedProfile(profile)}
+                      >
+                        {t('dialog.saved.open')}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={submitting}
+                        onClick={() => void deleteSavedProfile(profile.id)}
+                      >
+                        {t('dialog.saved.delete')}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           {/* 连接类型 */}
           <FormField id="conn-type" label={t('dialog.type.label')}>
             <Select
@@ -270,12 +479,48 @@ export function ConnectionDialog(): React.ReactElement {
               </FormField>
               <div className="grid grid-cols-2 gap-2">
                 <FormField id="conn-baud" label={t('dialog.serial.baudRate')}>
-                  <Input
-                    id="conn-baud"
-                    value={form.baudRate}
-                    onChange={(e) => update('baudRate', e.target.value)}
-                    inputMode="numeric"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="conn-baud"
+                      value={form.baudRate}
+                      onChange={(e) => update('baudRate', e.target.value)}
+                      inputMode="numeric"
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      aria-label={t('dialog.serial.commonBaudRates')}
+                      aria-expanded={baudListOpen}
+                      aria-haspopup="listbox"
+                      className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-md border-l border-gray-700 text-xs text-gray-300 hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                      onClick={() => setBaudListOpen((prev) => !prev)}
+                    >
+                      v
+                    </button>
+                    {baudListOpen && (
+                      <div
+                        role="listbox"
+                        aria-label={t('dialog.serial.baudRate')}
+                        className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-gray-700 bg-gray-900 p-1 text-sm text-gray-100 shadow-lg"
+                      >
+                        {COMMON_BAUD_RATES.map((rate) => (
+                          <button
+                            key={rate}
+                            type="button"
+                            role="option"
+                            aria-selected={form.baudRate === rate}
+                            className="block w-full rounded-sm px-2 py-1.5 text-left hover:bg-gray-800 aria-selected:bg-blue-600"
+                            onClick={() => {
+                              update('baudRate', rate);
+                              setBaudListOpen(false);
+                            }}
+                          >
+                            {rate}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </FormField>
                 <FormField id="conn-mode" label={t('dialog.serial.mode')}>
                   <Select
@@ -296,6 +541,84 @@ export function ConnectionDialog(): React.ReactElement {
                   </Select>
                 </FormField>
               </div>
+              <details className="rounded-md border border-gray-800 p-3">
+                <summary className="cursor-pointer text-sm font-medium text-gray-300">
+                  {t('dialog.serial.advanced')}
+                </summary>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <FormField id="conn-data-bits" label={t('dialog.serial.dataBits')}>
+                    <Select
+                      value={form.dataBits}
+                      onValueChange={(v) => update('dataBits', v as FormDataBits)}
+                    >
+                      <SelectTrigger id="conn-data-bits">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {DATA_BITS.map((bits) => (
+                          <SelectItem key={bits} value={bits}>{bits}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormField>
+                  <FormField id="conn-stop-bits" label={t('dialog.serial.stopBits')}>
+                    <Select
+                      value={form.stopBits}
+                      onValueChange={(v) => update('stopBits', v as FormStopBits)}
+                    >
+                      <SelectTrigger id="conn-stop-bits">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {STOP_BITS.map((bits) => (
+                          <SelectItem key={bits} value={bits}>{bits}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormField>
+                  <FormField id="conn-parity" label={t('dialog.serial.parity')}>
+                    <Select
+                      value={form.parity}
+                      onValueChange={(v) => update('parity', v as SerialParity)}
+                    >
+                      <SelectTrigger id="conn-parity">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PARITIES.map((parity) => (
+                          <SelectItem key={parity} value={parity}>{parity}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormField>
+                </div>
+                <div className="mt-3 grid gap-2 text-sm text-gray-300">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={form.rtscts}
+                      onChange={(e) => update('rtscts', e.target.checked)}
+                    />
+                    {t('dialog.serial.rtscts')}
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={form.xon}
+                      onChange={(e) => update('xon', e.target.checked)}
+                    />
+                    {t('dialog.serial.xon')}
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={form.xoff}
+                      onChange={(e) => update('xoff', e.target.checked)}
+                    />
+                    {t('dialog.serial.xoff')}
+                  </label>
+                </div>
+              </details>
             </>
           )}
 
@@ -396,6 +719,15 @@ export function ConnectionDialog(): React.ReactElement {
               </FormField>
             </>
           )}
+
+          <label className="flex items-center gap-2 text-sm text-gray-300">
+            <input
+              type="checkbox"
+              checked={form.saveProfile}
+              onChange={(e) => update('saveProfile', e.target.checked)}
+            />
+            {t('dialog.saveProfile')}
+          </label>
 
           {error && <p className="text-sm text-red-400">{error}</p>}
 

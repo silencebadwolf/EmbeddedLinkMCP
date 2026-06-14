@@ -15,6 +15,7 @@ import type {
   LocalShellSessionConfig,
   SshSessionConfig,
   SerialPortInfo,
+  ConnectionType,
 } from './types.js';
 import type { TranscriptEventEnvelope, SerializedTranscriptEvent } from './transcript-ipc-types.js';
 
@@ -198,6 +199,47 @@ export interface UiNamespace {
   onStatePatch(handler: (patch: UiStatePatch) => void): Unsubscribe;
 }
 
+/** renderer/preload 可见的保存连接 id。 */
+export type ConnectionProfileId = string;
+
+/** renderer/preload 可见的脱敏保存连接摘要。 */
+export interface SavedConnectionSummary {
+  id: ConnectionProfileId;
+  label: string;
+  type: ConnectionType;
+  config:
+    | Omit<SerialSessionConfig, 'label'>
+    | Omit<SshSessionConfig, 'label'>
+    | Omit<LocalShellSessionConfig, 'label' | 'env'>;
+  hasCredential: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 保存连接命名空间。 */
+export interface ConnectionsNamespace {
+  /** 列出全局保存连接；SSH 凭据仅以 hasCredential 暴露。 */
+  list(): Promise<PreloadResult<ReadonlyArray<SavedConnectionSummary>>>;
+  /** 保存连接 profile 并立即打开同一配置。 */
+  saveAndOpen(req: {
+    config: SessionCreateRequestConfig;
+    label: string;
+    saveCredentials?: boolean;
+  }): Promise<PreloadResult<{
+    profile: SavedConnectionSummary;
+    sessionId: SessionId;
+    state: SessionState;
+  }>>;
+  /** 快捷打开已保存连接；SSH 凭据在主进程解密，不返回 renderer。 */
+  open(req: { profileId: ConnectionProfileId }): Promise<PreloadResult<{
+    profile: SavedConnectionSummary;
+    sessionId: SessionId;
+    state: SessionState;
+  }>>;
+  /** 删除已保存连接。 */
+  delete(req: { profileId: ConnectionProfileId }): Promise<PreloadResult<{ deleted: true }>>;
+}
+
 /**
  * `window.linkterm` 的完整类型。
  *
@@ -208,6 +250,7 @@ export interface PreloadAPI {
   serial: SerialNamespace;
   transcript: TranscriptNamespace;
   ui: UiNamespace;
+  connections: ConnectionsNamespace;
 }
 
 declare global {

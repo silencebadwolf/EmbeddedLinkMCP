@@ -31,9 +31,21 @@ export const en = {
   // Serial fields
   'dialog.serial.port': 'Port',
   'dialog.serial.baudRate': 'Baud Rate',
+  'dialog.serial.commonBaudRates': 'Common baud rates',
   'dialog.serial.mode': 'Mode',
   'dialog.serial.mode.normal': 'Normal',
   'dialog.serial.mode.terminal': 'Terminal',
+  'dialog.serial.advanced': 'Advanced serial settings',
+  'dialog.serial.dataBits': 'Data Bits',
+  'dialog.serial.stopBits': 'Stop Bits',
+  'dialog.serial.parity': 'Parity',
+  'dialog.serial.rtscts': 'RTS/CTS flow control',
+  'dialog.serial.xon': 'XON flow control',
+  'dialog.serial.xoff': 'XOFF flow control',
+  'dialog.saveProfile': 'Save as global connection',
+  'dialog.saved.title': 'Saved connections',
+  'dialog.saved.open': 'Open',
+  'dialog.saved.delete': 'Delete',
   // SSH fields
   'dialog.ssh.host': 'Host',
   'dialog.ssh.port': 'Port',
@@ -49,9 +61,8 @@ export const en = {
   'dialog.local.cwd': 'Working Directory (optional)',
   // Serial picker
   'serial.picker.auto': 'Auto-detected',
-  'serial.picker.manual': 'Manual',
   'serial.picker.refresh': 'Refresh',
-  'serial.picker.empty': 'No serial ports detected — switch to manual input.',
+  'serial.picker.empty': 'No serial ports detected.',
   'serial.picker.placeholder': '/dev/tty.usbserial-XXX',
   // Origin indicator
   'origin.label.A': 'AI',

@@ -28,6 +28,10 @@ export const IPC_CHANNELS = {
   UI_STATE_PATCH: 'ui:statePatch',
   TRANSCRIPT_SUBSCRIBE: 'transcript:subscribe',
   TRANSCRIPT_EVENT: 'transcript:event',
+  CONNECTIONS_LIST: 'connections:list',
+  CONNECTIONS_SAVE_AND_OPEN: 'connections:saveAndOpen',
+  CONNECTIONS_OPEN: 'connections:open',
+  CONNECTIONS_DELETE: 'connections:delete',
 } as const;
 
 /** IPC_CHANNELS 字典中所有 value 的联合类型。 */

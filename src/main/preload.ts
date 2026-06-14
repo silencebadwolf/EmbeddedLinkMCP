@@ -23,6 +23,7 @@ import type {
   TranscriptSubscribeSuccess,
   Unsubscribe,
   UiStatePatch,
+  SavedConnectionSummary,
 } from '../shared/preload-api.js';
 import type { SessionId, SessionState, SerialPortInfo } from '../shared/types.js';
 import type { TranscriptEventEnvelope } from '../shared/transcript-ipc-types.js';
@@ -81,6 +82,23 @@ const api: PreloadAPI = {
   ui: {
     onStatePatch: (handler) =>
       subscribe<UiStatePatch>(IPC_CHANNELS.UI_STATE_PATCH, handler),
+  },
+  connections: {
+    list: () =>
+      invoke<ReadonlyArray<SavedConnectionSummary>>(IPC_CHANNELS.CONNECTIONS_LIST),
+    saveAndOpen: (req) =>
+      invoke<{
+        profile: SavedConnectionSummary;
+        sessionId: SessionId;
+        state: SessionState;
+      }>(IPC_CHANNELS.CONNECTIONS_SAVE_AND_OPEN, req),
+    open: (req) =>
+      invoke<{
+        profile: SavedConnectionSummary;
+        sessionId: SessionId;
+        state: SessionState;
+      }>(IPC_CHANNELS.CONNECTIONS_OPEN, req),
+    delete: (req) => invoke<{ deleted: true }>(IPC_CHANNELS.CONNECTIONS_DELETE, req),
   },
 };
 

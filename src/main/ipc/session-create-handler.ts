@@ -21,12 +21,12 @@ import { ipcMain } from 'electron';
 import type { SessionManager } from '../../core/session/session-manager.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type { SessionId, SessionState } from '../../shared/types.js';
-import { buildSession } from '../../core/session/factory.js';
 import type {
   SessionCreateRequestConfig,
   PreloadResult,
 } from '../../shared/preload-api.js';
 import { openSessionInputSchema } from '../../mcp/surfaces/terminal/schemas.js';
+import { createAndOpenSession } from './session-open-helper.js';
 
 /** session:create 的入参契约。`sessionId`/`label` 是 UI 便利字段（label 进 config.label）。 */
 interface SessionCreateRequest {
@@ -74,19 +74,11 @@ export function registerSessionCreate(sessionManager: SessionManager): () => voi
       const config = input.config as unknown as SessionCreateRequestConfig;
 
       try {
-        // 2) 注册 session 到 manager（不立刻 open），manager 会分配 `sess_<uuid>` 形式 id
-        const session = sessionManager.create((id) => buildSession(id, config));
-
-        // 3) open 失败不算 IPC 错误：让 session 留在 manager 以便 UI 看到 errored tab
-        try {
-          await session.open();
-        } catch {
-          // 状态已通过 SessionBase 内部 transition 推到 'errored'，无需额外动作
-        }
+        const data = await createAndOpenSession(sessionManager, config);
 
         return {
           success: true,
-          data: { sessionId: session.id, state: session.state },
+          data,
         };
       } catch (err) {
         // 仅当 manager 入注册阶段抛错时落入此分支（重复 id / factory 校验失败 / buildSession 异常）

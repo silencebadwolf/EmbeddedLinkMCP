@@ -1,9 +1,8 @@
 /**
- * 串口选择器：自动扫描结果 + 手动输入两种模式。
+ * 串口选择器：只从自动扫描结果中选择串口。
  *
  * 行为（决策 9，详见 docs/phase-decisions/Phase6.md）：
- * - 默认 auto 模式：渲染下拉列表；为空时自动切到 manual 模式
- * - manual 模式：渲染文本输入框，用户自行输入 `/dev/ttyUSB0` / `COM3`
+ * - 渲染自动扫描得到的下拉列表；为空时只显示空列表提示
  * - 串口扫描由 useSerialDiscovery 自动执行并订阅热插拔变化，不再提供手动刷新按钮
  */
 
@@ -11,8 +10,6 @@ import * as React from 'react';
 import type { SerialPortInfo } from '../../shared/types.js';
 import { useT } from '../i18n/index.js';
 import { useSerialDiscovery } from '../hooks/useSerialDiscovery.js';
-import { Button } from './ui/button.js';
-import { Input } from './ui/input.js';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select.js';
 
 /** SerialPortPicker props。 */
@@ -28,8 +25,6 @@ export interface SerialPortPickerProps {
   ports?: ReadonlyArray<SerialPortInfo>;
   className?: string;
 }
-
-type PickerMode = 'auto' | 'manual';
 
 /**
  * 生成串口下拉项显示名称，优先使用系统友好名，回退到厂商名。
@@ -56,77 +51,32 @@ export function SerialPortPicker({
   const discovery = useSerialDiscovery();
   const ports = portsOverride ?? discovery.ports;
 
-  // 初始模式：扫描结果空 → manual；否则 auto
-  const [mode, setMode] = React.useState<PickerMode>(ports.length > 0 ? 'auto' : 'manual');
-  // 用户一旦显式点击模式按钮，就不再自动升级（避免点击 manual 后被立刻拉回 auto）
-  const userChoseMode = React.useRef(false);
-
-  // 自动从 manual 升级到 auto：当扫描首次出现端口且用户尚未手动输入也未显式选择模式
   React.useEffect(() => {
-    if (!userChoseMode.current && mode === 'manual' && ports.length > 0 && !value) {
-      setMode('auto');
+    if (!value && ports.length > 0) {
+      onChange(ports[0].path);
     }
-  }, [mode, ports.length, value]);
-
-  const chooseMode = React.useCallback((next: PickerMode) => {
-    userChoseMode.current = true;
-    setMode(next);
-  }, []);
+  }, [onChange, ports, value]);
 
   return (
     <div className={className}>
-      <div className="flex items-center gap-2">
-        <div className="flex flex-1 gap-2">
-          <Button
-            type="button"
-            variant={mode === 'auto' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => chooseMode('auto')}
-            data-testid="picker-mode-auto"
-          >
-            {t('serial.picker.auto')}
-          </Button>
-          <Button
-            type="button"
-            variant={mode === 'manual' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => chooseMode('manual')}
-            data-testid="picker-mode-manual"
-          >
-            {t('serial.picker.manual')}
-          </Button>
-        </div>
-      </div>
-
-      <div className="mt-2">
-        {mode === 'auto' ? (
-          ports.length === 0 ? (
-            <p className="text-xs text-gray-400" data-testid="picker-empty">
-              {t('serial.picker.empty')}
-            </p>
-          ) : (
-            <Select value={value || undefined} onValueChange={onChange}>
-              <SelectTrigger data-testid="picker-select-trigger">
-                <SelectValue placeholder={t('serial.picker.placeholder')} />
-              </SelectTrigger>
-              <SelectContent>
-                {ports.map((p) => (
-                  <SelectItem key={p.path} value={p.path}>
-                    {formatSerialPortLabel(p)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )
-        ) : (
-          <Input
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={t('serial.picker.placeholder')}
-            data-testid="picker-manual-input"
-          />
-        )}
-      </div>
+      {ports.length === 0 ? (
+        <p className="text-xs text-gray-400" data-testid="picker-empty">
+          {t('serial.picker.empty')}
+        </p>
+      ) : (
+        <Select value={value || undefined} onValueChange={onChange}>
+          <SelectTrigger data-testid="picker-select-trigger">
+            <SelectValue placeholder={t('serial.picker.placeholder')} />
+          </SelectTrigger>
+          <SelectContent>
+            {ports.map((p) => (
+              <SelectItem key={p.path} value={p.path}>
+                {formatSerialPortLabel(p)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
     </div>
   );
 }

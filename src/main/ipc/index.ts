@@ -1,6 +1,8 @@
-import { BrowserWindow } from 'electron';
+import path from 'node:path';
+import { app, BrowserWindow } from 'electron';
 import { SessionManager } from '../../core/session/session-manager.js';
 import { WorkspaceConfigManager } from '../../core/workspace/index.js';
+import { ConnectionProfileManager } from '../../core/connections/index.js';
 import { JLinkAdapter } from '../../jlink/index.js';
 import type { IJLinkBackend } from '../../jlink/index.js';
 import { createMcpServer, type LinkTermMcpServer } from '../../mcp/index.js';
@@ -9,6 +11,8 @@ import { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
 import { registerSerialIpc } from './serial-ipc.js';
 import { registerSessionIpc } from './session-ipc.js';
 import { registerSessionCreate } from './session-create-handler.js';
+import { registerConnectionProfilesIpc } from './connection-profiles-ipc.js';
+import { SafeStorageSecretCodec } from '../connections/safe-storage-secret-codec.js';
 import { createUiBridge } from './ui-bridge.js';
 export { createUiBridge, type UiPatchTarget } from './ui-bridge.js';
 
@@ -25,6 +29,7 @@ export interface MainProcessContext {
   serialDiscovery: SerialDiscovery;
   sessionManager: SessionManager;
   workspaceConfigManager: WorkspaceConfigManager;
+  connectionProfileManager: ConnectionProfileManager;
   /**
    * Phase 9：J-Link backend。当前仅 lifecycle 可用（probeConnect/disconnect/status
    * /detect），其余方法抛 NOT_IMPLEMENTED；Phase 13+ 替换为真实 SEGGER 适配器。
@@ -76,6 +81,10 @@ export async function registerIpcHandlers(
       serialPorts: await serialDiscovery.listPorts(),
     }),
   });
+  const connectionProfileManager = new ConnectionProfileManager({
+    filePath: path.join(app.getPath('userData'), 'connections.json'),
+    secretCodec: new SafeStorageSecretCodec(),
+  });
   const jlinkBackend: IJLinkBackend = new JLinkAdapter();
 
   const uiBridge = createUiBridge(() =>
@@ -105,6 +114,10 @@ export async function registerIpcHandlers(
   const unregisterSerial = registerSerialIpc(serialDiscovery);
   const unregisterSession = registerSessionIpc(sessionManager);
   const unregisterSessionCreate = registerSessionCreate(sessionManager);
+  const unregisterConnectionProfiles = registerConnectionProfilesIpc(
+    sessionManager,
+    connectionProfileManager,
+  );
 
   const shouldAutoStart =
     options.autoStartMcp ?? process.env.LINKTERM_MCP_STDIO === '1';
@@ -116,6 +129,7 @@ export async function registerIpcHandlers(
       unregisterSerial();
       unregisterSession();
       unregisterSessionCreate();
+      unregisterConnectionProfiles();
       serialDiscovery.dispose();
       throw err;
     }
@@ -125,12 +139,21 @@ export async function registerIpcHandlers(
     unregisterSerial();
     unregisterSession();
     unregisterSessionCreate();
+    unregisterConnectionProfiles();
     // 先停 MCP，避免 destroyAll 期间还有新工具调用进来
     await mcpServer.stop().catch(() => undefined);
     await sessionManager.destroyAll().catch(() => undefined);
     serialDiscovery.dispose();
   };
 
-  return { serialDiscovery, sessionManager, workspaceConfigManager, jlinkBackend, mcpServer, dispose };
+  return {
+    serialDiscovery,
+    sessionManager,
+    workspaceConfigManager,
+    connectionProfileManager,
+    jlinkBackend,
+    mcpServer,
+    dispose,
+  };
 }
 

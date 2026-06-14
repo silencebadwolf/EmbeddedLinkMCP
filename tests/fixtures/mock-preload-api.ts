@@ -9,6 +9,7 @@ import { vi } from 'vitest';
 import type {
   PreloadAPI,
   PreloadResult,
+  SavedConnectionSummary,
   SessionReadSuccess,
   TranscriptSubscribeSuccess,
   Unsubscribe,
@@ -44,6 +45,12 @@ export interface MockPreloadAPI {
     };
     serial: {
       listPorts: ReturnType<typeof vi.fn>;
+    };
+    connections: {
+      list: ReturnType<typeof vi.fn>;
+      saveAndOpen: ReturnType<typeof vi.fn>;
+      open: ReturnType<typeof vi.fn>;
+      delete: ReturnType<typeof vi.fn>;
     };
   };
 }
@@ -92,6 +99,41 @@ export function createMockPreloadAPI(): MockPreloadAPI {
     async (): Promise<PreloadResult<ReadonlyArray<SerialPortInfo>>> => okEmpty([]),
   );
 
+  const connectionList = vi.fn(
+    async (): Promise<PreloadResult<ReadonlyArray<SavedConnectionSummary>>> => okEmpty([]),
+  );
+  const connectionSaveAndOpen = vi.fn(async () =>
+    okEmpty({
+      profile: {
+        id: 'conn_test',
+        label: 'Saved connection',
+        type: 'serial',
+        config: { type: 'serial', port: 'COM1', baudRate: 115200, mode: 'terminal' },
+        hasCredential: false,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      } satisfies SavedConnectionSummary,
+      sessionId: 'sess_test',
+      state: 'open' as const,
+    }),
+  );
+  const connectionOpen = vi.fn(async () =>
+    okEmpty({
+      profile: {
+        id: 'conn_test',
+        label: 'Saved connection',
+        type: 'serial',
+        config: { type: 'serial', port: 'COM1', baudRate: 115200, mode: 'terminal' },
+        hasCredential: false,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      } satisfies SavedConnectionSummary,
+      sessionId: 'sess_test',
+      state: 'open' as const,
+    }),
+  );
+  const connectionDelete = vi.fn(async () => okEmpty({ deleted: true as const }));
+
   const api: PreloadAPI = {
     session,
     serial: {
@@ -113,6 +155,12 @@ export function createMockPreloadAPI(): MockPreloadAPI {
         return () => uiPatchListeners.delete(handler);
       },
     },
+    connections: {
+      list: connectionList,
+      saveAndOpen: connectionSaveAndOpen,
+      open: connectionOpen,
+      delete: connectionDelete,
+    },
   };
 
   return {
@@ -130,6 +178,12 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       session,
       serial: {
         listPorts: serialListPorts,
+      },
+      connections: {
+        list: connectionList,
+        saveAndOpen: connectionSaveAndOpen,
+        open: connectionOpen,
+        delete: connectionDelete,
       },
     },
   };

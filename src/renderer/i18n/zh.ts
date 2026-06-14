@@ -29,9 +29,21 @@ export const zh: TranslationTable = {
   // 串口字段
   'dialog.serial.port': '端口',
   'dialog.serial.baudRate': '波特率',
+  'dialog.serial.commonBaudRates': '常用波特率',
   'dialog.serial.mode': '模式',
   'dialog.serial.mode.normal': '普通',
   'dialog.serial.mode.terminal': '终端',
+  'dialog.serial.advanced': '高级串口设置',
+  'dialog.serial.dataBits': '数据位',
+  'dialog.serial.stopBits': '停止位',
+  'dialog.serial.parity': '校验位',
+  'dialog.serial.rtscts': 'RTS/CTS 硬件流控',
+  'dialog.serial.xon': 'XON 软件流控',
+  'dialog.serial.xoff': 'XOFF 软件流控',
+  'dialog.saveProfile': '保存为全局连接',
+  'dialog.saved.title': '已保存连接',
+  'dialog.saved.open': '打开',
+  'dialog.saved.delete': '删除',
   // SSH 字段
   'dialog.ssh.host': '主机',
   'dialog.ssh.port': '端口',
@@ -47,9 +59,8 @@ export const zh: TranslationTable = {
   'dialog.local.cwd': '工作目录（可选）',
   // 串口选择
   'serial.picker.auto': '自动扫描',
-  'serial.picker.manual': '手动输入',
   'serial.picker.refresh': '刷新',
-  'serial.picker.empty': '未检测到串口 —— 请切换到手动输入。',
+  'serial.picker.empty': '未检测到串口。',
   'serial.picker.placeholder': '/dev/tty.usbserial-XXX',
   // 来源指示
   'origin.label.A': 'AI',

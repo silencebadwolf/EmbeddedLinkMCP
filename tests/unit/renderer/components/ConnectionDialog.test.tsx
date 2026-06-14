@@ -15,7 +15,7 @@ const resetStore = (): void => {
     activeSessionId: null,
     locale: 'en',
     dialogOpen: true,
-    serialPorts: [],
+    serialPorts: [{ path: '/dev/ttyUSB0' }],
     originActivity: {},
     connectionDialogPrefill: null,
   });
@@ -27,6 +27,10 @@ describe('ConnectionDialog', () => {
   beforeEach(() => {
     resetStore();
     mock = installMockPreload();
+    mock.spies.serial.listPorts.mockResolvedValue({
+      success: true,
+      data: [{ path: '/dev/ttyUSB0' }],
+    });
   });
 
   it('renders title when open', () => {
@@ -34,29 +38,41 @@ describe('ConnectionDialog', () => {
     expect(screen.getByText('New Connection')).toBeInTheDocument();
   });
 
-  it('submits local-shell config with default fields', async () => {
+  it('submits serial config with terminal defaults and common wire parameters', async () => {
     mock.spies.session.create.mockResolvedValueOnce({
       success: true,
       data: { sessionId: 'sess_L', state: 'open' },
     });
-    // 默认 type=serial，需要先切换到 local-shell（无必填字段）
     render(<ConnectionDialog />);
-    // 把 type 改为 local-shell：通过 store 直接触发更简单（避免 Radix Select 在 happy-dom 下的细节）
-    // 这里改用直接 querySelector + 触发 change 的方式更稳；但 Radix Select 不暴露 native select
-    // 改成：默认 serial 表单提交时填好 port 即可
 
-    // 填入 serial port
-    fireEvent.change(screen.getByPlaceholderText('/dev/tty.usbserial-XXX'), {
-      target: { value: '/dev/ttyUSB0' },
-    });
+    const baudRateInput = screen.getByLabelText('Baud Rate') as HTMLInputElement;
+    expect(baudRateInput).toHaveValue('115200');
+    expect(screen.queryByRole('combobox', { name: 'Common baud rates' })).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('Common baud rates'));
+    expect(screen.getByRole('listbox', { name: 'Baud Rate' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '9600' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '2000000' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: '921600' }));
+    expect(baudRateInput).toHaveValue('921600');
+    fireEvent.click(screen.getByLabelText('RTS/CTS flow control'));
 
     fireEvent.click(screen.getByText('Create'));
 
     await waitFor(() => expect(mock.spies.session.create).toHaveBeenCalled());
     const callArg = mock.spies.session.create.mock.calls[0]?.[0];
-    expect(callArg.config.type).toBe('serial');
-    expect(callArg.config.port).toBe('/dev/ttyUSB0');
-    expect(callArg.config.baudRate).toBe(115200);
+    expect(callArg.config).toMatchObject({
+      type: 'serial',
+      port: '/dev/ttyUSB0',
+      baudRate: 921600,
+      mode: 'terminal',
+      dataBits: 8,
+      stopBits: 1,
+      parity: 'none',
+      rtscts: true,
+      xon: false,
+      xoff: false,
+    });
   });
 
   it('shows error when create returns failure', async () => {
@@ -65,9 +81,6 @@ describe('ConnectionDialog', () => {
       error: { code: 'INVALID_PAYLOAD', message: 'bad' },
     });
     render(<ConnectionDialog />);
-    fireEvent.change(screen.getByPlaceholderText('/dev/tty.usbserial-XXX'), {
-      target: { value: '/dev/ttyUSB0' },
-    });
     fireEvent.click(screen.getByText('Create'));
 
     await waitFor(() =>
@@ -85,22 +98,22 @@ describe('ConnectionDialog', () => {
     // 通过 store 模拟 type 切换 —— ConnectionDialog 是 controlled by internal state，
     // 这里采用打开 + 直接切换 Radix Select 的方式：用 keyboard 替代 click 更稳
     render(<ConnectionDialog />);
-    // 一开始 serial port input 应可见
-    expect(screen.getByPlaceholderText('/dev/tty.usbserial-XXX')).toBeInTheDocument();
+    // 一开始 serial port selector 应可见
+    expect(screen.getByTestId('picker-select-trigger')).toBeInTheDocument();
   });
 
   it('applies MCP prefill on open edge and clears it from store', () => {
     // dialog 默认 closed → store 写入 prefill → open=true 触发 effect 边沿读取
     useAppStore.setState({
       dialogOpen: false,
-      connectionDialogPrefill: { serialPort: '/dev/ttyACM0', baudRate: '9600' },
+      connectionDialogPrefill: { serialPort: '/dev/ttyUSB0', baudRate: '9600' },
     });
     const { rerender } = render(<ConnectionDialog />);
     useAppStore.setState({ dialogOpen: true });
     rerender(<ConnectionDialog />);
-    // 表单内的 serial port input 应当有 prefill 值
-    const input = screen.getByPlaceholderText('/dev/tty.usbserial-XXX') as HTMLInputElement;
-    expect(input.value).toBe('/dev/ttyACM0');
+    // 表单内的 serial port selector 应当可见且没有 manual input
+    expect(screen.getByTestId('picker-select-trigger')).toBeInTheDocument();
+    expect(screen.queryByTestId('picker-manual-input')).toBeNull();
     // prefill 已被立即清掉，避免下次 open 时重放
     expect(useAppStore.getState().connectionDialogPrefill).toBeNull();
   });
@@ -117,7 +130,7 @@ describe('ConnectionDialog', () => {
     const hostInput = screen.getByLabelText('Host') as HTMLInputElement;
     expect(hostInput.value).toBe('example.com');
     // serial 端口字段不应可见
-    expect(screen.queryByPlaceholderText('/dev/tty.usbserial-XXX')).toBeNull();
+    expect(screen.queryByTestId('picker-select-trigger')).toBeNull();
   });
 
   it('infers type=local-shell from prefill when type omitted', () => {
@@ -131,6 +144,6 @@ describe('ConnectionDialog', () => {
     const shellInput = screen.getByLabelText('Shell (optional)') as HTMLInputElement;
     expect(shellInput.value).toBe('/bin/bash');
     // serial / ssh 字段不应渲染
-    expect(screen.queryByPlaceholderText('/dev/tty.usbserial-XXX')).toBeNull();
+    expect(screen.queryByTestId('picker-select-trigger')).toBeNull();
   });
 });
