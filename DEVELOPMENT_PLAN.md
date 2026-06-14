@@ -19,7 +19,7 @@ LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形
 | Phase 6: Electron UI | ✅ 已完成 | 2026-06-13 |
 | Phase 7: 终端规则+sendAndWait | ✅ 已完成 2026-06-13 | 290 测试通过 |
 | Phase 8: 工作区配置 | ✅ 已完成 2026-06-14 | 363 测试通过 |
-| Phase 9: J-Link MCP | ⬜ 未开始 | — |
+| Phase 9: J-Link MCP | ✅ 已完成 2026-06-14 | 420 测试通过 |
 | Phase 10: UI MCP 工具 | ⬜ 未开始 | — |
 | Phase 11: 许可证管理 | 🟨 部分完成（Phase 0 已建立基础） | — |
 | Phase 12: 集成+收尾 | ⬜ 未开始 | — |
@@ -961,32 +961,81 @@ link-terminal-demo/
 | Phase 7 完成时 | 290 |
 | Phase 8 实施完成 | 356 |
 | Phase 8 review 修复后 | **363** |
+| Phase 9 实施 + review 修复后 | **420** |
 
 ---
 
-## Phase 9: J-Link MCP Surface ⬜ 未开始
+## Phase 9: J-Link MCP Surface ✅ 已完成 2026-06-14
 
 **目标**：实现独立的 J-Link 调试/烧录/RTT/GDB MCP surface，无 backend 时安全拒绝。
 
-### 交付物
+### 交付物（实际）
 
 | 文件/模块 | 用途 |
 |---|---|
-| `src/jlink/types.ts` | IJLinkBackend 接口 |
-| `src/jlink/null-backend.ts` | 无 backend 时所有操作返回结构化拒绝 |
-| `src/jlink/jlink-adapter.ts` | 具体适配器（初始 stub） |
-| `src/mcp/surfaces/debug/` | Debug 工具实现、schema、backend 注册 |
+| `src/jlink/types.ts` | IJLinkBackend 接口 + 11 个 DTO 类型 |
+| `src/jlink/errors.ts` | JLinkError 基类 + 8 个子类 |
+| `src/jlink/null-backend.ts` | 无 backend 时显式列出所有方法抛 NoBackendError |
+| `src/jlink/jlink-adapter.ts` | probe lifecycle 真实，其余抛 NOT_IMPLEMENTED（Phase 13+ 替换） |
+| `src/jlink/index.ts` | 桶导出 |
+| `src/mcp/surfaces/debug/schemas.ts` | 28 工具 Zod schema |
+| `src/mcp/surfaces/debug/binary-codec.ts` | 16 MiB 上限 + 严格 base64 校验 |
+| `src/mcp/surfaces/debug/error-translate.ts` | runJLink wrapper + instanceof 翻译 + withAbortableTimeout + ok helper |
+| `src/mcp/surfaces/debug/tools.ts` | 20 个非二进制工具 |
+| `src/mcp/surfaces/debug/tools-binary.ts` | 8 个二进制工具（base64 codec 集中处） |
+| `tests/fixtures/fake-jlink-backend.ts` | calls 账本 + failOnce + delayMs |
+| `tests/unit/jlink/null-backend.test.ts` | 全方法 NoBackendError 验证 |
+| `tests/unit/jlink/jlink-adapter.test.ts` | lifecycle + NOT_IMPLEMENTED 边界 |
+| `tests/unit/mcp/debug/tools.test.ts` | 注册 + sensitivity + NO_BACKEND + roundtrip |
+| `tests/unit/mcp/debug/tools-binary.test.ts` | base64 翻译 + AbortSignal + BUFFER_TOO_LARGE |
 
-### J-Link 工具清单
+### 工具清单（28）
 
-`probe_detect/connect/disconnect/status`, `cpu_reset/halt/run/step`, `breakpoint_set/clear/list`, `register_read/write/list`, `memory_read/write`, `flash_download/erase/write/verify`, `rtt_connect/read/clear/search`, `gdb_server_start/stop`, `snapshot_capture`, `crash_diagnose`
+probe lifecycle (4): `probe_detect/connect/disconnect/status` ·
+cpu (4): `cpu_reset/halt/run/step` ·
+breakpoints (3): `breakpoint_set/clear/list` ·
+registers (3): `register_read/write/list` ·
+memory (2): `memory_read/write` ·
+flash (4): `flash_download/erase/write/verify` ·
+RTT (4): `rtt_connect/read/clear/search` ·
+GDB (2): `gdb_server_start/stop` ·
+diagnostics (2): `snapshot_capture/crash_diagnose`
 
-### 关键架构决策
+### 关键架构决策（实施后）
 
-1. **IJLinkBackend 纯接口 + null-backend** — 无 backend 时全部返回 `{ success: false, error: { code: 'NO_BACKEND' } }`
-2. **Debug 输出与终端 transcript 隔离** — 使用 EvidenceKind.debug_output
-3. **Fatal error 分类** — 退出码 0 但含 fatal marker → 仍分类为失败
-4. **jlinkmcp 引用需先许可证审查** — 当前未声明 license，不得复制源码
+1. **始终注册 + 默认 NullJLinkBackend**（计划 §986 升级）— 28 工具对 AI 客户端始终可见；无 backend 时返回 `NO_BACKEND` 结构化拒绝。
+2. **IJLinkBackend 抛错而非 result 联合** — 与 Serial/SSH/Workspace 一致；MCP 层 `runJLink` wrapper 用 `instanceof` 翻译。
+3. **8 个新 ERROR_CODES 双向同步**（M5 模式）— `NO_BACKEND / PROBE_NOT_FOUND / PROBE_BUSY / JLINK_OPERATION_FAILED / BUFFER_TOO_LARGE / ABORTED / INVALID_STATE / NOT_IMPLEMENTED` 同时加入 `ERROR_CODES` 与 `ToolErrorCode` union。
+4. **二进制走 16 MiB 上限的 base64**：`MAX_BINARY_BYTES = 16 MiB`；`decodeBase64Capped` 严格字符校验，超长抛 `JLinkBufferTooLargeError`，由 `runJLink` 翻译为 `BUFFER_TOO_LARGE`（**调用必须在 runJLink 内部**）。
+5. **AbortSignal 透传** — flash_download / flash_verify / gdb_server_start 接收顶层 `timeoutMs`，`withAbortableTimeout` 转 AbortController；backend 抛 `JLinkAbortedError` 由翻译层转 `ABORTED`。
+6. **probeId UUID v4** — `crypto.randomUUID()` 唯一 mint 在 `JLinkAdapter.probeConnect`；序列号绝不暴露在 wire 上。
+7. **sensitivity 分类（read 类全 read-only / write+run 类全 state-affecting）** — 决定旧 schema mismatch 时是否拒绝；`rtt_read` 推进硬件读指针被归为 state-affecting。
+8. **NullBackend 显式列出每方法**（不用 Proxy）— 接口扩展时 TS 立即在 NullBackend 报缺失成员错。
+
+### 验证
+
+- `pnpm run lint` ✅
+- `pnpm test` ✅ 420/420（363 baseline + 57 新）
+- `pnpm run build` ✅
+- `pnpm run validate:licenses` ✅（无新 runtime 依赖）
+
+### 评审与修复（三视角）
+
+3 个并行 reviewer（Simplicity / Bugs / Conventions）合计 1 HIGH + 6 MEDIUM + 8 LOW，**全部 fix 或注释**：
+
+- **H1（Bugs）**：base64 解码前未做长度短路 → 大载荷可触发主进程 OOM。修：`schemas.ts` `base64Field.max(MAX_BASE64_INPUT_LEN)` + `binary-codec.ts` stripped 长度阶段抛 `JLinkBufferTooLargeError`，再走 `Buffer.from`。
+- **M（Bugs/Privacy）**：`probe_connect/status` evidence 直接回显 backend `serialNumber`（违反 Q3 设计意图）。修：MCP 层加 `sanitizeProbeForMcp` helper（仿 workspace `ConflictReport` 剥敏字段）。
+- **M（Bugs）**：空白/空 base64 → 0-byte Buffer 静默写入。修：`decodeBase64Capped` 拒绝 stripped == 0。
+- **M（Simpl）**：`ProbeHandle` / `ProbeInfo` 多个未使用字段 → 删除（Phase 13 接真 backend 时再加）。
+- **M（Conv）**：fixture 用相对路径 → 改 `@/jlink/*` 与 sibling fixtures 一致。
+- **L（Simpl）**：`encodeBase64` no-op 删除内联；`abortable.ts` fold 进 `error-translate.ts`；`ok` helper 共享。
+- **L（Bugs/Conv）**：28 schemas 全 `.strict()` 拒未知字段。
+
+### 给 Phase 13 的 backlog
+
+- 替换 `JLinkAdapter` 内除 `requireProbe` 之外的所有 NOT_IMPLEMENTED 实现；不必触 MCP 层
+- gdb_server_start 真实 bind 后评估 host 回显语义（Phase 6 评审 M3-bugs）
+- AbortSignal 完成-时-超时争用：当前 cosmetic；真 backend 协作取消后再观察
 
 ### 依赖阶段：Phase 4
 

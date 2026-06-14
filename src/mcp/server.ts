@@ -21,6 +21,8 @@ import type {
   EvidenceSnapshot,
   WorkspaceConfigManager,
 } from '../core/workspace/index.js';
+import type { IJLinkBackend } from '../jlink/types.js';
+import { NullJLinkBackend } from '../jlink/null-backend.js';
 import { APP_NAME } from '../shared/constants.js';
 import {
   defaultStdioTransportFactory,
@@ -29,6 +31,8 @@ import {
 import { LINKTERM_MCP_SCHEMA_VERSION } from './versioning/version-check.js';
 import { registerTerminalTools } from './surfaces/terminal/tools.js';
 import { registerWorkspaceTools } from './surfaces/workspace/tools.js';
+import { registerDebugTools } from './surfaces/debug/tools.js';
+import { registerDebugBinaryTools } from './surfaces/debug/tools-binary.js';
 
 /** {@link createMcpServer} 的依赖容器。 */
 export interface CreateMcpServerOptions {
@@ -44,6 +48,12 @@ export interface CreateMcpServerOptions {
    * 仅在提供 workspaceConfigManager 时有意义。
    */
   workspaceEvidenceFn?: () => Promise<EvidenceSnapshot>;
+  /**
+   * J-Link backend（Phase 9）。注入时 server 会注册 28 个 debug 工具；
+   * 缺省时使用 NullJLinkBackend，工具仍然注册并对所有调用返回 NO_BACKEND
+   * 结构化拒绝（让 AI 客户端始终能看到工具清单与契约性失败）。
+   */
+  jlinkBackend?: IJLinkBackend;
   /** 注入用 transport 工厂；省略时使用 stdio。测试通常注入 InMemoryTransport。 */
   transportFactory?: McpTransportFactory;
   /** 覆盖 server 自报版本号；默认从 APP_NAME / package.json 推导。 */
@@ -110,6 +120,12 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
       evidenceFn,
     });
   }
+
+  // Phase 9: 始终注册 28 个 debug 工具；未注入 backend 时挂 NullJLinkBackend，
+  // 让所有调用都返回结构化的 NO_BACKEND 拒绝（req §4.6）。
+  const jlinkBackend = options.jlinkBackend ?? new NullJLinkBackend();
+  registerDebugTools(server, { jlinkBackend });
+  registerDebugBinaryTools(server, { jlinkBackend });
 
   let activeTransport: Transport | null = null;
   let starting: Promise<void> | null = null;

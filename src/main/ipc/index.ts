@@ -1,5 +1,7 @@
 import { SessionManager } from '../../core/session/session-manager.js';
 import { WorkspaceConfigManager } from '../../core/workspace/index.js';
+import { JLinkAdapter } from '../../jlink/index.js';
+import type { IJLinkBackend } from '../../jlink/index.js';
 import { createMcpServer, type LinkTermMcpServer } from '../../mcp/index.js';
 import { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
 import { registerSerialIpc } from './serial-ipc.js';
@@ -19,6 +21,11 @@ export interface MainProcessContext {
   serialDiscovery: SerialDiscovery;
   sessionManager: SessionManager;
   workspaceConfigManager: WorkspaceConfigManager;
+  /**
+   * Phase 9：J-Link backend。当前仅 lifecycle 可用（probeConnect/disconnect/status
+   * /detect），其余方法抛 NOT_IMPLEMENTED；Phase 13+ 替换为真实 SEGGER 适配器。
+   */
+  jlinkBackend: IJLinkBackend;
   mcpServer: LinkTermMcpServer;
   /** 反注册所有 IPC handler 并停止 MCP server / 销毁所有 session；应用退出/测试 teardown 调用。 */
   dispose: () => Promise<void>;
@@ -58,6 +65,7 @@ export async function registerIpcHandlers(
       serialPorts: await serialDiscovery.listPorts(),
     }),
   });
+  const jlinkBackend: IJLinkBackend = new JLinkAdapter();
   const mcpServer = createMcpServer({
     sessionManager,
     serialDiscovery,
@@ -65,6 +73,7 @@ export async function registerIpcHandlers(
     workspaceEvidenceFn: async () => ({
       serialPorts: await serialDiscovery.listPorts(),
     }),
+    jlinkBackend,
   });
 
   const unregisterSerial = registerSerialIpc(serialDiscovery);
@@ -96,5 +105,5 @@ export async function registerIpcHandlers(
     serialDiscovery.dispose();
   };
 
-  return { serialDiscovery, sessionManager, workspaceConfigManager, mcpServer, dispose };
+  return { serialDiscovery, sessionManager, workspaceConfigManager, jlinkBackend, mcpServer, dispose };
 }

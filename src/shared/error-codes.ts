@@ -36,6 +36,22 @@ export const ERROR_CODES = {
   WORKSPACE_CONFLICT: 'WORKSPACE_CONFLICT',
   /** 工作区 config.json 的 schemaVersion 与运行时常量不匹配（需迁移）。 */
   WORKSPACE_SCHEMA_VERSION_MISMATCH: 'WORKSPACE_SCHEMA_VERSION_MISMATCH',
+  /** J-Link backend 未注入；当前 server 仅暴露空实现。 */
+  NO_BACKEND: 'NO_BACKEND',
+  /** 给定 probeId 不存在或已 disconnect。 */
+  PROBE_NOT_FOUND: 'PROBE_NOT_FOUND',
+  /** probe 上有并发操作未完成。 */
+  PROBE_BUSY: 'PROBE_BUSY',
+  /** backend 实操失败（保留 J-Link 前缀避免与未来通用 OPERATION_FAILED 撞名）。 */
+  JLINK_OPERATION_FAILED: 'JLINK_OPERATION_FAILED',
+  /** 二进制载荷超过 16 MiB 上限（MCP JSON 通道保护）。 */
+  BUFFER_TOO_LARGE: 'BUFFER_TOO_LARGE',
+  /** 调用方通过 AbortSignal 主动取消（含超时）。 */
+  ABORTED: 'ABORTED',
+  /** 操作语义与当前 probe 状态不符（如已 halt 再请求 halt、target 缺失等）。 */
+  INVALID_STATE: 'INVALID_STATE',
+  /** JLinkAdapter stub 未实现的方法（Phase 9 占位，等待真实 backend）。 */
+  NOT_IMPLEMENTED: 'NOT_IMPLEMENTED',
 } as const;
 
 /** ERROR_CODES 的字符串字面量联合类型。 */
