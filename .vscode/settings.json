@@ -1,0 +1,38 @@
+{
+  "actionButtons": {
+    "reloadButton": null,
+    "loadNpmCommands": false,
+    "commands": [
+      {
+        "name": "$(cloud-download) 环境准备",
+        "tooltip": "安装/准备 Node.js、pnpm 并执行 pnpm install",
+        "color": "#60a5fa",
+        "command": "python scripts/setup_env.py --install",
+        "cwd": "${workspaceFolder}",
+        "singleInstance": true,
+        "focus": true,
+        "saveAll": true
+      },
+      {
+        "name": "$(tools) 准备并编译",
+        "tooltip": "准备环境、安装依赖并执行 pnpm run build",
+        "color": "#4ade80",
+        "command": "python scripts/setup_env.py --install --build",
+        "cwd": "${workspaceFolder}",
+        "singleInstance": true,
+        "focus": true,
+        "saveAll": true
+      },
+      {
+        "name": "$(rocket) 启动应用",
+        "tooltip": "准备环境、构建并启动 LinkTerm Electron 应用",
+        "color": "#f59e0b",
+        "command": "python scripts/setup_env.py --install --start",
+        "cwd": "${workspaceFolder}",
+        "singleInstance": true,
+        "focus": true,
+        "saveAll": true
+      }
+    ]
+  }
+}

@@ -6,7 +6,9 @@ out/
 *.d.ts.map
 
 # IDE
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
 .idea/
 *.swp
 *.swo
@@ -26,3 +28,7 @@ Thumbs.db
 npm-debug.log*
 pnpm-debug.log*
 .claude/
+
+# Python
+__pycache__/
+*.py[cod]

@@ -5,8 +5,11 @@ import { fileURLToPath } from 'url';
 // ESM 下手动派生 __dirname：Electron 主进程不支持 CJS `__dirname` 全局
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/** 是否处于开发模式：未打包即视为开发，由 vite dev server 提供渲染端。 */
-const IS_DEV = !app.isPackaged;
+/** 是否强制加载已构建的 renderer 文件，供本地一键启动脚本使用。 */
+const FORCE_DIST = process.env.LINKTERM_FORCE_DIST === '1';
+
+/** 是否处于开发模式：未打包且未强制加载 dist 时，由 vite dev server 提供渲染端。 */
+const IS_DEV = !app.isPackaged && !FORCE_DIST;
 
 /** 开发模式下 Vite dev server 的地址。HMR 需要 ws 连接到同一 host。 */
 const DEV_SERVER_URL = 'http://localhost:5173';
@@ -125,7 +128,7 @@ export function createMainWindow(): BrowserWindow {
     loadDevUrlWithRetry(win);
     win.webContents.openDevTools();
   } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'));
+    win.loadFile(join(__dirname, '../../renderer/index.html'));
   }
 
   return win;
