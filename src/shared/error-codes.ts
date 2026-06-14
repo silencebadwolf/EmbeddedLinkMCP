@@ -24,6 +24,8 @@ export const ERROR_CODES = {
   QUEUE_FULL: 'QUEUE_FULL',
   /** 等待响应超时（sendAndWait）。 */
   TIMEOUT: 'TIMEOUT',
+  /** sendAndWait 等待期间 session 进入 closed/errored 终态。 */
+  SESSION_CLOSED: 'SESSION_CLOSED',
   /** 兜底错误码，未归类的内部异常一律落到这里。 */
   INTERNAL: 'INTERNAL',
 } as const;

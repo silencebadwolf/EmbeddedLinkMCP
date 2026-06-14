@@ -8,7 +8,7 @@ LinkTerm v2 is an Electron/TypeScript rewrite of a legacy Qt/C++ terminal, inten
 
 Authoritative specs live in `PROJECT_REQUIREMENTS.md` (requirements) and `DEVELOPMENT_PLAN.md` (13-phase plan with current status). **Always check `DEVELOPMENT_PLAN.md` before starting work** — it tracks which phases are completed (✅), in progress, or not started (⬜), and records every decision/variance from the original plan.
 
-Current state: **Phases 0–6 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters, MCP terminal surface with 8 tools, AI-human coop hardening, Electron renderer UI with xterm.js + connection dialog + i18n + shadcn primitives). Phases 7–12 not yet started. 237 Vitest tests cover `src/core/`, `src/transports/{serial,ssh,local-shell}/`, `src/mcp/`, AI-human coop integration, the renderer (happy-dom hooks/components), and `session:create` IPC.
+Current state: **Phases 0–7 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters, MCP terminal surface with 8 tools, AI-human coop hardening, Electron renderer UI with xterm.js + connection dialog + i18n + shadcn primitives, **embedded terminal rules + sendAndWait FSM**). Phases 8–12 not yet started. 290 Vitest tests cover `src/core/`, `src/transports/{serial,ssh,local-shell}/`, `src/core/terminal-rules/`, `src/mcp/`, AI-human coop integration, send-and-wait integration, the renderer (happy-dom hooks/components), and `session:create` IPC.
 
 ## Common commands
 
@@ -110,6 +110,20 @@ The only renderer→main channel is `window.linkterm`, injected by `src/main/pre
 **Transcript hydration is subscribe-only**: `useTranscript` registers `transcript.onEvent` BEFORE calling `session.subscribe`, then renders the snapshot returned in `subscribe()`'s `events` field — there is no `read({cursor:0})` path. Phase 6 review C1 removed the original read+subscribe combo because of an unfixable race: events arriving between `read` resolving and `subscribe` registering would either be lost or replayed on top of the read snapshot.
 
 **Origin/credentials boundary recap**: the renderer is trusted but its IPC payload is sanitized server-side. `session:write` ignores any caller-supplied `origin` and forces `'human'`; `session:create` for SSH receives `credentials` as a separate top-level field (`SessionCreateRequestConfig`'s SSH branch), and `buildSession()` in `src/core/session/factory.ts` wipes them before any await. Never reintroduce a flow that puts credentials inside `SshSessionConfig` proper.
+
+### Terminal rules & sendAndWait FSM (Phase 7)
+
+`src/core/terminal-rules/` is a self-contained module independent of `SessionManager` proper. It exposes a `SessionManagerLike` structural interface (`write` / `waitFor` / `read`) so `sendAndWait` is a pure orchestrator function, unit-testable without touching transports. The MCP `send_and_wait` tool injects the real `SessionManager` via structural typing — no `as unknown` cast needed.
+
+**`completionMarkers` is `(string | RegExp)[]` at the core layer**. Strings are matched via a precomputed KMP failure table so cross-chunk overlapping patterns (`ABABA` consuming `ABABC`) resolve correctly. RegExp markers run on a UTF-8 accumulating buffer; `nonStateful` copies (with `g`/`y` flags stripped) are precomputed once in the detector ctor — never call `new RegExp` on the feed hot path. The buffer tail-window is `bufferMaxBytes` when no RegExp markers exist, otherwise `min(bufferMaxBytes, max(longestRegex*4, 4096))` so RegExp pattern length never exceeds buffered context.
+
+**At the MCP/IPC boundary**, `completionMarkers` accept `string | { pattern: string; flags?: string }`. `parseMarkerSpec` (`src/mcp/surfaces/terminal/schemas.ts`) converts to native `string | RegExp` before passing into core. `flags` is constrained to `/^[dimsu]*$/` — `g` and `y` are explicitly forbidden because they pollute `lastIndex` across chunks.
+
+**`SendAndWaitResult` failure reasons are structured, not strings**: `'matched' | 'timeout' | 'session-closed' | 'queue-full' | 'aborted'`. The MCP layer translates each to a stable `ToolErrorCode`: `TIMEOUT`, `SESSION_CLOSED`, `QUEUE_FULL`, `INVALID_ARGUMENT`. **Don't add new reasons without also adding the matching `ERROR_CODES` entry and `ToolErrorCode` union member** — the registry's instanceof-translation contract depends on this 1:1 mapping. Empty `completionMarkers` array triggers fallback "any device output matches" behavior (Phase 4 backward compat); in that case `matchedMarkerIndex` is `null` (not `-1`) to avoid invalid-index ambiguity.
+
+**EchoHandler is byte-precise**: FIFO `expected[]` queue, first-byte mismatch flushes the whole queue conservatively. Long-running echo-off devices are protected by `MAX_QUEUE_LEN=4096` — beyond that, the queue auto-flushes. Strategy is `'auto' | 'keep'` only — there is no `'strip'` (was a Phase 7 review redundancy).
+
+**AbortSignal semantics**: pre-aborted calls short-circuit BEFORE write — no transport bytes, no observeWrite, `bytesWritten=0`. During-wait abort uses `Promise.race` with a once listener; the underlying `SessionManager.waitFor` does not yet accept a signal, so its listeners/timer linger until natural timeout (Phase 8 backlog item — record but don't paper over).
 
 ## Build configuration peculiarities
 

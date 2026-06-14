@@ -64,3 +64,28 @@ export const DEFAULT_PTY_ROWS = 24;
 
 /** PTY/SSH shell 默认窗口宽（列）。 */
 export const DEFAULT_PTY_COLS = 80;
+
+/**
+ * 终端规则（Phase 7）默认 sendAndWait 超时（毫秒）。
+ *
+ * 嵌入式命令通常在亚秒内返回；调用方可通过 MCP 入参覆盖。
+ * 与 `DEFAULT_TIMEOUT_MS` 区分 —— 后者是 IPC/会话级兜底；这里专门服务终端交互。
+ */
+export const TERMINAL_RULES_DEFAULT_TIMEOUT_MS = 5_000;
+
+/**
+ * CompletionDetector 累计 buffer 上限（字节）。
+ *
+ * RegExp 完成标记需要在累计 buffer 上重复 test()，长跑命令（如 `dmesg`）下
+ * buffer 会膨胀。命中此上限后 detector 丢弃 buffer 头部、保留尾部，
+ * 既保留正则可能跨 chunk 命中的窗口，又限制内存占用。
+ */
+export const COMPLETION_BUFFER_MAX_BYTES = 64 * 1024;
+
+/**
+ * 终端规则默认行尾字符序列。
+ *
+ * 嵌入式 RTOS / Zephyr / U-Boot 等约定 CRLF；PTY 也兼容。
+ * MCP 客户端可通过 `lineEnding` 入参覆盖（如 `"\n"`）。
+ */
+export const DEFAULT_LINE_ENDING = '\r\n';

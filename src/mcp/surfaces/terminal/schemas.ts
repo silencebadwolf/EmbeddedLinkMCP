@@ -127,13 +127,44 @@ export const readFromSessionInputSchema = z.object({
   cursor: z.number().int().nonnegative().default(0),
 });
 
-/** send_and_wait 入参 —— Phase 4 基础版：等待任意 device 输出或超时。 */
+/**
+ * 完成标记入参形态。
+ *
+ * - `string`：字节包含匹配（嵌入式 prompt 通常是 `"# "`、`"OK\r\n"` 等静态片段）。
+ * - `{pattern, flags?}`：core 端 `new RegExp(pattern, flags ?? '')` 构造，用于 `\d+>` 等动态 prompt。
+ *
+ * Phase 7 决策 C13：JSON 入参用对象形态而非直接 RegExp 实例（MCP 协议无法序列化）。
+ */
+const completionMarkerSchema = z.union([
+  z.string().min(1),
+  z.object({
+    pattern: z.string().min(1),
+    // 仅允许标准 RegExp 标志字符，避免 new RegExp 被构造异常 flag 抛错
+    flags: z.string().regex(/^[dimsu]*$/).max(8).optional(),
+  }),
+]);
+
+/**
+ * send_and_wait 入参 —— Phase 7：扩展 completion marker / echo strategy / line ending。
+ *
+ * 兼容性：未提供新字段时默认行为退化为"等任意 device 输出"；
+ * 但实际由 core orchestrator 做更稳健的处理（当 completionMarkers 为空时
+ * 取首个 device data event 作为命中证据）。
+ */
 export const sendAndWaitInputSchema = z.object({
   ...commonSchema,
   sessionId: z.string().min(1),
   payload: dataPayloadSchema,
-  /** 最长等待时间（毫秒）；缺省使用 DEFAULT_TIMEOUT_MS。 */
+  /** 最长等待时间（毫秒）；缺省使用 TerminalRuleSet 默认值。 */
   timeoutMs: z.number().int().positive().max(300_000).optional(),
+  /** 完成标记列表；为空数组时 orchestrator 将 fallback 为"任意 device 输出即视为完成"。 */
+  completionMarkers: z.array(completionMarkerSchema).optional(),
+  /** 回显处理策略；缺省 'auto'。 */
+  echoStrategy: z.enum(['auto', 'keep']).optional(),
+  /** 是否在 payload 末尾追加 lineEnding；缺省 true。 */
+  appendLineEnding: z.boolean().optional(),
+  /** 行尾覆盖；缺省 `\r\n`。 */
+  lineEnding: z.string().max(8).optional(),
 });
 
 /** discover_serial_ports 入参 —— 无业务参数。 */

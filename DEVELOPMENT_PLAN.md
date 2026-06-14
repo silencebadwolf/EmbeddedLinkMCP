@@ -17,7 +17,7 @@ LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形
 | Phase 4: MCP 终端工具 | ✅ 已完成 | 2026-06-13 |
 | Phase 5: AI-人共同操作 | ✅ 已完成 | 2026-06-13 |
 | Phase 6: Electron UI | ✅ 已完成 | 2026-06-13 |
-| Phase 7: 终端规则+sendAndWait | ⬜ 未开始 | — |
+| Phase 7: 终端规则+sendAndWait | ✅ 已完成 2026-06-13 | 290 测试通过 |
 | Phase 8: 工作区配置 | ⬜ 未开始 | — |
 | Phase 9: J-Link MCP | ⬜ 未开始 | — |
 | Phase 10: UI MCP 工具 | ⬜ 未开始 | — |
@@ -840,7 +840,7 @@ link-terminal-demo/
 
 ---
 
-## Phase 7: 嵌入式终端规则 + 增强 sendAndWait ⬜ 未开始
+## Phase 7: 嵌入式终端规则 + 增强 sendAndWait ✅ 已完成 2026-06-13
 
 **目标**：实现统一嵌入式终端交互规则和跨 chunk 完成标记检测。**技术风险最高阶段。**
 
@@ -874,6 +874,31 @@ link-terminal-demo/
 ### 依赖阶段：Phase 1, Phase 2, Phase 4
 
 ### 相对工作量：3x（最高风险）
+
+### 实际交付（2026-06-13）
+
+- `src/core/terminal-rules/{types,rules,completion-detector,echo-handler,send-and-wait,index}.ts` 6 个新文件；`src/core/index.ts` barrel re-export
+- `src/shared/constants.ts` 新增 `TERMINAL_RULES_DEFAULT_TIMEOUT_MS=5000` / `COMPLETION_BUFFER_MAX_BYTES=65536` / `DEFAULT_LINE_ENDING='\r\n'`
+- `src/mcp/surfaces/terminal/{schemas,tools}.ts` 重写 `send_and_wait`：accept `completionMarkers: (string | {pattern, flags?})[]`、`echoStrategy`、`appendLineEnding`、`lineEnding`，从 4 种 reason 翻译结构化错误（matched/timeout/session-closed/queue-full/aborted）
+- `src/shared/error-codes.ts` + `src/mcp/registry.ts` 新增 `'QUEUE_FULL'` / `'SESSION_CLOSED'` 错误码
+- 新增测试 53 个：`tests/unit/core/terminal-rules/{rules,completion-detector,echo-handler,send-and-wait}.test.ts` + `tests/integration/send-and-wait.test.ts`；`tests/unit/mcp/terminal-tools.test.ts` 改写 4 处。**总测试 237 → 290（净增 53）**
+
+### 关键架构决策（落地版本）
+
+1. **Clean Architecture B**：`SessionManagerLike` 接口隔离，`send-and-wait.ts` 是纯函数 orchestrator，不依赖具体 SessionManager 类，便于单测
+2. **CompletionDetector**：string marker 用 KMP 失败函数处理重叠 pattern；RegExp 用累积 buffer + 截断（纯 string 路径回退到 `bufferMaxBytes`，含 RegExp 时 `min(bufferMaxBytes, max(longestRegex*4, 4096))`）；ctor 一次性预编译 non-stateful `normalizedRe`
+3. **EchoHandler**：FIFO `expected[]` 队列，字节级精确剥除；首字节失配则保守 flush；echo-off 设备保护 `MAX_QUEUE_LEN=4096`
+4. **AbortSignal 语义**：pre-aborted 直接 short-circuit，不触发 write 副作用；`Promise.race(waitPromise, abortPromise)` + once listener
+5. **`echoStrategy = 'auto' | 'keep'`**：评审合并掉同义词 `'strip'`
+6. **`SendAndWaitResult.matchedMarkerIndex: number | null`**：fallback（空 markers）匹配时返回 `null`，避免无效下标
+
+### 变更记录
+
+- 2026-06-13 决策 D1: 选 Clean Architecture B（独立 `terminal-rules/` 模块 + `SessionManagerLike` 接口隔离），优先于 Pragmatic Balance —— 因 3x 工作量＋最高风险，testability 收益＞维护成本
+- 2026-06-13 决策 D2: `completionMarkers` 同时支持 `string | {pattern, flags?}`，在 MCP/IPC 边界用 `parseMarkerSpec` 转 `string | RegExp`；core 层只接受 native 类型
+- 2026-06-13 决策 D3: `session-closed` 不归到 `INTERNAL`，新增专用 `ERROR_CODES.SESSION_CLOSED`；`QUEUE_FULL` 同步补齐 `ToolErrorCode` union
+- 2026-06-13 评审 R1: 评审 N/A 项 `SessionManagerLike.waitFor(signal?)` cancel 机制结构性变更超出本期范围，登记到 Phase 8 backlog（abort 时底层 listeners/timer 短期残留至自然 timeout，不影响功能正确性）
+- 2026-06-13 评审 R2: 文件首部段落式 docstring 收敛到模块 1 行 Why；详尽设计要点迁到 `docs/phase-decisions/Phase7.md`
 
 ---
 

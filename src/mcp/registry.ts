@@ -36,6 +36,8 @@ export type ToolErrorCode =
   | 'NOT_IMPLEMENTED'
   | 'INVALID_ARGUMENT'
   | 'TIMEOUT'
+  | 'SESSION_CLOSED'
+  | 'QUEUE_FULL'
   | 'NO_BACKEND'
   | 'VERSION_MISMATCH'
   | 'INTERNAL';

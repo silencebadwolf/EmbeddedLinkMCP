@@ -11,16 +11,21 @@
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { EventEmitter } from 'node:events';
 import type { SessionManager } from '../../../core/session/session-manager.js';
 import type { ISession } from '../../../core/session/types.js';
 import { SessionNotOpenError, SessionNotFoundError } from '../../../core/session/types.js';
 import type { TranscriptEvent } from '../../../core/transcript/types.js';
+import {
+  parseMarkerSpec,
+  sendAndWait,
+  type CompletionMarker,
+  type EchoStrategy,
+  type SessionManagerLike,
+} from '../../../core/terminal-rules/index.js';
 import type { SerialDiscovery } from '../../../transports/serial/serial-discovery.js';
 import { buildSession } from '../../../core/session/factory.js';
 import type { SessionCreateRequestConfig } from '../../../shared/preload-api.js';
 import { serializeTranscriptEvent } from '../../../shared/transcript-ipc-types.js';
-import { DEFAULT_TIMEOUT_MS } from '../../../shared/constants.js';
 import { ERROR_CODES } from '../../../shared/error-codes.js';
 import {
   registerTool,
@@ -213,34 +218,102 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
   registerTool(server, {
     name: 'send_and_wait',
     description:
-      'Write bytes to a session and wait for the next device output (or timeout). ' +
-      'Phase 4 baseline: resolves on the first transport "data" event with origin=device. ' +
-      'Cross-chunk completion-marker matching is added in Phase 7 with terminal rules.',
+      'Write bytes to a session and wait until a completion marker is observed in device output, ' +
+      'or timeoutMs elapses. Phase 7: supports cross-chunk string/RegExp markers, echo stripping, ' +
+      'and structured timeout/closed payloads (received bytes are returned even on failure).',
     sensitivity: 'state-affecting',
     inputSchema: sendAndWaitInputSchema,
     handler: async (input: SendAndWaitInput): Promise<ToolHandlerResult> => {
       const session = requireSession(sessionManager, input.sessionId);
       const data = decodeOrFail(input.payload);
-      const cursorBefore = latestCursor(session);
-      const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-      const waiter = waitForDeviceOutput(session, timeoutMs);
+      let parsedMarkers: CompletionMarker[] | undefined;
+      if (input.completionMarkers) {
+        try {
+          parsedMarkers = input.completionMarkers.map((m) => parseMarkerSpec(m));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new ToolError(
+            ERROR_CODES.INVALID_ARGUMENT,
+            `Invalid completion marker pattern: ${message}`,
+          );
+        }
+      }
+
+      const deps: { sessionManager: SessionManagerLike } = {
+        sessionManager,
+      };
+      let result;
       try {
-        await sessionManager.write(input.sessionId, data, {
-          origin: 'ai',
-          correlationId: input.correlationId,
+        result = await sendAndWait(deps, {
+          sessionId: input.sessionId,
+          payload: data,
+          // 仅当 caller 显式传 timeoutMs 时覆盖；否则交给 core 默认（TerminalRuleSet.defaultTimeoutMs = 5s）
+          ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+          ...(input.correlationId !== undefined ? { correlationId: input.correlationId } : {}),
+          ...(input.appendLineEnding !== undefined
+            ? { appendLineEnding: input.appendLineEnding }
+            : {}),
+          rules: {
+            ...(parsedMarkers !== undefined ? { completionMarkers: parsedMarkers } : {}),
+            ...(input.echoStrategy !== undefined
+              ? { echoStrategy: input.echoStrategy as EchoStrategy }
+              : {}),
+            ...(input.lineEnding !== undefined ? { lineEnding: input.lineEnding } : {}),
+          },
         });
       } catch (err) {
-        waiter.cancel();
+        if (err instanceof SessionNotOpenError) {
+          throw new ToolError(ERROR_CODES.NOT_OPEN, err.message, {
+            sessionId: input.sessionId,
+            state: err.sessionState,
+          });
+        }
+        if (err instanceof SessionNotFoundError) {
+          throw new ToolError(ERROR_CODES.SESSION_NOT_FOUND, err.message, {
+            sessionId: input.sessionId,
+          });
+        }
         throw err;
       }
 
-      const outcome = await waiter.promise;
-      if (outcome.kind === 'timeout') {
-        throw new ToolError('TIMEOUT', `Timed out waiting for device output after ${timeoutMs}ms`, {
+      if (!result.success) {
+        if (result.reason === 'timeout') {
+          throw new ToolError(
+            ERROR_CODES.TIMEOUT,
+            `Timed out waiting for completion`,
+            {
+              sessionId: session.id,
+              cursorBefore: result.cursorBefore,
+              cursorAfter: result.cursorAfter,
+              receivedBase64: result.receivedBase64,
+              bytesWritten: result.bytesWritten,
+            },
+          );
+        }
+        if (result.reason === 'queue-full') {
+          throw new ToolError(ERROR_CODES.QUEUE_FULL, 'Write queue is full; back off and retry', {
+            sessionId: session.id,
+          });
+        }
+        if (result.reason === 'session-closed') {
+          throw new ToolError(
+            ERROR_CODES.SESSION_CLOSED,
+            `Session entered terminal state during sendAndWait: ${result.sessionState}`,
+            {
+              sessionId: session.id,
+              sessionState: result.sessionState,
+              cursorBefore: result.cursorBefore,
+              cursorAfter: result.cursorAfter,
+              receivedBase64: result.receivedBase64,
+              bytesWritten: result.bytesWritten,
+            },
+          );
+        }
+        // aborted —— 当前 MCP 入口未暴露 signal，理论上不会触发，落到 INTERNAL
+        throw new ToolError(ERROR_CODES.INTERNAL, `sendAndWait aborted unexpectedly`, {
           sessionId: session.id,
-          cursorBefore,
-          timeoutMs,
+          reason: result.reason,
         });
       }
 
@@ -250,11 +323,13 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
         evidence: {
           kind: 'terminal_output',
           data: {
-            bytesWritten: data.byteLength,
-            firstResponseSequence: outcome.event.sequence,
-            firstResponseEvent: serializeEvent(outcome.event),
+            bytesWritten: result.bytesWritten,
+            matchedMarkerIndex: result.matchedMarkerIndex,
+            receivedBase64: result.receivedBase64,
+            cursorBefore: result.cursorBefore,
+            cursorAfter: result.cursorAfter,
           },
-          cursor: outcome.event.sequence,
+          cursor: result.cursorAfter,
         },
       });
     },
@@ -299,61 +374,6 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
 }
 
 /** open_session 的工厂分支已抽到 `src/main/session-factory.ts`，由 IPC 与 MCP 共用。 */
-
-/**
- * 等待 session 下一条 origin='device' 的 data 事件；若 timeoutMs 内未到则返回 timeout。
- *
- * 通过订阅 session 'event' 而非 transport.on('data') —— 保证经过 transcript 序列化，
- * 与 §4.4 \"MCP 不直接接触 transport\" 一致。
- */
-function waitForDeviceOutput(
-  session: ISession,
-  timeoutMs: number,
-): {
-  promise: Promise<{ kind: 'event'; event: TranscriptEvent } | { kind: 'timeout' }>;
-  cancel: () => void;
-} {
-  let resolveFn: (
-    value: { kind: 'event'; event: TranscriptEvent } | { kind: 'timeout' },
-  ) => void = () => undefined;
-  let timer: NodeJS.Timeout | null = null;
-  let listener: ((event: TranscriptEvent) => void) | null = null;
-  let resolved = false;
-
-  const cleanup = (): void => {
-    if (timer) clearTimeout(timer);
-    timer = null;
-    if (listener) {
-      // ISession 的公开接口仅声明 on(...)，但实现继承自 EventEmitter；
-      // 通过 cast 取得 off 来解订阅，与 SessionManager 内部用法一致。
-      (session as unknown as EventEmitter).off('event', listener);
-    }
-    listener = null;
-  };
-
-  const promise = new Promise<{ kind: 'event'; event: TranscriptEvent } | { kind: 'timeout' }>(
-    (resolve) => {
-      resolveFn = (value) => {
-        if (resolved) return;
-        resolved = true;
-        cleanup();
-        resolve(value);
-      };
-      listener = (event: TranscriptEvent): void => {
-        if (event.type === 'data' && event.origin === 'device') {
-          resolveFn({ kind: 'event', event });
-        }
-      };
-      session.on('event', listener);
-      timer = setTimeout(() => resolveFn({ kind: 'timeout' }), timeoutMs);
-    },
-  );
-
-  return {
-    promise,
-    cancel: () => resolveFn({ kind: 'timeout' }),
-  };
-}
 
 function requireSession(manager: SessionManager, id: string): ISession {
   const session = manager.get(id);

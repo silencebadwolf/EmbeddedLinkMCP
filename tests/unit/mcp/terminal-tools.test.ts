@@ -276,7 +276,7 @@ describe('MCP terminal tools', () => {
     expect(ports).toEqual([{ path: '/dev/tty.fake', manufacturer: 'TestCo' }]);
   });
 
-  it('send_and_wait resolves on first device output and returns its sequence', async () => {
+  it('send_and_wait resolves on first device output (no markers => fallback) and returns matched evidence', async () => {
     const transport = new MockTransport();
     const session = injectTestSession(harness.manager, transport);
     await session.open();
@@ -285,8 +285,9 @@ describe('MCP terminal tools', () => {
       name: 'send_and_wait',
       arguments: {
         sessionId: session.id,
-        payload: { encoding: 'utf-8', data: 'cmd\n' },
+        payload: { encoding: 'utf-8', data: 'cmd' },
         timeoutMs: 1000,
+        // no completionMarkers => fallback to "any device output"
       },
     });
 
@@ -299,25 +300,108 @@ describe('MCP terminal tools', () => {
     const out = result.structuredContent as Record<string, unknown>;
     expect(out.success).toBe(true);
     const evidence = out.evidence as {
-      data: { firstResponseSequence: number; firstResponseEvent: { origin: string } };
+      data: {
+        bytesWritten: number;
+        receivedBase64: string;
+        cursorBefore: number;
+        cursorAfter: number;
+        matchedMarkerIndex: number;
+      };
+      cursor: number;
     };
-    expect(evidence.data.firstResponseEvent.origin).toBe('device');
-    expect(evidence.data.firstResponseSequence).toBeGreaterThan(0);
+    expect(evidence.data.bytesWritten).toBeGreaterThan(0);
+    expect(evidence.data.receivedBase64).toBeDefined();
+    expect(fromB64(evidence.data.receivedBase64)).toEqual(utf8('reply'));
+    expect(evidence.data.cursorAfter).toBeGreaterThanOrEqual(evidence.data.cursorBefore);
   });
 
-  it('send_and_wait returns TIMEOUT when no device output arrives', async () => {
+  it('send_and_wait matches a cross-chunk completion marker', async () => {
     const transport = new MockTransport();
     const session = injectTestSession(harness.manager, transport);
     await session.open();
 
-    const out = await callTool(harness.client, 'send_and_wait', {
-      sessionId: session.id,
-      payload: { encoding: 'utf-8', data: 'cmd\n' },
-      timeoutMs: 30,
+    const callPromise = harness.client.callTool({
+      name: 'send_and_wait',
+      arguments: {
+        sessionId: session.id,
+        payload: { encoding: 'utf-8', data: 'ls' },
+        completionMarkers: ['DONE'],
+        timeoutMs: 1000,
+      },
     });
 
+    await flush();
+    await flush();
+    // Echo, then partial DONE split across chunks
+    transport.pushIncoming(utf8('ls\r\n'));
+    transport.pushIncoming(utf8('foo DO'));
+    transport.pushIncoming(utf8('NE rest'));
+
+    const result = await callPromise;
+    const out = result.structuredContent as Record<string, unknown>;
+    expect(out.success).toBe(true);
+    const evidence = out.evidence as { data: { matchedMarkerIndex: number; receivedBase64: string } };
+    expect(evidence.data.matchedMarkerIndex).toBe(0);
+    expect(new TextDecoder().decode(fromB64(evidence.data.receivedBase64))).toContain('DONE');
+  });
+
+  it('send_and_wait returns TIMEOUT and includes received bytes captured so far', async () => {
+    const transport = new MockTransport();
+    const session = injectTestSession(harness.manager, transport);
+    await session.open();
+
+    const callPromise = harness.client.callTool({
+      name: 'send_and_wait',
+      arguments: {
+        sessionId: session.id,
+        payload: { encoding: 'utf-8', data: 'cmd' },
+        completionMarkers: ['NEVER'],
+        timeoutMs: 80,
+      },
+    });
+
+    await flush();
+    await flush();
+    // echo will be stripped; "partial" stays in detector buffer
+    transport.pushIncoming(utf8('cmd\r\n'));
+    transport.pushIncoming(utf8('partial'));
+
+    const result = await callPromise;
+    const out = result.structuredContent as Record<string, unknown>;
     expect(out.success).toBe(false);
-    expect((out.error as { code: string }).code).toBe('TIMEOUT');
+    const error = out.error as { code: string; details?: { receivedBase64?: string; cursorBefore?: number } };
+    expect(error.code).toBe('TIMEOUT');
+    expect(error.details?.receivedBase64).toBeDefined();
+    expect(new TextDecoder().decode(fromB64(error.details!.receivedBase64!))).toContain('partial');
+    expect(typeof error.details?.cursorBefore).toBe('number');
+  });
+
+  it('send_and_wait translates session-closed to SESSION_CLOSED with sessionState detail', async () => {
+    const transport = new MockTransport();
+    const session = injectTestSession(harness.manager, transport);
+    await session.open();
+
+    const callPromise = harness.client.callTool({
+      name: 'send_and_wait',
+      arguments: {
+        sessionId: session.id,
+        payload: { encoding: 'utf-8', data: 'cmd' },
+        completionMarkers: ['NEVER'],
+        timeoutMs: 5000,
+      },
+    });
+
+    await flush();
+    await flush();
+    // close session mid-wait
+    await session.close();
+
+    const result = await callPromise;
+    const out = result.structuredContent as Record<string, unknown>;
+    expect(out.success).toBe(false);
+    const error = out.error as { code: string; details?: { sessionState?: string } };
+    expect(error.code).toBe('SESSION_CLOSED');
+    expect(error.details?.sessionState).toBe('closed');
   });
 
   it('rejects state-affecting tool calls when client schema version mismatches', async () => {
