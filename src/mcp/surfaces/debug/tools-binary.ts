@@ -21,7 +21,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerTool, type ToolHandlerResult } from '../../registry.js';
 import { decodeBase64Capped } from './binary-codec.js';
-import { ok, runJLink, withAbortableTimeout } from './error-translate.js';
+import { ok, runJLink, withAbortableTimeout, ConfirmationRequiredError } from './error-translate.js';
 import type { DebugToolsDeps } from './tools.js';
 import {
   flashDownloadInputSchema,
@@ -109,11 +109,13 @@ export function registerDebugBinaryTools(server: McpServer, deps: DebugToolsDeps
     name: 'flash_download',
     description:
       'Download a binary image to flash. binaryBase64 is decoded server-side and capped at 16 MiB. ' +
-      'timeoutMs aborts long downloads.',
+      'timeoutMs aborts long downloads. ' +
+      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned (no decode, no backend call).',
     sensitivity: 'state-affecting',
     inputSchema: flashDownloadInputSchema,
     handler: async (input: FlashDownloadInput): Promise<ToolHandlerResult> => {
       return runJLink(async () => {
+        if (input.confirm !== true) throw new ConfirmationRequiredError('flash_download');
         const binary = decodeBase64Capped(input.binaryBase64, 'binaryBase64');
         const opts: { address?: number; verify?: boolean } = {};
         if (input.address !== undefined) opts.address = input.address;
@@ -142,11 +144,14 @@ export function registerDebugBinaryTools(server: McpServer, deps: DebugToolsDeps
 
   registerTool(server, {
     name: 'flash_write',
-    description: 'Write bytes to a flash address (no erase).',
+    description:
+      'Write bytes to a flash address (no erase). ' +
+      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned.',
     sensitivity: 'state-affecting',
     inputSchema: flashWriteInputSchema,
     handler: async (input: FlashWriteInput): Promise<ToolHandlerResult> => {
       return runJLink(async () => {
+        if (input.confirm !== true) throw new ConfirmationRequiredError('flash_write');
         const buf = decodeBase64Capped(input.dataBase64, 'dataBase64');
         await jlinkBackend.flashWrite(input.probeId, input.address, buf);
         return ok({

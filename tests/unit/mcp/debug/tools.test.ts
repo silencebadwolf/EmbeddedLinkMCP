@@ -222,7 +222,7 @@ describe('MCP debug tools', () => {
       const connect = await callTool(h.client, 'probe_connect', { target: 'STM32F4' });
       const probe = (connect.evidence as { data: { probe: { probeId: string } } }).data.probe;
 
-      const out = await callTool(h.client, 'cpu_reset', { probeId: probe.probeId, halt: true });
+      const out = await callTool(h.client, 'cpu_reset', { probeId: probe.probeId, halt: true, confirm: true });
       expect(out.success).toBe(true);
       const reset = h.fake!.callsOf('cpuReset');
       expect(reset).toHaveLength(1);

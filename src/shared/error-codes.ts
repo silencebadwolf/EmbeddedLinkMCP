@@ -59,6 +59,15 @@ export const ERROR_CODES = {
    * UI_NOT_AVAILABLE 是"运行时窗口没有/已销毁"，AI 客户端可据此决定是否重试。
    */
   UI_NOT_AVAILABLE: 'UI_NOT_AVAILABLE',
+  /**
+   * 高影响 J-Link 工具（flash_download / flash_write / flash_erase / cpu_reset /
+   * gdb_server_start）需要调用方显式带 `confirm: true` 才执行。
+   *
+   * Phase 12：与 INVALID_ARGUMENT 区分 —— 后者是 schema/类型层面的错误，
+   * CONFIRMATION_REQUIRED 让 AI 客户端可以编程化区分"参数错"vs"需要二次确认"
+   * 并向用户询问后重试。details 必含 `tool` 字段标识被守卫的工具名。
+   */
+  CONFIRMATION_REQUIRED: 'CONFIRMATION_REQUIRED',
 } as const;
 
 /** ERROR_CODES 的字符串字面量联合类型。 */

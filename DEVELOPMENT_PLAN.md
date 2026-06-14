@@ -22,7 +22,7 @@ LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形
 | Phase 9: J-Link MCP | ✅ 已完成 2026-06-14 | 420 测试通过 |
 | Phase 10: UI MCP 工具 | ✅ 已完成 | 2026-06-14 |
 | Phase 11: 许可证管理 | ✅ 已完成 | 2026-06-14 |
-| Phase 12: 集成+收尾 | ⬜ 未开始 | — |
+| Phase 12: 集成+收尾 | ✅ 已完成 | 2026-06-14 |
 
 ---
 
@@ -1191,7 +1191,81 @@ diagnostics (2): `snapshot_capture/crash_diagnose`
 
 ---
 
-## Phase 12: 集成测试 + 收尾 ⬜ 未开始
+## Phase 12: 集成测试 + 收尾 ✅ 已完成（2026-06-14）
+
+**核心交付**：9 个边界场景全覆盖（4 个新建 integration + 5 个由前置 Phase 单测覆盖）+ 高影响 MCP 工具引入 confirm 闸门 + 2 个性能基线测试。LinkTerm v2 13 个 Phase 全部 ✅ 收尾。
+
+### 实际交付物
+
+| 文件 | 变更 |
+|---|---|
+| `src/shared/error-codes.ts` | 新增 `CONFIRMATION_REQUIRED` 错误码 |
+| `src/mcp/registry.ts` | `ToolErrorCode` 联合加 `'CONFIRMATION_REQUIRED'`（M5 dual-sync） |
+| `src/mcp/surfaces/debug/error-translate.ts` | 新增 `ConfirmationRequiredError` 类 + translateJLinkError 分支 |
+| `src/mcp/surfaces/debug/schemas.ts` | 5 个高影响工具加 `confirmField`（z.boolean().optional()） |
+| `src/mcp/surfaces/debug/tools.ts` + `tools-binary.ts` | 5 个工具 entry 在 `runJLink` 内首步守门；binary tools 守门提前到 `decodeBase64Capped` 之前 |
+| `tests/integration/serial-no-data.test.ts` | **新增**：场景 1（2 it） |
+| `tests/integration/serial-manual-entry.test.ts` | **新增**：场景 2（2 it） |
+| `tests/integration/connection-dialog-type-switch.test.tsx` | **新增**：场景 6 happy-dom（4 it） |
+| `tests/integration/high-impact-confirmation.test.ts` | **新增**：场景 9（5 工具 × 3 状态 = 15 it） |
+| `tests/integration/perf-transcript-buffer.test.ts` | **新增**：100k 事件容量 + truncated 恢复（2 it） |
+| `tests/integration/perf-write-queue.test.ts` | **新增**：高优先级抢占 + maxDepth 满拒（2 it） |
+| `tests/unit/mcp/debug/tools.test.ts` + `tools-binary.test.ts` | 已有调用补 `confirm: true`（回归） |
+
+**已覆盖、不重复**：
+
+- 场景 3（串口热插拔）：`tests/unit/transports/serial-transport.test.ts:129/166` + `serial-session.test.ts:64`
+- 场景 4（半包/二进制 fallback）：`tests/unit/core/terminal-rules/send-and-wait.test.ts:270`
+- 场景 5（sendAndWait 超时不切模式）：`send-and-wait.test.ts:114` + `tests/integration/send-and-wait.test.ts:60`
+- 场景 7（命令回显抑制）：`tests/unit/core/terminal-rules/echo-handler.test.ts` 10 用例
+- 场景 8（工作区配置版本过旧）：`tests/unit/core/workspace/workspace-config-manager.test.ts:288`
+
+### 关键架构决策
+
+详见 [docs/phase-decisions/Phase12.md](docs/phase-decisions/Phase12.md)：
+
+- **Pragmatic Balance 风格**（2x 工作量；本 Phase 90% 是新增测试 + 1 个简单功能，跳过并行 3-architect）
+- **5 个高影响工具加 confirm 闸门**：`flash_download` / `flash_write` / `flash_erase` / `cpu_reset` / `gdb_server_start`
+- **错误码：新引入 `CONFIRMATION_REQUIRED`**（不复用 INVALID_ARGUMENT），让 AI 客户端可编程化区分"参数错"vs"需要二次确认"，符合 M5 双向同步模式
+- **守门 throw 在 `runJLink` 内**：与 binary-codec.ts 的 `decodeBase64Capped` 模式一致，统一走 `translateJLinkError` 翻译
+- **binary tools 守门提到 base64 decode 之前**：避免 16 MiB payload 在守门失败时白做 base64 解码
+- **不引入 vitest unit/integration 分组**：当前 500 测试 2.64s 跑完，无性能压力；动 vitest.config.ts 影响其它 PR 不值得
+- **性能测试组织**：`tests/integration/perf-*.test.ts`（不引入 `tests/perf/` 独立目录），单文件 `{ timeout: 30_000 }` 自管
+
+### Code review 处置摘要
+
+- **Critical / High：无**（三方一致）
+- **Medium 5 条全部同期修**：
+  - M1：`gdb_server_start` confirm 检查搬出 `withAbortableTimeout` 至外层 `runJLink`
+  - M2：connection-dialog test 不再断言 zustand 内部状态，改为 `screen.getByRole('dialog')`
+  - M3：抽 `openDialogWithPrefill(prefill)` helper，4 个 it 复用
+  - M4：local-shell submit 用 `await waitFor(...)` 替代 `setTimeout(0)`，CI 抗抖
+  - M5：perf-transcript-buffer 第二 it 时间上限 1000ms → 3000ms，与第一个用例 5s 风格一致
+- **Low 6 条推迟到 Phase 13+ backlog**（test 合并/注释微调/可读性优化等不影响功能）
+
+### 验收标准对勾
+
+- ✅ 所有边界场景测试通过（500/500）
+- ✅ `npm test` < 30s（实测 2.64s，远低于上限）
+- ✅ `npm run build && npm run validate:licenses` 通过
+- ✅ 无需 Qt、硬件即可完成验收（全部 fixtures + mocks）
+
+### 验收命令结果（2026-06-14）
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm run lint` | ✅ exit 0 |
+| `pnpm test` | ✅ 49 文件 / **500 个测试通过**（baseline 473 + 27 个 Phase 12 新增） |
+| `pnpm run build` | ✅ tsc -b + vite build 双侧成功（renderer chunk 622 KB） |
+| `pnpm run validate:licenses` | ✅ PASS: All 19 dependencies have valid license entries |
+
+### 相对工作量：2x（实际符合预估）
+
+🎉 **LinkTerm v2 13 个 Phase 全部完成。**
+
+---
+
+## Phase 12（原始）
 
 **目标**：端到端集成、边界场景覆盖、错误恢复、性能验证、生产就绪。
 

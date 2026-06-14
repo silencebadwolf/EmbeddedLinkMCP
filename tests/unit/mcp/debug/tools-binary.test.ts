@@ -133,6 +133,7 @@ describe('MCP debug binary tools', () => {
         probeId: h.probeId,
         binaryBase64: binary.toString('base64'),
         verify: true,
+        confirm: true,
       });
       expect(out.success).toBe(true);
       const data = (out.evidence as {
@@ -149,6 +150,7 @@ describe('MCP debug binary tools', () => {
         probeId: h.probeId,
         binaryBase64: binary.toString('base64'),
         timeoutMs: 30,
+        confirm: true,
       });
       expect(out.success).toBe(false);
       expect((out.error as { code: string }).code).toBe('ABORTED');

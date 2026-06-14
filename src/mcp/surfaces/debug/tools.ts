@@ -17,7 +17,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { IJLinkBackend, ProbeInfo } from '../../../jlink/types.js';
 import { registerTool, type ToolHandlerResult } from '../../registry.js';
-import { ok, runJLink, withAbortableTimeout } from './error-translate.js';
+import { ok, runJLink, withAbortableTimeout, ConfirmationRequiredError } from './error-translate.js';
 import {
   breakpointClearInputSchema,
   breakpointListInputSchema,
@@ -167,16 +167,19 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
 
   registerTool(server, {
     name: 'cpu_reset',
-    description: 'Reset the CPU. halt=true holds at the first instruction after reset.',
+    description:
+      'Reset the CPU. halt=true holds at the first instruction after reset. ' +
+      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned.',
     sensitivity: 'state-affecting',
     inputSchema: cpuResetInputSchema,
     handler: async (input: CpuResetInput): Promise<ToolHandlerResult> => {
-      await runJLink(() =>
-        jlinkBackend.cpuReset(
+      await runJLink(async () => {
+        if (input.confirm !== true) throw new ConfirmationRequiredError('cpu_reset');
+        await jlinkBackend.cpuReset(
           input.probeId,
           input.halt !== undefined ? { halt: input.halt } : undefined,
-        ),
-      );
+        );
+      });
       return ok({
         evidence: {
           kind: 'debug_output',
@@ -316,16 +319,22 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
 
   registerTool(server, {
     name: 'flash_erase',
-    description: 'Erase flash; with no address/length, erases the whole chip.',
+    description:
+      'Erase flash; with no address/length, erases the whole chip. ' +
+      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned.',
     sensitivity: 'state-affecting',
     inputSchema: flashEraseInputSchema,
     handler: async (input: FlashEraseInput): Promise<ToolHandlerResult> => {
       const opts: { address?: number; length?: number } = {};
       if (input.address !== undefined) opts.address = input.address;
       if (input.length !== undefined) opts.length = input.length;
-      await runJLink(() =>
-        jlinkBackend.flashErase(input.probeId, Object.keys(opts).length > 0 ? opts : undefined),
-      );
+      await runJLink(async () => {
+        if (input.confirm !== true) throw new ConfirmationRequiredError('flash_erase');
+        await jlinkBackend.flashErase(
+          input.probeId,
+          Object.keys(opts).length > 0 ? opts : undefined,
+        );
+      });
       return ok({
         evidence: { kind: 'debug_output', data: { probeId: input.probeId, erased: true }, cursor: 0 },
       });
@@ -375,23 +384,25 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
     name: 'gdb_server_start',
     description:
       'Start a GDB server bound to the given host/port. timeoutMs aborts the operation if the ' +
-      'server fails to bind in time.',
+      'server fails to bind in time. ' +
+      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned.',
     sensitivity: 'state-affecting',
     inputSchema: gdbServerStartInputSchema,
     handler: async (input: GdbServerStartInput): Promise<ToolHandlerResult> => {
-      const opts: { port?: number; host?: string } = {};
-      if (input.port !== undefined) opts.port = input.port;
-      if (input.host !== undefined) opts.host = input.host;
-      const handle = await withAbortableTimeout(input.timeoutMs, (signal) =>
-        runJLink(() =>
+      return runJLink(async () => {
+        if (input.confirm !== true) throw new ConfirmationRequiredError('gdb_server_start');
+        const opts: { port?: number; host?: string } = {};
+        if (input.port !== undefined) opts.port = input.port;
+        if (input.host !== undefined) opts.host = input.host;
+        const handle = await withAbortableTimeout(input.timeoutMs, (signal) =>
           jlinkBackend.gdbServerStart(
             input.probeId,
             Object.keys(opts).length > 0 ? opts : undefined,
             signal,
           ),
-        ),
-      );
-      return ok({ evidence: { kind: 'debug_output', data: { handle }, cursor: 0 } });
+        );
+        return ok({ evidence: { kind: 'debug_output', data: { handle }, cursor: 0 } });
+      });
     },
   });
 

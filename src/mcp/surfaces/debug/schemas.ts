@@ -28,6 +28,25 @@ const abortableMixin = {
 /** probeId 必须是 UUID v4 字符串。 */
 const probeIdField = z.string().uuid();
 
+/**
+ * 高影响操作（flash_* / cpu_reset / gdb_server_start）的 confirm 闸门字段。
+ *
+ * Phase 12：MCP 表层把它做成 `optional boolean`，让 zod 始终接受入参；真正的
+ * `confirm !== true` 拒绝由 tools.ts entry 在调 backend 之前显式抛
+ * {@link ConfirmationRequiredError}，由 `runJLink` 翻译为 `CONFIRMATION_REQUIRED`
+ * ToolError。这样 AI 客户端能区分"参数错"vs"需要二次确认"。
+ *
+ * 字段名直接叫 `confirm` 是有意为之 —— 与 git push --force-with-lease / kubectl
+ * delete --force 等"用户主动确认"语义保持一致；不要改成 `acknowledged`/`force`
+ * 这样的别名造成跨工具不一致。
+ */
+const confirmField = z
+  .boolean()
+  .optional()
+  .describe(
+    'Must be true to execute this high-impact operation. Set false or omit to abort with CONFIRMATION_REQUIRED.',
+  );
+
 /** base64 字符串字段：仅做字符集预检；上限/解码由 decodeBase64Capped 负责。 */
 const base64Field = z
   .string()
@@ -81,6 +100,7 @@ export const cpuResetInputSchema = z
     ...commonSchema,
     probeId: probeIdField,
     halt: z.boolean().optional(),
+    confirm: confirmField,
   })
   .strict();
 
@@ -200,6 +220,7 @@ export const flashDownloadInputSchema = z
     binaryBase64: base64Field,
     address: addressField.optional(),
     verify: z.boolean().optional(),
+    confirm: confirmField,
   })
   .strict();
 
@@ -209,6 +230,7 @@ export const flashEraseInputSchema = z
     probeId: probeIdField,
     address: addressField.optional(),
     length: z.number().int().positive().optional(),
+    confirm: confirmField,
   })
   .strict();
 
@@ -218,6 +240,7 @@ export const flashWriteInputSchema = z
     probeId: probeIdField,
     address: addressField,
     dataBase64: base64Field,
+    confirm: confirmField,
   })
   .strict();
 
@@ -283,6 +306,7 @@ export const gdbServerStartInputSchema = z
     probeId: probeIdField,
     port: z.number().int().min(1).max(65_535).optional(),
     host: z.string().min(1).max(255).optional(),
+    confirm: confirmField,
   })
   .strict();
 

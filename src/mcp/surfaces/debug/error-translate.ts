@@ -30,6 +30,29 @@ import {
 import { ToolError, type ToolHandlerSuccess } from '../../registry.js';
 
 /**
+ * Phase 12：高影响 J-Link 工具的 confirm 闸门错误。
+ *
+ * 当 caller 未在入参中显式 `confirm: true` 时由 tool entry 抛出，被
+ * {@link runJLink} 捕获并经 {@link translateJLinkError} 翻译为
+ * `CONFIRMATION_REQUIRED` ToolError，details 含 `tool` 字段。
+ *
+ * **不继承 JLinkError**：confirm 闸门是 MCP 表层策略（与 backend 实现无关），
+ * 与 backend 自身能抛的 8 个 JLinkError 子类语义独立；放在 error-translate
+ * 模块里仅是为了让 runJLink 的翻译层一次覆盖。
+ */
+export class ConfirmationRequiredError extends Error {
+  /**
+   * @param toolName 被守卫的工具名（如 `flash_download`）
+   */
+  constructor(public readonly toolName: string) {
+    super(
+      `Confirmation required for high-impact operation \"${toolName}\"; pass confirm: true to proceed.`,
+    );
+    this.name = 'ConfirmationRequiredError';
+  }
+}
+
+/**
  * 把 J-Link 域错误翻译为 ToolError 抛出。永远不返回（`: never`）。
  *
  * @param err 任意 throw 出的错误（来源：backend 调用 / Zod 解析 / 其它）
@@ -38,6 +61,13 @@ export function translateJLinkError(err: unknown): never {
   if (err instanceof ToolError) {
     // 已是 ToolError（例如 binary-codec 抛的 INVALID_ARGUMENT），直接透传。
     throw err;
+  }
+  if (err instanceof ConfirmationRequiredError) {
+    throw new ToolError(
+      ERROR_CODES.CONFIRMATION_REQUIRED,
+      'Confirmation required for high-impact operation',
+      { tool: err.toolName },
+    );
   }
   if (err instanceof NoBackendError) {
     throw new ToolError(ERROR_CODES.NO_BACKEND, err.message);

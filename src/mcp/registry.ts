@@ -51,6 +51,7 @@ export type ToolErrorCode =
   | 'ABORTED'
   | 'INVALID_STATE'
   | 'UI_NOT_AVAILABLE'
+  | 'CONFIRMATION_REQUIRED'
   | 'INTERNAL';
 
 /**
