@@ -8,7 +8,7 @@ LinkTerm v2 is an Electron/TypeScript rewrite of a legacy Qt/C++ terminal, inten
 
 Authoritative specs live in `PROJECT_REQUIREMENTS.md` (requirements) and `DEVELOPMENT_PLAN.md` (13-phase plan with current status). **Always check `DEVELOPMENT_PLAN.md` before starting work** — it tracks which phases are completed (✅), in progress, or not started (⬜), and records every decision/variance from the original plan.
 
-Current state: **Phases 0–9 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters, MCP terminal surface with 8 tools, AI-human coop hardening, Electron renderer UI with xterm.js + connection dialog + i18n + shadcn primitives, embedded terminal rules + sendAndWait FSM, workspace config persistence with 3 MCP tools, **J-Link MCP debug surface with 28 tools + NullBackend default**). Phases 10–12 not yet started. 420 Vitest tests cover `src/core/`, `src/transports/{serial,ssh,local-shell}/`, `src/core/terminal-rules/`, `src/core/workspace/`, `src/jlink/`, `src/mcp/`, AI-human coop integration, send-and-wait integration, the renderer (happy-dom hooks/components), and `session:create` IPC.
+Current state: **Phases 0–10 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters, MCP terminal surface with 8 tools, AI-human coop hardening, Electron renderer UI with xterm.js + connection dialog + i18n + shadcn primitives, embedded terminal rules + sendAndWait FSM, workspace config persistence with 3 MCP tools, J-Link MCP debug surface with 28 tools + NullBackend default, **UI MCP surface with `ui_configure` 4-action discriminatedUnion + `ui_screenshot` 16 MiB-capped PNG + UI_NOT_AVAILABLE always-register policy**). Phases 11–12 not yet started. 462 Vitest tests cover `src/core/`, `src/transports/{serial,ssh,local-shell}/`, `src/core/terminal-rules/`, `src/core/workspace/`, `src/jlink/`, `src/mcp/`, AI-human coop integration, send-and-wait integration, the renderer (happy-dom hooks/components), `session:create` IPC, and Phase 10 UI bridge + ui surface.
 
 ## Common commands
 
@@ -162,6 +162,26 @@ The only renderer→main channel is `window.linkterm`, injected by `src/main/pre
 **Sensitivity classification (read-only=9 / state-affecting=19)**: read-only tools are `probe_detect`, `probe_status`, `breakpoint_list`, `register_read`, `register_list`, `memory_read`, `rtt_search`, `snapshot_capture`, `crash_diagnose`. **`rtt_read` is state-affecting** (it advances the hardware ring buffer's read pointer). The remaining 19 are write/run/connect operations. This classification drives schema-version mismatch policy: state-affecting tools reject on mismatch; read-only tools warn. Don't reclassify without thinking about how a stale AI client would behave.
 
 **Phase 9 stub vs Phase 13 real backend**: `JLinkAdapter` implements probe lifecycle (`probeDetect` returns `[]`, `probeConnect/Disconnect/Status` real with internal `Map`); every other method calls `requireProbe(probeId)` then throws `JLinkNotImplementedError`. Phase 13 will replace those stubs without touching the MCP layer or `IJLinkBackend` interface — the MCP layer's `instanceof` ladder already covers every domain error subclass. **Don't cast through this layer for early integration**; if you need a fake for tests, use `tests/fixtures/fake-jlink-backend.ts` (calls ledger + `failOnce` / `delayMs` injection points).
+
+### UI MCP surface (Phase 10)
+
+`src/mcp/surfaces/ui/` is the 2-tool MCP surface (`ui_configure` + `ui_screenshot`); `src/main/ipc/ui-bridge.ts` is the Electron adapter. Both `src/mcp/surfaces/ui/` and `src/mcp/limits.ts` MUST stay free of `electron` imports — only structural interfaces (`CapturableWindow` / `CapturableImage` / `UiPatchTarget`) cross the boundary.
+
+**Always-register + UI_NOT_AVAILABLE default**: same pattern as `NullJLinkBackend` — `createMcpServer` defaults `uiBridge=null` / `getActiveWindow=()=>null` and registers both tools unconditionally. Without injection, every call returns `{ success: false, error: { code: 'UI_NOT_AVAILABLE' } }`. AI clients see all tools and get structured rejection.
+
+**`getActiveWindow` MUST be a thunk reading module-scope on every call**: MCP server is constructed BEFORE `mainWindow` is created, and macOS `'activate'` rebuilds replace the module singleton. Capturing `mainWindow` at construction time leaks a destroyed reference. See `src/main/index.ts` `getMainWindow()` + `src/main/ipc/index.ts` `getActiveWindow` wrapper.
+
+**`ui_configure` is `discriminatedUnion('action', [...])`** — 4 actions (`set_locale` / `set_connection_type` / `open_connection_dialog` / `close_connection_dialog`), each branch + the prefill object + the root all `.strict()`. The `nonSensitivePrefillSchema` enforces an 11-field whitelist that NEVER includes `sshPassword/sshPrivateKey/sshPassphrase` — Zod rejects unknown keys at parse time. Adding a new action means a new strict schema branch + ensuring sensitive credential fields stay out of the prefill whitelist.
+
+**`UI_STATE_PATCH = 'ui:statePatch'` is main→renderer one-way broadcast**: `applyPatch` iterates `BrowserWindow.getAllWindows()` with `wc.isDestroyed()` guard + try/catch around `wc.send` (destroyed-mid-loop is silently skipped — the H2 Phase 10 review fix). When a second BrowserWindow type is added (settings panel etc.), switch back to a `subscribers: Map<wcId, WebContents>` mirror of `session-ipc.ts:80` to prevent cross-window patch leakage.
+
+**16 MiB binary cap shared with debug surface**: `MAX_BINARY_BYTES` lives in `src/mcp/limits.ts` (NOT `src/mcp/surfaces/debug/binary-codec.ts` anymore — Phase 10 review M1 moved it). `binary-codec.ts` re-exports for backward compat. UI screenshot path: `image.toPNG()` Buffer → check `byteLength > MAX_BINARY_BYTES` → THEN base64. **Don't reorder check-after-encoding**; it allocates a 4/3× string before failing.
+
+**ConnectionDialog prefill flow**: `setConnectionDialogPrefill(...)` writes into Zustand; `ConnectionDialog.tsx` useEffect runs ONLY on `open: false→true` edge with dependency list strictly `[open]` (never include prefill — AI patches mid-typing would clobber user input). Prefill type is auto-inferred from SSH/local-shell field presence when `prefill.type` is omitted, so `prefill_connection_form({ sshHost: 'x' })` lands in the SSH branch with sshHost visible.
+
+**Evidence kind reuse**: both `ui_configure` and `ui_screenshot` use `EvidenceKind = 'ui_screenshot'`; `data` shape distinguishes them (`{ dispatched: patch }` vs `{ mimeType, base64, width, height, byteLength }`). Don't add a separate `'ui_patch'` kind without a strong reason — Phase 10 Q10 explicitly chose to keep the union narrow.
+
+**`UI_NOT_AVAILABLE` dual-sync (M5 pattern)**: present in BOTH `src/shared/error-codes.ts` `ERROR_CODES` AND `src/mcp/registry.ts` `ToolErrorCode` union. Adding new UI domain errors requires both halves.
 
 ## Build configuration peculiarities
 

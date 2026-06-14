@@ -52,6 +52,13 @@ export const ERROR_CODES = {
   INVALID_STATE: 'INVALID_STATE',
   /** JLinkAdapter stub 未实现的方法（Phase 9 占位，等待真实 backend）。 */
   NOT_IMPLEMENTED: 'NOT_IMPLEMENTED',
+  /**
+   * UI 工具被调用时主窗口不可用（未创建 / 已 destroyed / 主进程未注入 uiBridge）。
+   *
+   * Phase 10：与 NO_BACKEND 区分 —— NO_BACKEND 是"编译期没注入实现"，
+   * UI_NOT_AVAILABLE 是"运行时窗口没有/已销毁"，AI 客户端可据此决定是否重试。
+   */
+  UI_NOT_AVAILABLE: 'UI_NOT_AVAILABLE',
 } as const;
 
 /** ERROR_CODES 的字符串字面量联合类型。 */

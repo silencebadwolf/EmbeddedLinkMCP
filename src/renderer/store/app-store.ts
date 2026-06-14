@@ -11,6 +11,7 @@ import { create } from 'zustand';
 import type { SessionId, SessionState } from '../../shared/types.js';
 import type { Origin, SerialPortInfo } from '../../shared/types.js';
 import type { Locale } from '../i18n/index.js';
+import type { NonSensitivePrefill } from '../../shared/preload-api.js';
 
 /** 单条 session 在 UI 层的元信息镜像；权威状态仍在主进程。 */
 export interface SessionMeta {
@@ -45,6 +46,14 @@ export interface AppState {
   serialPorts: ReadonlyArray<SerialPortInfo>;
   /** 每会话每来源最近一次写入时间戳，用于 OriginIndicator 呼吸灯透明度。 */
   originActivity: OriginActivityMap;
+  /**
+   * Phase 10：MCP `ui_configure` 推送的 ConnectionDialog 预填值。
+   *
+   * 仅在 dialog 由关到开的边沿被读取一次（useEffect `[open]`），随后立即调用
+   * `setConnectionDialogPrefill(null)` —— 防止反复关→开时陈旧 prefill 阴魂不散。
+   * 不允许敏感凭据字段（类型 `NonSensitivePrefill` 已在 schema/类型双层禁止）。
+   */
+  connectionDialogPrefill: NonSensitivePrefill | null;
 
   // === actions ===
   /** 添加或覆盖 session 元信息。 */
@@ -68,6 +77,12 @@ export interface AppState {
    * 写入侧也调用此方法（人类输入 origin='human' 视作活动开始）。
    */
   markOriginActivity(sessionId: SessionId, origin: Origin, at?: number): void;
+  /**
+   * 设置 ConnectionDialog 的 prefill。MCP `ui_configure` open_connection_dialog 推送时调用；
+   * dialog 当前打开则不会立即生效（保护用户输入），下一次关→开边沿才被消费。
+   * 调用方在边沿消费 prefill 后应当传入 `null` 清空，避免反复关→开时陈旧 prefill 阴魂不散。
+   */
+  setConnectionDialogPrefill(prefill: NonSensitivePrefill | null): void;
 }
 
 /** Zustand 全局 store。组件通过 `useAppStore(selector)` 订阅子集，避免无关重渲。 */
@@ -78,6 +93,7 @@ export const useAppStore = create<AppState>((set) => ({
   dialogOpen: false,
   serialPorts: [],
   originActivity: {},
+  connectionDialogPrefill: null,
 
   addSession: (meta) =>
     set((state) => {
@@ -135,6 +151,9 @@ export const useAppStore = create<AppState>((set) => ({
       sessions.set(sessionId, { ...meta, lastOrigin: origin, lastOriginAt: stamp });
       return { originActivity: nextActivity, sessions };
     }),
+
+  setConnectionDialogPrefill: (prefill) =>
+    set(() => ({ connectionDialogPrefill: prefill })),
 }));
 
 /** Selector 工具：取已知 session id 列表（按插入顺序）。 */

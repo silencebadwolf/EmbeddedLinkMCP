@@ -20,8 +20,12 @@ export const IPC_CHANNELS = {
   SESSION_RESIZE: 'session:resize',
   SERIAL_LIST_PORTS: 'serial:listPorts',
   SERIAL_PORT_CHANGED: 'serial:portChanged',
-  UI_CONFIGURE: 'ui:configure',
-  UI_SCREENSHOT: 'ui:screenshot',
+  /**
+   * Phase 10：MCP `ui_configure` 受理后，主进程通过此 channel 单向广播
+   * 已发送的 patch 给所有渲染进程；renderer 端 `useUiPatchSubscription`
+   * 负责合并到 Zustand store。fire-and-forget，无回执。
+   */
+  UI_STATE_PATCH: 'ui:statePatch',
   TRANSCRIPT_SUBSCRIBE: 'transcript:subscribe',
   TRANSCRIPT_EVENT: 'transcript:event',
 } as const;

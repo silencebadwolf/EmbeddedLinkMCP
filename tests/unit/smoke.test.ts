@@ -10,7 +10,7 @@ describe('Phase 0 Smoke Test', () => {
   it('exports IPC channel names', () => {
     expect(IPC_CHANNELS.SESSION_CREATE).toBe('session:create');
     expect(IPC_CHANNELS.SERIAL_LIST_PORTS).toBe('serial:listPorts');
-    expect(IPC_CHANNELS.UI_SCREENSHOT).toBe('ui:screenshot');
+    expect(IPC_CHANNELS.UI_STATE_PATCH).toBe('ui:statePatch');
   });
 
   it('shared types compile correctly', async () => {

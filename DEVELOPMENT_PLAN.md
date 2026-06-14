@@ -20,7 +20,7 @@ LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形
 | Phase 7: 终端规则+sendAndWait | ✅ 已完成 2026-06-13 | 290 测试通过 |
 | Phase 8: 工作区配置 | ✅ 已完成 2026-06-14 | 363 测试通过 |
 | Phase 9: J-Link MCP | ✅ 已完成 2026-06-14 | 420 测试通过 |
-| Phase 10: UI MCP 工具 | ⬜ 未开始 | — |
+| Phase 10: UI MCP 工具 | ✅ 已完成 | 2026-06-14 |
 | Phase 11: 许可证管理 | 🟨 部分完成（Phase 0 已建立基础） | — |
 | Phase 12: 集成+收尾 | ⬜ 未开始 | — |
 
@@ -1043,7 +1043,59 @@ diagnostics (2): `snapshot_capture/crash_diagnose`
 
 ---
 
-## Phase 10: UI MCP 工具 ⬜ 未开始
+## Phase 10: UI MCP 工具 ✅ 已完成（2026-06-14）
+
+完整决策记录：[`docs/phase-decisions/Phase10.md`](docs/phase-decisions/Phase10.md)
+
+### 实际交付物
+
+| 文件 | 用途 |
+|---|---|
+| `src/mcp/surfaces/ui/{types,schemas,tools}.ts` | UI surface（Electron-free，仅依赖结构性接口） |
+| `src/mcp/limits.ts` | 共享 `MAX_BINARY_BYTES` / `MAX_BASE64_INPUT_LEN`（debug + ui 共用） |
+| `src/main/ipc/ui-bridge.ts` | `createUiBridge` 适配层 + `UiPatchTarget` 接口（Electron-free 单测） |
+| `src/renderer/hooks/useUiPatchSubscription.ts` | 渲染端 patch 监听 + 单 useEffect 分派 4 action |
+| `src/renderer/store/app-store.ts` | 新增 `connectionDialogPrefill` + `setConnectionDialogPrefill` |
+| `tests/unit/{mcp/ui/*,renderer/hooks/useUiPatchSubscription,main/ipc/ui-bridge}.test.{ts,tsx}` | 39 + 3 review-fix 新增 = 42 个 Phase 10 测试 |
+
+修改：`src/main/{index,ipc/index,preload}.ts`、`src/mcp/{registry,server}.ts`、`src/mcp/surfaces/debug/{binary-codec,schemas}.ts`、`src/renderer/{App,components/ConnectionDialog}.tsx`、`src/shared/{error-codes,ipc-protocol,preload-api}.ts`、`tests/fixtures/mock-preload-api.ts`。
+
+### 关键架构决策（详见 Phase10.md）
+
+1. **`ui_configure` 用 `z.discriminatedUnion('action', [...])`** — 4 个 action：`set_locale` / `set_connection_type` / `open_connection_dialog` / `close_connection_dialog`，每分支 `.strict()` 拒未知字段
+2. **始终注册 + 默认 NullBridge** — 未注入 uiBridge / getActiveWindow 时所有调用返回 `{ code: 'UI_NOT_AVAILABLE' }`（与 NullJLinkBackend 同思路）
+3. **`getActiveWindow` 必须是 thunk** — MCP server 在 mainWindow 创建之前构造，macOS `'activate'` 重建会替换 module 单例，闭包必须每次调用都从 module-scope 读
+4. **prefill 11 字段白名单 + 三层 `.strict()` schema 拒凭据** — 永不接受 `sshPassword/sshPrivateKey/sshPassphrase`
+5. **`UI_STATE_PATCH = 'ui:statePatch'` main→renderer 单向广播** — Q-D4 修订后采用 `BrowserWindow.getAllWindows() + isDestroyed + try/catch` 简化方案；多窗口扩展时切回 subscribers Map
+6. **`evidence.kind = 'ui_screenshot'` 双工具复用** — `ui_configure` data 为 `{dispatched: patch}`，`ui_screenshot` data 为 `{mimeType, base64, width, height, byteLength}`；不新增 `'ui_patch'` kind
+7. **PNG 16 MiB 上限 + 检查后才 base64** — 复用 `MAX_BINARY_BYTES`，分配前短路防 GB 级泄漏
+8. **`UI_NOT_AVAILABLE` 双向同步** — `ERROR_CODES` + `ToolErrorCode` union（M5 pattern）
+
+### 实施期间的需求/决策变更
+
+- **Q-D4 决策修订**：原方案 A（subscribers Map 镜像 session-ipc）改为方案 B（getAllWindows + isDestroyed + try/catch）—— review 认定 Map 是死代码且 Phase 10 单窗口下 A 过度。
+- **`MAX_BINARY_BYTES` 抽出位置**：原从 `debug/binary-codec` 跨 surface import；review 修复后抽到 `src/mcp/limits.ts`，binary-codec 仍 re-export 保持向后兼容。
+- **`clearConnectionDialogPrefill` 删除**：与 `setConnectionDialogPrefill(null)` 等价，移除。
+
+### Code review 处置摘要
+
+- High: H1（uiSubscribers Map 死代码 + Q-D4 偏离）、H2（wc.send try/catch）—— 全部修复
+- Medium: M1（MAX_BINARY_BYTES 抽到 limits）、M2（删等价 action）、M3（prefill type 推导）、M4（删死 IPC 常量）、M5（tool description 增补）—— 全部修复
+- Low: L1（0x0 截图）、L2（timeoutMs/AbortSignal）、L3（kind 名误读）、L4-L5（注释清理）—— 推迟到 Phase 11+
+
+### 验收标准
+
+- ✅ `pnpm run lint` 0 error / 0 warning
+- ✅ `pnpm test` 462 个测试全过（baseline 420 → 459 → review fix 462）
+- ✅ `pnpm run build` 成功（renderer 621.71 kB）
+- ✅ `pnpm run validate:licenses` 19 deps 合规（无新增 runtime 依赖）
+- ✅ ESM `.js` 后缀 / 主进程禁 `@/` / `src/mcp/surfaces/ui/` Electron-free 全部核验通过
+- ✅ 凭据红线：Zod 三层 `.strict()` 拒 sshPassword/sshPrivateKey/sshPassphrase
+- ✅ `ERROR_CODES` ↔ `ToolErrorCode` 双向同步
+
+---
+
+## Phase 10（原始）：UI MCP 工具
 
 **目标**：提供 MCP 控制运行中 Electron UI 的工具（配置和截图取证）。
 

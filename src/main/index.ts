@@ -19,8 +19,18 @@ import { registerIpcHandlers, type MainProcessContext } from './ipc/index.js';
 let mainWindow: BrowserWindow | null = null;
 let context: MainProcessContext | null = null;
 
+/**
+ * 主窗口 thunk —— Phase 10 MCP UI 工具通过此 getter 拿到当前活跃窗口。
+ *
+ * 必须每次调用都从模块作用域读最新引用：MCP server 在 mainWindow 创建之前构造，
+ * 且 macOS `'activate'` 重建会替换变量；构造时快照会指向已 destroy 的旧窗口。
+ */
+export function getMainWindow(): BrowserWindow | null {
+  return mainWindow;
+}
+
 app.whenReady().then(async () => {
-  context = await registerIpcHandlers();
+  context = await registerIpcHandlers({ getMainWindow });
   mainWindow = createMainWindow();
 
   mainWindow.on('closed', () => {

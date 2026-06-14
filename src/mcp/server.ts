@@ -33,6 +33,8 @@ import { registerTerminalTools } from './surfaces/terminal/tools.js';
 import { registerWorkspaceTools } from './surfaces/workspace/tools.js';
 import { registerDebugTools } from './surfaces/debug/tools.js';
 import { registerDebugBinaryTools } from './surfaces/debug/tools-binary.js';
+import { registerUiTools } from './surfaces/ui/tools.js';
+import type { CapturableWindow, UiStoreBridge } from './surfaces/ui/types.js';
 
 /** {@link createMcpServer} 的依赖容器。 */
 export interface CreateMcpServerOptions {
@@ -54,6 +56,17 @@ export interface CreateMcpServerOptions {
    * 结构化拒绝（让 AI 客户端始终能看到工具清单与契约性失败）。
    */
   jlinkBackend?: IJLinkBackend;
+  /**
+   * Phase 10：UI patch 广播桥。注入时 `ui_configure` 调用会把 patch 推送给所有渲染进程；
+   * 缺省时 ui 工具仍然注册但全部返回 UI_NOT_AVAILABLE（始终注册策略与 NullJLinkBackend 一致）。
+   */
+  uiBridge?: UiStoreBridge;
+  /**
+   * Phase 10：当前主窗口 thunk。**必须每次调用都从 module-scope 读最新引用**（不要快照）—— MCP server 在 mainWindow 创建之前构造，
+   * macOS `'activate'` 重建会替换 module 单例，构造时快照会指向已 destroy 的旧窗口。
+   * 缺省时 ui_screenshot 一律返回 UI_NOT_AVAILABLE。
+   */
+  getActiveWindow?: () => CapturableWindow | null;
   /** 注入用 transport 工厂；省略时使用 stdio。测试通常注入 InMemoryTransport。 */
   transportFactory?: McpTransportFactory;
   /** 覆盖 server 自报版本号；默认从 APP_NAME / package.json 推导。 */
@@ -126,6 +139,14 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
   const jlinkBackend = options.jlinkBackend ?? new NullJLinkBackend();
   registerDebugTools(server, { jlinkBackend });
   registerDebugBinaryTools(server, { jlinkBackend });
+
+  // Phase 10：始终注册 ui_configure / ui_screenshot；未注入 uiBridge / getActiveWindow 时
+  // 一律返回 UI_NOT_AVAILABLE 结构化拒绝（与 NullJLinkBackend 同思路 —— AI 客户端始终
+  // 看到完整工具清单与契约性失败）。
+  registerUiTools(server, {
+    uiBridge: options.uiBridge ?? null,
+    getActiveWindow: options.getActiveWindow ?? (() => null),
+  });
 
   let activeTransport: Transport | null = null;
   let starting: Promise<void> | null = null;

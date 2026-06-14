@@ -16,9 +16,9 @@
 import { JLinkBufferTooLargeError } from '../../../jlink/errors.js';
 import { ToolError } from '../../registry.js';
 import { ERROR_CODES } from '../../../shared/error-codes.js';
+import { MAX_BINARY_BYTES, MAX_BASE64_INPUT_LEN } from '../../limits.js';
 
-/** 二进制载荷上限：16 MiB。 */
-export const MAX_BINARY_BYTES = 16 * 1024 * 1024;
+export { MAX_BINARY_BYTES, MAX_BASE64_INPUT_LEN };
 
 /**
  * 严格解码 base64 字符串为 Buffer，并对长度进行上限校验。

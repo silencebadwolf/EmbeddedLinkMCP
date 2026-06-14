@@ -22,6 +22,7 @@ import type {
   SessionReadSuccess,
   TranscriptSubscribeSuccess,
   Unsubscribe,
+  UiStatePatch,
 } from '../shared/preload-api.js';
 import type { SessionId, SessionState, SerialPortInfo } from '../shared/types.js';
 import type { TranscriptEventEnvelope } from '../shared/transcript-ipc-types.js';
@@ -76,6 +77,10 @@ const api: PreloadAPI = {
   transcript: {
     onEvent: (handler) =>
       subscribe<TranscriptEventEnvelope>(IPC_CHANNELS.TRANSCRIPT_EVENT, handler),
+  },
+  ui: {
+    onStatePatch: (handler) =>
+      subscribe<UiStatePatch>(IPC_CHANNELS.UI_STATE_PATCH, handler),
   },
 };
 

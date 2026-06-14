@@ -50,6 +50,7 @@ export type ToolErrorCode =
   | 'BUFFER_TOO_LARGE'
   | 'ABORTED'
   | 'INVALID_STATE'
+  | 'UI_NOT_AVAILABLE'
   | 'INTERNAL';
 
 /**

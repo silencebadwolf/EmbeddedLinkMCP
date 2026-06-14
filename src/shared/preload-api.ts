@@ -149,14 +149,65 @@ export interface TranscriptNamespace {
 }
 
 /**
+ * ConnectionDialog 可被 MCP `ui_configure` 预填的字段白名单。
+ *
+ * Phase 10 安全红线：**绝不允许** `sshPassword` / `sshPrivateKey` / `sshPassphrase` 出现在
+ * 此结构里 —— 一旦缺失，AI 推送过来的凭据会经过主进程→渲染进程的 IPC 通道，违背
+ * §4.4 / §5.1 "凭据仅在 IPC create 入参瞬时持有"约束。即便上游 schema `.strict()` 拒绝了
+ * 未知键，类型层也保留同样的硬约束作为双层防护。
+ */
+export interface NonSensitivePrefill {
+  type?: 'serial' | 'ssh' | 'local-shell';
+  label?: string;
+  serialPort?: string;
+  baudRate?: string;
+  serialMode?: 'normal' | 'terminal';
+  sshHost?: string;
+  sshPort?: string;
+  sshUsername?: string;
+  sshAuth?: 'password' | 'privateKey';
+  localShell?: string;
+  localCwd?: string;
+}
+
+/**
+ * MCP `ui_configure` 工具的判别联合 patch；由主进程通过 `UI_STATE_PATCH` channel
+ * 广播给渲染端。renderer 在 store 里 dispatch 对应 action。
+ *
+ * Phase 10：fire-and-forget 单向广播 —— evidence 返回的是"已发送的 patch"快照，
+ * 不等待 store 应用回执。AI 客户端如需验证可立即调用 `ui_screenshot`。
+ */
+export type UiStatePatch =
+  | { action: 'set_locale'; locale: 'en' | 'zh' }
+  | { action: 'set_connection_type'; type: 'serial' | 'ssh' | 'local-shell' }
+  | { action: 'open_connection_dialog'; prefill?: NonSensitivePrefill }
+  | { action: 'close_connection_dialog' };
+
+/**
+ * `window.linkterm.ui` 命名空间。
+ *
+ * 仅暴露订阅入口（与 `transcript.onEvent` 模式一致）；写入只走 MCP 工具受信通道，
+ * 渲染端不能伪造 patch 来源。
+ */
+export interface UiNamespace {
+  /**
+   * 订阅 `UI_STATE_PATCH` 主→渲染推送；返回 unsubscribe。
+   *
+   * 与 transcript subscriber 同生命周期：webContents 销毁时主进程自动清理订阅。
+   */
+  onStatePatch(handler: (patch: UiStatePatch) => void): Unsubscribe;
+}
+
+/**
  * `window.linkterm` 的完整类型。
  *
- * 命名空间分组对应主进程 IPC channel 的 `<scope>:<action>` 命名（session/serial/transcript）。
+ * 命名空间分组对应主进程 IPC channel 的 `<scope>:<action>` 命名（session/serial/transcript/ui）。
  */
 export interface PreloadAPI {
   session: SessionNamespace;
   serial: SerialNamespace;
   transcript: TranscriptNamespace;
+  ui: UiNamespace;
 }
 
 declare global {

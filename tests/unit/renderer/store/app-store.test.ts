@@ -14,6 +14,7 @@ const reset = (): void => {
     dialogOpen: false,
     serialPorts: [],
     originActivity: {},
+    connectionDialogPrefill: null,
   });
 };
 
@@ -98,5 +99,19 @@ describe('useAppStore', () => {
     const state = useAppStore.getState();
     expect(selectSessionIds(state)).toEqual(['s1', 's2']);
     expect(selectActiveSession(state)?.id).toBe('s2');
+  });
+
+  it('setConnectionDialogPrefill stores prefill object', () => {
+    useAppStore.getState().setConnectionDialogPrefill({ type: 'serial', baudRate: '9600' });
+    expect(useAppStore.getState().connectionDialogPrefill).toEqual({
+      type: 'serial',
+      baudRate: '9600',
+    });
+  });
+
+  it('setConnectionDialogPrefill(null) resets to null', () => {
+    useAppStore.getState().setConnectionDialogPrefill({ type: 'ssh' });
+    useAppStore.getState().setConnectionDialogPrefill(null);
+    expect(useAppStore.getState().connectionDialogPrefill).toBeNull();
   });
 });

@@ -1,12 +1,16 @@
+import { BrowserWindow } from 'electron';
 import { SessionManager } from '../../core/session/session-manager.js';
 import { WorkspaceConfigManager } from '../../core/workspace/index.js';
 import { JLinkAdapter } from '../../jlink/index.js';
 import type { IJLinkBackend } from '../../jlink/index.js';
 import { createMcpServer, type LinkTermMcpServer } from '../../mcp/index.js';
+import type { CapturableWindow } from '../../mcp/surfaces/ui/types.js';
 import { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
 import { registerSerialIpc } from './serial-ipc.js';
 import { registerSessionIpc } from './session-ipc.js';
 import { registerSessionCreate } from './session-create-handler.js';
+import { createUiBridge } from './ui-bridge.js';
+export { createUiBridge, type UiPatchTarget } from './ui-bridge.js';
 
 /**
  * 主进程持有的全局依赖容器：随 IPC handler 一起初始化、随退出统一清理。
@@ -44,6 +48,13 @@ export interface MainProcessContext {
 export interface RegisterIpcHandlersOptions {
   /** 是否在创建 context 后立即启动 MCP server。 */
   autoStartMcp?: boolean;
+  /**
+   * Phase 10：当前主窗口 thunk。注入后 MCP `ui_screenshot` 可以拿到 BrowserWindow
+   * 调用 `webContents.capturePage()`；缺省时 ui_screenshot 一律 UI_NOT_AVAILABLE。
+   *
+   * 必须是 thunk —— 详见 `src/main/index.ts` `getMainWindow` JSDoc。
+   */
+  getMainWindow?: () => BrowserWindow | null;
 }
 
 /**
@@ -66,6 +77,19 @@ export async function registerIpcHandlers(
     }),
   });
   const jlinkBackend: IJLinkBackend = new JLinkAdapter();
+
+  const uiBridge = createUiBridge(() =>
+    BrowserWindow.getAllWindows().map((w) => w.webContents),
+  );
+
+  const getMainWindow = options.getMainWindow;
+  const getActiveWindow: () => CapturableWindow | null = getMainWindow
+    ? () => {
+        const win = getMainWindow();
+        return win && !win.isDestroyed() ? win : null;
+      }
+    : () => null;
+
   const mcpServer = createMcpServer({
     sessionManager,
     serialDiscovery,
@@ -74,6 +98,8 @@ export async function registerIpcHandlers(
       serialPorts: await serialDiscovery.listPorts(),
     }),
     jlinkBackend,
+    uiBridge,
+    getActiveWindow,
   });
 
   const unregisterSerial = registerSerialIpc(serialDiscovery);
@@ -107,3 +133,4 @@ export async function registerIpcHandlers(
 
   return { serialDiscovery, sessionManager, workspaceConfigManager, jlinkBackend, mcpServer, dispose };
 }
+

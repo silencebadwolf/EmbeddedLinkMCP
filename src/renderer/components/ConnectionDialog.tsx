@@ -32,7 +32,10 @@ import { useAppStore } from '../store/app-store.js';
 import { useSessions } from '../hooks/useSession.js';
 import { useT } from '../i18n/index.js';
 import type { ConnectionType, SerialMode } from '../../shared/types.js';
-import type { SessionCreateRequestConfig } from '../../shared/preload-api.js';
+import type {
+  NonSensitivePrefill,
+  SessionCreateRequestConfig,
+} from '../../shared/preload-api.js';
 
 /** 表单内部使用的连接类型 → SessionConfig 的中间状态。 */
 interface FormState {
@@ -129,6 +132,20 @@ function buildConfig(form: FormState): SessionCreateRequestConfig | null {
 }
 
 /**
+ * 当 prefill 未显式提供 `type` 时按其它字段反推：含 ssh* → 'ssh'；含 localShell/localCwd
+ * → 'local-shell'；否则 undefined（沿用 INITIAL_FORM.type='serial'）。
+ *
+ * SSH 优先级高于 local-shell —— SSH 字段（host/port/username）语义更强，AI 客户端推
+ * `localCwd` 但留 sshHost 的歧义场景属于无效输入，按 SSH 处理便于早暴露。
+ */
+function inferType(p: NonSensitivePrefill): ConnectionType | undefined {
+  if (p.type) return p.type;
+  if (p.sshHost || p.sshPort || p.sshUsername) return 'ssh';
+  if (p.localShell || p.localCwd) return 'local-shell';
+  return undefined;
+}
+
+/**
  * ConnectionDialog 组件：受控于 store 的 dialogOpen。
  */
 export function ConnectionDialog(): React.ReactElement {
@@ -141,13 +158,36 @@ export function ConnectionDialog(): React.ReactElement {
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  // 关闭对话框时重置表单 + 主动清零敏感字段
+  // 关闭对话框时重置表单 + 主动清零敏感字段；
+  // 打开时一次性合并 store 中的 MCP prefill（来自 ui_configure），随后立刻 clearPrefill
+  // 防止反复关→开时陈旧 prefill 阴魂不散。**依赖列表必须只是 [open]** —— 把 prefill
+  // 加入依赖会让 AI 推送中途到来覆盖用户已输入的字段。
   React.useEffect(() => {
     if (!open) {
       setForm(INITIAL_FORM);
       setError(null);
       setSubmitting(false);
+      return;
     }
+    // open === true 边沿：在 effect 内读最新 prefill（避免依赖列表）。
+    const prefill = useAppStore.getState().connectionDialogPrefill;
+    if (!prefill) return;
+    const inferred = inferType(prefill);
+    setForm({
+      ...INITIAL_FORM,
+      ...(inferred !== undefined ? { type: inferred } : {}),
+      ...(prefill.label !== undefined ? { label: prefill.label } : {}),
+      ...(prefill.serialPort !== undefined ? { serialPort: prefill.serialPort } : {}),
+      ...(prefill.baudRate !== undefined ? { baudRate: prefill.baudRate } : {}),
+      ...(prefill.serialMode !== undefined ? { serialMode: prefill.serialMode } : {}),
+      ...(prefill.sshHost !== undefined ? { sshHost: prefill.sshHost } : {}),
+      ...(prefill.sshPort !== undefined ? { sshPort: prefill.sshPort } : {}),
+      ...(prefill.sshUsername !== undefined ? { sshUsername: prefill.sshUsername } : {}),
+      ...(prefill.sshAuth !== undefined ? { sshAuth: prefill.sshAuth } : {}),
+      ...(prefill.localShell !== undefined ? { localShell: prefill.localShell } : {}),
+      ...(prefill.localCwd !== undefined ? { localCwd: prefill.localCwd } : {}),
+    });
+    useAppStore.getState().setConnectionDialogPrefill(null);
   }, [open]);
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]): void => {

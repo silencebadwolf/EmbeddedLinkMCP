@@ -12,7 +12,7 @@
  */
 
 import { z } from 'zod';
-import { MAX_BINARY_BYTES } from './binary-codec.js';
+import { MAX_BASE64_INPUT_LEN } from '../../limits.js';
 
 /** 所有工具共有的可选元字段。 */
 const commonSchema = {
@@ -27,13 +27,6 @@ const abortableMixin = {
 
 /** probeId 必须是 UUID v4 字符串。 */
 const probeIdField = z.string().uuid();
-
-/**
- * base64 字段长度上限：N 字节 base64 = ceil(N/3)*4 字符；额外 1024 字符容忍换行/空格。
- * 比 16 MiB 二进制对应的 ~22.4M 字符多一点点，避免合法输入被误拒；超过此值在 Zod
- * 阶段就 reject，不进入 decodeBase64Capped。
- */
-const MAX_BASE64_INPUT_LEN = Math.ceil(MAX_BINARY_BYTES / 3) * 4 + 1024;
 
 /** base64 字符串字段：仅做字符集预检；上限/解码由 decodeBase64Capped 负责。 */
 const base64Field = z

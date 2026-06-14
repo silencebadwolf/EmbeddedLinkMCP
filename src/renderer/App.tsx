@@ -11,11 +11,15 @@ import { ConnectionDialog } from './components/ConnectionDialog.js';
 import { Button } from './components/ui/button.js';
 import { useAppStore } from './store/app-store.js';
 import { useT, type Locale } from './i18n/index.js';
+import { useUiPatchSubscription } from './hooks/useUiPatchSubscription.js';
 
 /**
  * App 根组件。
  */
 export function App(): React.ReactElement {
+  // Phase 10：在根组件一次性挂载 MCP UI patch 订阅；卸载时随 React 自动清理。
+  useUiPatchSubscription();
+
   const t = useT();
   const locale = useAppStore((s) => s.locale);
   const setLocale = useAppStore((s) => s.setLocale);

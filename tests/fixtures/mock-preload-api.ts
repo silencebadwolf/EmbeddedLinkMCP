@@ -12,6 +12,7 @@ import type {
   SessionReadSuccess,
   TranscriptSubscribeSuccess,
   Unsubscribe,
+  UiStatePatch,
 } from '../../src/shared/preload-api.js';
 import type { TranscriptEventEnvelope } from '../../src/shared/transcript-ipc-types.js';
 import type { SerialPortInfo } from '../../src/shared/types.js';
@@ -23,6 +24,11 @@ export interface MockPreloadAPI {
   emitTranscript(envelope: TranscriptEventEnvelope): void;
   /** 测试可调用此函数模拟串口插拔变化。 */
   emitPortChange(ports: ReadonlyArray<SerialPortInfo>): void;
+  /**
+   * Phase 10：模拟主进程通过 `UI_STATE_PATCH` channel 推送 UI patch。
+   * 用法：`mock.emitUiPatch({ action: 'set_locale', locale: 'zh' })`。
+   */
+  emitUiPatch(patch: UiStatePatch): void;
   /** 详细的 spy 对象。 */
   spies: {
     session: {
@@ -52,6 +58,7 @@ const okEmpty = <T>(data: T): PreloadResult<T> => ({ success: true, data });
 export function createMockPreloadAPI(): MockPreloadAPI {
   const transcriptListeners = new Set<(env: TranscriptEventEnvelope) => void>();
   const portListeners = new Set<(p: ReadonlyArray<SerialPortInfo>) => void>();
+  const uiPatchListeners = new Set<(patch: UiStatePatch) => void>();
 
   const session = {
     create: vi.fn(async () => okEmpty({ sessionId: 'sess_test', state: 'open' })),
@@ -100,6 +107,12 @@ export function createMockPreloadAPI(): MockPreloadAPI {
         return () => transcriptListeners.delete(handler);
       },
     },
+    ui: {
+      onStatePatch: (handler): Unsubscribe => {
+        uiPatchListeners.add(handler);
+        return () => uiPatchListeners.delete(handler);
+      },
+    },
   };
 
   return {
@@ -109,6 +122,9 @@ export function createMockPreloadAPI(): MockPreloadAPI {
     },
     emitPortChange: (ports) => {
       for (const l of portListeners) l(ports);
+    },
+    emitUiPatch: (patch) => {
+      for (const l of uiPatchListeners) l(patch);
     },
     spies: {
       session,

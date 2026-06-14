@@ -17,6 +17,7 @@ const resetStore = (): void => {
     dialogOpen: true,
     serialPorts: [],
     originActivity: {},
+    connectionDialogPrefill: null,
   });
 };
 
@@ -86,5 +87,50 @@ describe('ConnectionDialog', () => {
     render(<ConnectionDialog />);
     // 一开始 serial port input 应可见
     expect(screen.getByPlaceholderText('/dev/tty.usbserial-XXX')).toBeInTheDocument();
+  });
+
+  it('applies MCP prefill on open edge and clears it from store', () => {
+    // dialog 默认 closed → store 写入 prefill → open=true 触发 effect 边沿读取
+    useAppStore.setState({
+      dialogOpen: false,
+      connectionDialogPrefill: { serialPort: '/dev/ttyACM0', baudRate: '9600' },
+    });
+    const { rerender } = render(<ConnectionDialog />);
+    useAppStore.setState({ dialogOpen: true });
+    rerender(<ConnectionDialog />);
+    // 表单内的 serial port input 应当有 prefill 值
+    const input = screen.getByPlaceholderText('/dev/tty.usbserial-XXX') as HTMLInputElement;
+    expect(input.value).toBe('/dev/ttyACM0');
+    // prefill 已被立即清掉，避免下次 open 时重放
+    expect(useAppStore.getState().connectionDialogPrefill).toBeNull();
+  });
+
+  it('infers type=ssh from prefill when type omitted', () => {
+    // 仅含 sshHost → 自动推导为 ssh，应渲染 ssh 字段
+    useAppStore.setState({
+      dialogOpen: false,
+      connectionDialogPrefill: { sshHost: 'example.com' },
+    });
+    const { rerender } = render(<ConnectionDialog />);
+    useAppStore.setState({ dialogOpen: true });
+    rerender(<ConnectionDialog />);
+    const hostInput = screen.getByLabelText('Host') as HTMLInputElement;
+    expect(hostInput.value).toBe('example.com');
+    // serial 端口字段不应可见
+    expect(screen.queryByPlaceholderText('/dev/tty.usbserial-XXX')).toBeNull();
+  });
+
+  it('infers type=local-shell from prefill when type omitted', () => {
+    useAppStore.setState({
+      dialogOpen: false,
+      connectionDialogPrefill: { localShell: '/bin/bash' },
+    });
+    const { rerender } = render(<ConnectionDialog />);
+    useAppStore.setState({ dialogOpen: true });
+    rerender(<ConnectionDialog />);
+    const shellInput = screen.getByLabelText('Shell (optional)') as HTMLInputElement;
+    expect(shellInput.value).toBe('/bin/bash');
+    // serial / ssh 字段不应渲染
+    expect(screen.queryByPlaceholderText('/dev/tty.usbserial-XXX')).toBeNull();
   });
 });
