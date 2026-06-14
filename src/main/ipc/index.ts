@@ -1,4 +1,5 @@
 import { SessionManager } from '../../core/session/session-manager.js';
+import { WorkspaceConfigManager } from '../../core/workspace/index.js';
 import { createMcpServer, type LinkTermMcpServer } from '../../mcp/index.js';
 import { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
 import { registerSerialIpc } from './serial-ipc.js';
@@ -11,10 +12,13 @@ import { registerSessionCreate } from './session-create-handler.js';
  * **关键不变量（§4.5）**：`sessionManager` 必须由 IPC 层与 MCP server 共享同一实例 ——
  * 这是 \"AI 与人操作同一会话\" 的物理基础。`mcpServer` 在创建时被注入这个 manager，
  * 因此本 context 同时持有二者并在 dispose 时按 \"先 stop MCP → 再 destroyAll session\" 顺序释放。
+ *
+ * Phase 8 新增 `workspaceConfigManager`：MCP `init/get/update_workspace_config` 三工具与之共享。
  */
 export interface MainProcessContext {
   serialDiscovery: SerialDiscovery;
   sessionManager: SessionManager;
+  workspaceConfigManager: WorkspaceConfigManager;
   mcpServer: LinkTermMcpServer;
   /** 反注册所有 IPC handler 并停止 MCP server / 销毁所有 session；应用退出/测试 teardown 调用。 */
   dispose: () => Promise<void>;
@@ -49,7 +53,19 @@ export async function registerIpcHandlers(
 ): Promise<MainProcessContext> {
   const serialDiscovery = new SerialDiscovery();
   const sessionManager = new SessionManager();
-  const mcpServer = createMcpServer({ sessionManager, serialDiscovery });
+  const workspaceConfigManager = new WorkspaceConfigManager({
+    evidenceFn: async () => ({
+      serialPorts: await serialDiscovery.listPorts(),
+    }),
+  });
+  const mcpServer = createMcpServer({
+    sessionManager,
+    serialDiscovery,
+    workspaceConfigManager,
+    workspaceEvidenceFn: async () => ({
+      serialPorts: await serialDiscovery.listPorts(),
+    }),
+  });
 
   const unregisterSerial = registerSerialIpc(serialDiscovery);
   const unregisterSession = registerSessionIpc(sessionManager);
@@ -80,5 +96,5 @@ export async function registerIpcHandlers(
     serialDiscovery.dispose();
   };
 
-  return { serialDiscovery, sessionManager, mcpServer, dispose };
+  return { serialDiscovery, sessionManager, workspaceConfigManager, mcpServer, dispose };
 }

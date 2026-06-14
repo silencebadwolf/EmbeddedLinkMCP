@@ -28,6 +28,14 @@ export const ERROR_CODES = {
   SESSION_CLOSED: 'SESSION_CLOSED',
   /** 兜底错误码，未归类的内部异常一律落到这里。 */
   INTERNAL: 'INTERNAL',
+  /** 工作区配置文件不存在（caller 未先 init_workspace）。 */
+  WORKSPACE_NOT_FOUND: 'WORKSPACE_NOT_FOUND',
+  /** 工作区已存在 config.json，但 caller 未传 force=true。 */
+  WORKSPACE_ALREADY_INITIALIZED: 'WORKSPACE_ALREADY_INITIALIZED',
+  /** 工作区配置与硬件证据冲突，且包含 severity='error' 级别的差异。 */
+  WORKSPACE_CONFLICT: 'WORKSPACE_CONFLICT',
+  /** 工作区 config.json 的 schemaVersion 与运行时常量不匹配（需迁移）。 */
+  WORKSPACE_SCHEMA_VERSION_MISMATCH: 'WORKSPACE_SCHEMA_VERSION_MISMATCH',
 } as const;
 
 /** ERROR_CODES 的字符串字面量联合类型。 */

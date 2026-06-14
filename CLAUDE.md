@@ -8,7 +8,7 @@ LinkTerm v2 is an Electron/TypeScript rewrite of a legacy Qt/C++ terminal, inten
 
 Authoritative specs live in `PROJECT_REQUIREMENTS.md` (requirements) and `DEVELOPMENT_PLAN.md` (13-phase plan with current status). **Always check `DEVELOPMENT_PLAN.md` before starting work** — it tracks which phases are completed (✅), in progress, or not started (⬜), and records every decision/variance from the original plan.
 
-Current state: **Phases 0–7 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters, MCP terminal surface with 8 tools, AI-human coop hardening, Electron renderer UI with xterm.js + connection dialog + i18n + shadcn primitives, **embedded terminal rules + sendAndWait FSM**). Phases 8–12 not yet started. 290 Vitest tests cover `src/core/`, `src/transports/{serial,ssh,local-shell}/`, `src/core/terminal-rules/`, `src/mcp/`, AI-human coop integration, send-and-wait integration, the renderer (happy-dom hooks/components), and `session:create` IPC.
+Current state: **Phases 0–8 complete** (scaffolding, core session/transcript/write-queue, serial transport + discovery + IPC, SSH + local-shell adapters, MCP terminal surface with 8 tools, AI-human coop hardening, Electron renderer UI with xterm.js + connection dialog + i18n + shadcn primitives, embedded terminal rules + sendAndWait FSM, **workspace config persistence with 3 MCP tools**). Phases 9–12 not yet started. 363 Vitest tests cover `src/core/`, `src/transports/{serial,ssh,local-shell}/`, `src/core/terminal-rules/`, `src/core/workspace/`, `src/mcp/`, AI-human coop integration, send-and-wait integration, the renderer (happy-dom hooks/components), and `session:create` IPC.
 
 ## Common commands
 
@@ -124,6 +124,24 @@ The only renderer→main channel is `window.linkterm`, injected by `src/main/pre
 **EchoHandler is byte-precise**: FIFO `expected[]` queue, first-byte mismatch flushes the whole queue conservatively. Long-running echo-off devices are protected by `MAX_QUEUE_LEN=4096` — beyond that, the queue auto-flushes. Strategy is `'auto' | 'keep'` only — there is no `'strip'` (was a Phase 7 review redundancy).
 
 **AbortSignal semantics**: pre-aborted calls short-circuit BEFORE write — no transport bytes, no observeWrite, `bytesWritten=0`. During-wait abort uses `Promise.race` with a once listener; the underlying `SessionManager.waitFor` does not yet accept a signal, so its listeners/timer linger until natural timeout (Phase 8 backlog item — record but don't paper over).
+
+### Workspace config persistence (Phase 8)
+
+`src/core/workspace/` is the first runtime fs IO in the project. `WorkspaceConfigManager` persists 5 config sections (`chip` / `flash` / `debug` / `rtt` / `serial`) to `<workspaceRoot>/.linkterm/config.json` with `schemaVersion: 'linkterm-workspace/1.0.0'`. The manager takes 2 DI points — `FsPrimitives` (6 methods incl. `unlink`) and `evidenceFn` — keeping core Electron-free and unit-testable without real disk.
+
+**Single-process serialization**: `init()` and `update()` route through `#inflight: Promise<unknown>` (chained via `.catch(() => {})` to avoid poisoning) so two concurrent `update(root, patch)` calls cannot lose-update. `load()` stays outside the lock (read + atomic single-statement reassignment of `#current`). Don't replace this with advisory locks — single LinkTerm process is the only writer.
+
+**Schema-level credential rejection is the security boundary**: every Zod object uses `.strict()` at every layer (root + 5 sections + patch) so unknown keys (`password`, `privateKey`, `passphrase`, `token`, `secret`) are rejected synchronously at parse time. No runtime refine, no blocklist — adding a new section means a new `.strict()` schema, not a new credential filter. Patch schema does NOT allow `schemaVersion` to prevent silent migrations.
+
+**Atomic write with cleanup**: `#writeAtomic` writes to `<file>.tmp` then `rename`s; on failure the tmp is best-effort `unlink`ed (cleanup error swallowed, original error rethrown). POSIX/Win32 same-volume rename is atomic. Don't introduce backup/rotate logic without re-verifying the lock interaction.
+
+**Path safety**: workspace root must be absolute and `..`-free. Validation lives both at the schema boundary (`schemas.ts` `.refine`) and inside the manager (`assertValidRoot`) — defense in depth so non-MCP callers can't bypass.
+
+**Conflict report sanitization**: `WorkspaceConflictError` carries the full `ConflictReport` (with `configured` / `actual` values), but `tools.ts` strips those fields before placing the report in `ToolError.details`. Only `field`, `severity`, `message` cross the MCP boundary — never echo configured values back to the AI client (future-proofs against e.g. serial paths becoming sensitive).
+
+**Error code expansions**: `WORKSPACE_NOT_FOUND` / `WORKSPACE_ALREADY_INITIALIZED` / `WORKSPACE_CONFLICT` / `WORKSPACE_SCHEMA_VERSION_MISMATCH` are added to BOTH `ERROR_CODES` (in `src/shared/error-codes.ts`) AND `ToolErrorCode` union (in `src/mcp/registry.ts`). Translation in `tools.ts` is `instanceof`-based (mirrors session error taxonomy) — adding a new domain error means adding both halves of the pair plus a translation branch.
+
+**MCP surface is isolated**: workspace tools live in their own `src/mcp/surfaces/workspace/` directory; `EvidenceKind` gained `'workspace_config'`. The `workspaceConfigManager` injection into `CreateMcpServerOptions` is **optional** — when omitted, the 3 workspace tools are not registered. This preserves backward compatibility with terminal-only MCP test fixtures.
 
 ## Build configuration peculiarities
 

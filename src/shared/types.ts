@@ -30,7 +30,12 @@ export type Origin = 'human' | 'ai' | 'device' | 'system';
 /**
  * MCP 工具返回的证据种类（用于 evidence.kind 字段，Phase 4+ 使用）。
  */
-export type EvidenceKind = 'raw_bytes' | 'terminal_output' | 'debug_output' | 'ui_screenshot';
+export type EvidenceKind =
+  | 'raw_bytes'
+  | 'terminal_output'
+  | 'debug_output'
+  | 'ui_screenshot'
+  | 'workspace_config';
 
 /**
  * 会话生命周期状态。

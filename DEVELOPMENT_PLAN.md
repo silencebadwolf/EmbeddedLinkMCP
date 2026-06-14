@@ -18,7 +18,7 @@ LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形
 | Phase 5: AI-人共同操作 | ✅ 已完成 | 2026-06-13 |
 | Phase 6: Electron UI | ✅ 已完成 | 2026-06-13 |
 | Phase 7: 终端规则+sendAndWait | ✅ 已完成 2026-06-13 | 290 测试通过 |
-| Phase 8: 工作区配置 | ⬜ 未开始 | — |
+| Phase 8: 工作区配置 | ✅ 已完成 2026-06-14 | 363 测试通过 |
 | Phase 9: J-Link MCP | ⬜ 未开始 | — |
 | Phase 10: UI MCP 工具 | ⬜ 未开始 | — |
 | Phase 11: 许可证管理 | 🟨 部分完成（Phase 0 已建立基础） | — |
@@ -902,29 +902,65 @@ link-terminal-demo/
 
 ---
 
-## Phase 8: 工作区配置持久化 ⬜ 未开始
+## Phase 8: 工作区配置持久化 ✅ 已完成 2026-06-14
 
 **目标**：MCP 识别工作区，持久化芯片/烧录/调试/RTT/串口配置到工作区，后续复用。
 
-### 交付物
+### 交付物（实际）
 
 | 文件/模块 | 用途 |
 |---|---|
-| `src/core/workspace/types.ts` | WorkspaceConfig, ChipConfig, FlashConfig 等 |
-| `src/core/workspace/config-schema.ts` | Zod schema（含版本字段） |
-| `src/core/workspace/workspace-config.ts` | load/save/validate/detectConflicts |
-| MCP 新增工具 | `init_workspace`, `get_workspace_config`, `update_workspace_config` |
+| `src/core/workspace/types.ts` | 5 类配置 + WORKSPACE_SCHEMA_VERSION + REQUIRED_FIELDS |
+| `src/core/workspace/config-schema.ts` | Zod 严格 schema（每层 `.strict()`） + patch schema |
+| `src/core/workspace/conflict-detect.ts` | 纯函数 detectConflicts（仅 serial.port 维度，全 warn）|
+| `src/core/workspace/fs-primitives.ts` | 注入式 fs 接口 + 默认 node:fs/promises 实现 |
+| `src/core/workspace/workspace-config-manager.ts` | atomic write + `#inflight` 串行锁 + 4 域错误类 |
+| `src/mcp/surfaces/workspace/{schemas,tools}.ts` | 3 个 MCP 工具 + ZodError 安全翻译 |
+| `src/shared/error-codes.ts` | +4 错误码（WORKSPACE_NOT_FOUND / ALREADY_INITIALIZED / CONFLICT / SCHEMA_VERSION_MISMATCH）|
+| `src/shared/types.ts` | EvidenceKind +`'workspace_config'` |
+| `src/mcp/server.ts` / `src/main/ipc/index.ts` | workspaceConfigManager 可选注入 |
 
 ### 关键架构决策
 
-1. **配置文件路径**：`<workspaceRoot>/.linkterm/config.json`，含 schemaVersion
-2. **敏感数据 schema 级拒绝** — Zod schema 显式拒绝 password/privateKey/token/secret 字段
-3. **冲突检测** — 配置 vs 硬件证据不匹配时返回结构化冲突报告，需用户确认
-4. **缺失字段返回结构化提示** — 不静默失败
+1. **配置文件路径**：`<workspaceRoot>/.linkterm/config.json`，含 `schemaVersion: 'linkterm-workspace/1.0.0'`
+2. **敏感数据 schema 级拒绝** — 5 类 + 根 layer 全部 `.strict()`，`password`/`privateKey`/`token`/`secret` 一律 unknown-key 拒
+3. **冲突检测被动+显式 dryRun** — `validateOnly: true` 不写盘；硬件枚举不在每次 load 触发
+4. **atomic temp+rename** + **`#inflight` 单进程串行锁** — 不引入 native advisory lock
+5. **依赖注入双点**：FsPrimitives（5 方法 + unlink）+ evidenceFn 一函数；不抽象 IConfigStore
+6. **MCP 错误码扩展** — 4 个新码同步 ToolErrorCode union；ZodError 仅暴露 path/message/code，conflict report 仅暴露 field/severity/message（不回显 configured/actual）
+7. **workspaceRoot 显式入参** — caller 传，manager 持当前；`process.cwd()` 在 Electron 主进程不可靠
+8. **schema 驱动 patch** — patch 不允许改 schemaVersion；浅 merge 5 类整体替换
+9. **路径校验**：`isAbsolute` + 拒 `..` 段（schema `.refine` + manager `assertValidRoot` 双层）
+10. **load 文件大小限制** ≤ 1 MiB；`schemaVersion` 不匹配时抛专属 `WorkspaceSchemaVersionMismatchError`
 
 ### 依赖阶段：Phase 4
 
-### 相对工作量：1.5x
+### 相对工作量：1.5x（实际匹配预期）
+
+### Review 处置（评审 6/2026-06-14）
+
+| 严重度 | 数量 | 状态 |
+|---|---|---|
+| Critical | 1 | 已修（C1 并发 update 串行锁） |
+| High | 4 | 已修（docstring 收敛 / 二次 parse 删除 / structuredClone / 路径规范化）|
+| Medium | 9 | 8 修 + 1 N/A（load 失败保留 stale `#current` → 转 Phase 9 backlog）|
+| Low | 4 | 顺手修 3 项（重命名测试 / 删冗余测试 / `NodeJS.ErrnoException` 替换 type guard）|
+
+详见 `docs/phase-decisions/Phase8.md`。
+
+### 携入 Phase 9 backlog
+
+- detectConflicts severity 维度：J-Link 设备枚举差异升级为 `error` 触发 `WorkspaceConflictError`
+- load 失败 staleness 元信息：考虑加 `lastLoadOk: boolean` 标记
+- AbortSignal 透传 SessionManager.waitFor（Phase 7 携入）
+
+### 测试
+
+| 测试基线 | 数量 |
+|---|---|
+| Phase 7 完成时 | 290 |
+| Phase 8 实施完成 | 356 |
+| Phase 8 review 修复后 | **363** |
 
 ---
 

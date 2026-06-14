@@ -17,6 +17,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { SessionManager } from '../core/session/session-manager.js';
 import type { SerialDiscovery } from '../transports/serial/serial-discovery.js';
+import type {
+  EvidenceSnapshot,
+  WorkspaceConfigManager,
+} from '../core/workspace/index.js';
 import { APP_NAME } from '../shared/constants.js';
 import {
   defaultStdioTransportFactory,
@@ -24,11 +28,22 @@ import {
 } from './transport.js';
 import { LINKTERM_MCP_SCHEMA_VERSION } from './versioning/version-check.js';
 import { registerTerminalTools } from './surfaces/terminal/tools.js';
+import { registerWorkspaceTools } from './surfaces/workspace/tools.js';
 
 /** {@link createMcpServer} 的依赖容器。 */
 export interface CreateMcpServerOptions {
   sessionManager: SessionManager;
   serialDiscovery: SerialDiscovery;
+  /**
+   * 工作区配置管理器（Phase 8）。注入时 server 会注册 3 个 workspace 工具；
+   * 缺省时跳过注册（向后兼容旧测试）。
+   */
+  workspaceConfigManager?: WorkspaceConfigManager;
+  /**
+   * 工作区工具计算 conflicts 时的硬件证据回调；省略时退化为只看 SerialDiscovery。
+   * 仅在提供 workspaceConfigManager 时有意义。
+   */
+  workspaceEvidenceFn?: () => Promise<EvidenceSnapshot>;
   /** 注入用 transport 工厂；省略时使用 stdio。测试通常注入 InMemoryTransport。 */
   transportFactory?: McpTransportFactory;
   /** 覆盖 server 自报版本号；默认从 APP_NAME / package.json 推导。 */
@@ -83,6 +98,18 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
     sessionManager: options.sessionManager,
     serialDiscovery: options.serialDiscovery,
   });
+
+  if (options.workspaceConfigManager) {
+    const evidenceFn =
+      options.workspaceEvidenceFn ??
+      (async () => ({
+        serialPorts: await options.serialDiscovery.listPorts(),
+      }));
+    registerWorkspaceTools(server, {
+      workspaceConfigManager: options.workspaceConfigManager,
+      evidenceFn,
+    });
+  }
 
   let activeTransport: Transport | null = null;
   let starting: Promise<void> | null = null;
