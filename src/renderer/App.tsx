@@ -24,7 +24,8 @@ export function App(): React.ReactElement {
   const locale = useAppStore((s) => s.locale);
   const setLocale = useAppStore((s) => s.setLocale);
   const activeId = useAppStore((s) => s.activeSessionId);
-  const sessionCount = useAppStore((s) => s.sessions.size);
+  const sessions = useAppStore((s) => s.sessions);
+  const sessionList = React.useMemo(() => Array.from(sessions.values()), [sessions]);
 
   return (
     <div className="flex h-screen flex-col bg-gray-950 text-gray-100">
@@ -56,13 +57,28 @@ export function App(): React.ReactElement {
       <SessionTabBar />
 
       <main className="relative flex-1 overflow-hidden">
-        {sessionCount === 0 ? (
+        {sessionList.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
             <h2 className="text-lg font-medium text-gray-300">{t('tabs.empty.title')}</h2>
             <p className="mt-1 text-sm text-gray-500">{t('tabs.empty.subtitle')}</p>
           </div>
         ) : (
-          <TerminalView sessionId={activeId} />
+          sessionList.map((session) => {
+            const active = session.id === activeId;
+            return (
+              <div
+                key={session.id}
+                className={
+                  active
+                    ? 'absolute inset-0 h-full w-full'
+                    : 'absolute inset-0 h-full w-full invisible pointer-events-none'
+                }
+                aria-hidden={!active}
+              >
+                <TerminalView sessionId={session.id} />
+              </div>
+            );
+          })
         )}
       </main>
 
