@@ -10,15 +10,35 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 NODE_WINGET_ID = "OpenJS.NodeJS.LTS"
 DEFAULT_NODE_MAJOR = 20
 DEFAULT_PNPM_VERSION = "9.15.0"
+DEFAULT_ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
+BUILD_INPUT_FILES = [
+    "package.json",
+    "pnpm-lock.yaml",
+    "tsconfig.json",
+    "tsconfig.main.json",
+    "tsconfig.renderer.json",
+    "vite.config.ts",
+    "postcss.config.js",
+]
+BUILD_INPUT_DIRS = ["src"]
+BUILD_OUTPUT_FILES = [
+    "dist/main/main/index.js",
+    "dist/renderer/index.html",
+]
 
 
 class SetupError(RuntimeError):
     """Raised when environment setup cannot continue."""
+
+
+class CommandInterruptedError(SetupError):
+    """Raised when a child command is interrupted by the user."""
 
 
 def resolve_command(command: list[str]) -> list[str]:
@@ -58,7 +78,10 @@ def run(
     """
     resolved_command = resolve_command(command)
     print(f"\n$ {' '.join(command)}")
-    completed = subprocess.run(resolved_command, cwd=cwd, text=True, env=env)
+    try:
+        completed = subprocess.run(resolved_command, cwd=cwd, text=True, env=env)
+    except KeyboardInterrupt as exc:
+        raise CommandInterruptedError(f"命令被中断: {' '.join(command)}") from exc
     if check and completed.returncode != 0:
         raise SetupError(f"命令执行失败，退出码 {completed.returncode}: {' '.join(command)}")
     return completed
@@ -77,6 +100,8 @@ def capture(command: list[str]) -> str | None:
         completed = subprocess.run(resolve_command(command), capture_output=True, text=True, check=True)
     except (OSError, subprocess.CalledProcessError):
         return None
+    except KeyboardInterrupt as exc:
+        raise CommandInterruptedError(f"命令被中断: {' '.join(command)}") from exc
     return completed.stdout.strip()
 
 
@@ -175,11 +200,11 @@ def ensure_node(min_major: int, *, install: bool) -> None:
 
 
 def ensure_pnpm(version: str, *, install: bool) -> None:
-    """Ensure pnpm is available through Corepack.
+    """Ensure the project-requested pnpm version is available on PATH.
 
     Args:
-        version: pnpm version to prepare.
-        install: Whether to enable Corepack and prepare pnpm when missing.
+        version: pnpm version to install when needed.
+        install: Whether to install pnpm with the user npm prefix when missing or mismatched.
     """
     pnpm_version = capture(["pnpm", "--version"])
     if pnpm_version == version:
@@ -189,15 +214,14 @@ def ensure_pnpm(version: str, *, install: bool) -> None:
     if not install:
         raise SetupError(f"需要 pnpm {version}，当前检测到: {pnpm_version or '未安装'}")
 
-    if not command_exists("corepack"):
-        raise SetupError("未找到 corepack。请确认 Node.js LTS 已正确安装，然后重开终端。")
+    if not command_exists("npm"):
+        raise SetupError("未找到 npm。请确认 Node.js LTS 已正确安装，然后重开终端。")
 
-    run(["corepack", "enable"])
-    run(["corepack", "prepare", f"pnpm@{version}", "--activate"])
+    run(["npm", "install", "-g", f"pnpm@{version}"])
 
     pnpm_version = capture(["pnpm", "--version"])
     if pnpm_version != version:
-        raise SetupError("pnpm 准备完成但当前终端仍找不到 pnpm。请重开 VS Code/终端后再次运行此脚本。")
+        raise SetupError("pnpm 安装完成但当前终端仍找不到指定版本。请重开 VS Code/终端后再次运行此脚本。")
     print(f"pnpm 已就绪: {pnpm_version}")
 
 
@@ -219,12 +243,127 @@ def build_project(root: Path) -> None:
     run(["pnpm", "run", "build"], cwd=root)
 
 
+def newest_mtime(paths: list[Path]) -> float:
+    """Return the newest modification timestamp among files under the provided paths.
+
+    Args:
+        paths: Files or directories to scan.
+
+    Returns:
+        The newest modification timestamp, or 0 when no path exists.
+    """
+    newest = 0.0
+    for path in paths:
+        if not path.exists():
+            continue
+        if path.is_file():
+            newest = max(newest, path.stat().st_mtime)
+            continue
+        for child in path.rglob("*"):
+            if child.is_file():
+                newest = max(newest, child.stat().st_mtime)
+    return newest
+
+
+def build_needed(root: Path) -> bool:
+    """Check whether production build outputs are missing or older than source inputs.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        True when start mode should run a build before launching Electron.
+    """
+    output_paths = [root / relative for relative in BUILD_OUTPUT_FILES]
+    if any(not path.exists() for path in output_paths):
+        return True
+
+    oldest_output_mtime = min(path.stat().st_mtime for path in output_paths)
+    input_paths = [root / relative for relative in [*BUILD_INPUT_FILES, *BUILD_INPUT_DIRS]]
+    return newest_mtime(input_paths) > oldest_output_mtime
+
+
+def build_if_needed(root: Path) -> None:
+    """Build the project only when start mode needs refreshed dist outputs.
+
+    Args:
+        root: Repository root.
+    """
+    if build_needed(root):
+        build_project(root)
+        return
+    print("构建产物已是最新，跳过 pnpm run build。")
+
+
+def electron_package_dir(root: Path) -> Path:
+    """Return the installed electron package directory for this workspace.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        The package directory that contains electron's install.js and dist files.
+    """
+    package_dir = root / "node_modules" / "electron"
+    if not package_dir.exists():
+        raise SetupError("未找到 node_modules/electron。请先运行 pnpm install。")
+    return package_dir.resolve()
+
+
+def electron_binary_installed(root: Path) -> bool:
+    """Check whether the Electron executable binary has already been downloaded.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        True when electron's path.txt and executable both exist.
+    """
+    package_dir = electron_package_dir(root)
+    path_file = package_dir / "path.txt"
+    try:
+        executable_name = path_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    if not executable_name:
+        return False
+    return (package_dir / "dist" / executable_name).exists()
+
+
+def ensure_electron_binary_installed(root: Path) -> None:
+    """Download Electron's executable before launching the app when it is missing.
+
+    Args:
+        root: Repository root.
+    """
+    if electron_binary_installed(root):
+        return
+    print("Electron 二进制未就绪，正在预下载。若网络较慢，请等待完成，不要中断任务。")
+    try:
+        run(["pnpm", "exec", "install-electron", "--no"], cwd=root)
+    except CommandInterruptedError:
+        raise
+    except SetupError as exc:
+        print(f"Electron 默认下载源失败：{exc}")
+        print(f"改用镜像源重试：{DEFAULT_ELECTRON_MIRROR}")
+        retry_temp_dir = Path(tempfile.mkdtemp(prefix="linkterm-electron-download-"))
+        env = {
+            **os.environ,
+            "ELECTRON_MIRROR": DEFAULT_ELECTRON_MIRROR,
+            "TEMP": str(retry_temp_dir),
+            "TMP": str(retry_temp_dir),
+            "TMPDIR": str(retry_temp_dir),
+        }
+        run(["pnpm", "exec", "install-electron", "--no"], cwd=root, env=env)
+
+
 def start_project(root: Path) -> None:
     """Start the built Electron app with pnpm.
 
     Args:
         root: Repository root.
     """
+    ensure_electron_binary_installed(root)
     env = {**os.environ, "LINKTERM_FORCE_DIST": "1"}
     run(["pnpm", "start"], cwd=root, env=env)
 
@@ -247,8 +386,10 @@ def validate(root: Path, *, install: bool, skip_install_deps: bool, build: bool,
     if not skip_install_deps:
         install_dependencies(root)
 
-    if build or start:
+    if build:
         build_project(root)
+    elif start:
+        build_if_needed(root)
 
     if start:
         start_project(root)
