@@ -13,6 +13,62 @@ import type { Origin, SerialPortInfo } from '../../shared/types.js';
 import type { Locale } from '../i18n/index.js';
 import type { NonSensitivePrefill } from '../../shared/preload-api.js';
 
+const USER_PREFERENCES_STORAGE_KEY = 'linkterm:user-preferences';
+const USER_PREFERENCES_SCHEMA_VERSION = 1;
+
+interface UserPreferences {
+  schemaVersion: typeof USER_PREFERENCES_SCHEMA_VERSION;
+  locale: Locale;
+}
+
+/**
+ * 判断未知值是否为 LinkTerm 当前支持的 UI 语言。
+ *
+ * @param value - 待校验的未知输入。
+ * @returns 若 value 是合法 Locale 则返回 true。
+ */
+function isLocale(value: unknown): value is Locale {
+  return value === 'en' || value === 'zh';
+}
+
+/**
+ * 从浏览器本地存储读取 UI 偏好；缺失、损坏或不可用时返回 null。
+ *
+ * @returns 已校验的用户偏好，或 null。
+ */
+function readUserPreferences(): UserPreferences | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(USER_PREFERENCES_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const candidate = parsed as Partial<UserPreferences>;
+    if (candidate.schemaVersion !== USER_PREFERENCES_SCHEMA_VERSION || !isLocale(candidate.locale)) {
+      return null;
+    }
+    return { schemaVersion: USER_PREFERENCES_SCHEMA_VERSION, locale: candidate.locale };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 将 UI 偏好写入浏览器本地存储；存储不可用时静默降级为内存态。
+ *
+ * @param preferences - 需要持久化的用户偏好。
+ */
+function writeUserPreferences(preferences: UserPreferences): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(USER_PREFERENCES_STORAGE_KEY, JSON.stringify(preferences));
+  } catch {
+    // 存储配额或隐私模式失败时静默降级；内存态仍会更新。
+  }
+}
+
+const initialUserPreferences = readUserPreferences();
+
 /** 单条 session 在 UI 层的元信息镜像；权威状态仍在主进程。 */
 export interface SessionMeta {
   /** SessionManager 分配的 `sess_<uuid>`。 */
@@ -89,7 +145,7 @@ export interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   sessions: new Map(),
   activeSessionId: null,
-  locale: 'en',
+  locale: initialUserPreferences?.locale ?? 'en',
   dialogOpen: false,
   serialPorts: [],
   originActivity: {},
@@ -131,7 +187,10 @@ export const useAppStore = create<AppState>((set) => ({
       return { sessions: next };
     }),
 
-  setLocale: (locale) => set(() => ({ locale })),
+  setLocale: (locale) => {
+    writeUserPreferences({ schemaVersion: USER_PREFERENCES_SCHEMA_VERSION, locale });
+    set(() => ({ locale }));
+  },
   openDialog: () => set(() => ({ dialogOpen: true })),
   closeDialog: () => set(() => ({ dialogOpen: false })),
   setSerialPorts: (ports) => set(() => ({ serialPorts: ports })),

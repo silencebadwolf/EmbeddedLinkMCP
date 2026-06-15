@@ -3,10 +3,11 @@
  * Zustand store 单测。
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useAppStore, selectSessionIds, selectActiveSession } from '../../../../src/renderer/store/app-store.js';
 
 const reset = (): void => {
+  localStorage.clear();
   useAppStore.setState({
     sessions: new Map(),
     activeSessionId: null,
@@ -71,6 +72,26 @@ describe('useAppStore', () => {
   it('setLocale toggles locale', () => {
     useAppStore.getState().setLocale('zh');
     expect(useAppStore.getState().locale).toBe('zh');
+  });
+
+  it('setLocale persists locale for the next app launch', () => {
+    useAppStore.getState().setLocale('zh');
+    expect(JSON.parse(localStorage.getItem('linkterm:user-preferences') ?? '{}')).toEqual({
+      schemaVersion: 1,
+      locale: 'zh',
+    });
+  });
+
+  it('initializes locale from persisted preferences', async () => {
+    localStorage.setItem(
+      'linkterm:user-preferences',
+      JSON.stringify({ schemaVersion: 1, locale: 'zh' }),
+    );
+    vi.resetModules();
+    const { useAppStore: reloadedStore } = await import(
+      '../../../../src/renderer/store/app-store.js'
+    );
+    expect(reloadedStore.getState().locale).toBe('zh');
   });
 
   it('openDialog/closeDialog toggle dialogOpen', () => {
