@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import io
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import call, patch
 
 import setup_env
@@ -74,19 +77,80 @@ class SetupEnvTests(unittest.TestCase):
 
         self.assertEqual(calls, ["windows", "node", "pnpm", "install", "build"])
 
+    def test_build_project_marks_success_stamp(self) -> None:
+        """Successful builds should write a stamp used by start mode freshness checks."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(setup_env, "run") as run_mock:
+                setup_env.build_project(root)
+
+            run_mock.assert_called_once_with(["pnpm", "run", "build"], cwd=root)
+            self.assertTrue((root / setup_env.BUILD_STAMP_FILE).exists())
+
+    def test_build_needed_uses_success_stamp_instead_of_oldest_output(self) -> None:
+        """Start mode should not rebuild only because one dist file has an older mtime."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package_json = root / "package.json"
+            src_dir = root / "src"
+            src_dir.mkdir()
+            package_json.write_text("{}", encoding="utf-8")
+            (src_dir / "app.ts").write_text("export {};", encoding="utf-8")
+
+            for relative in setup_env.BUILD_OUTPUT_FILES:
+                output = root / relative
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("out", encoding="utf-8")
+
+            stamp = root / setup_env.BUILD_STAMP_FILE
+            stamp.parent.mkdir(parents=True, exist_ok=True)
+            stamp.write_text("ok\n", encoding="utf-8")
+
+            old_time = 1000
+            new_time = 2000
+            os.utime(root / setup_env.BUILD_OUTPUT_FILES[0], (old_time, old_time))
+            os.utime(root / setup_env.BUILD_OUTPUT_FILES[1], (new_time, new_time))
+            os.utime(package_json, (old_time, old_time))
+            os.utime(src_dir / "app.ts", (old_time, old_time))
+            os.utime(stamp, (new_time, new_time))
+
+            self.assertFalse(setup_env.build_needed(root))
+
     def test_start_project_forces_dist_renderer(self) -> None:
         """Start command forces Electron to load the built renderer files."""
         root = setup_env.repo_root()
 
         with (
             patch.object(setup_env, "ensure_electron_binary_installed") as ensure_electron_mock,
-            patch.object(setup_env, "run") as run_mock,
+            patch.object(setup_env, "stop_existing_linkterm_instances") as stop_existing_mock,
+            patch.object(setup_env, "start_detached") as start_detached_mock,
         ):
+            start_detached_mock.return_value.pid = 1234
             setup_env.start_project(root)
 
         ensure_electron_mock.assert_called_once_with(root)
-        _command, kwargs = run_mock.call_args
+        stop_existing_mock.assert_called_once_with(root)
+        _command, kwargs = start_detached_mock.call_args
         self.assertEqual(kwargs["env"]["LINKTERM_FORCE_DIST"], "1")
+
+    def test_stop_existing_linkterm_instances_filters_by_workspace(self) -> None:
+        """Old-instance cleanup should invoke PowerShell with the Electron path and workspace root."""
+        root = setup_env.repo_root()
+        electron_path = root / "node_modules" / "electron" / "dist" / "electron.exe"
+        with (
+            patch.object(setup_env, "electron_executable_path", return_value=electron_path),
+            patch.object(Path, "exists", return_value=True),
+            patch.object(
+                setup_env.subprocess,
+                "run",
+                return_value=setup_env.subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            ) as run_mock,
+        ):
+            setup_env.stop_existing_linkterm_instances(root)
+
+        args = run_mock.call_args.args[0]
+        self.assertIn(str(electron_path.resolve()), args)
+        self.assertIn(str(root.resolve()), args)
 
     def test_ensure_pnpm_installs_with_npm_prefix_before_corepack(self) -> None:
         """pnpm setup should avoid Corepack writes to the Program Files Node directory."""

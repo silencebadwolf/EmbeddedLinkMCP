@@ -31,6 +31,7 @@ BUILD_OUTPUT_FILES = [
     "dist/main/main/index.js",
     "dist/renderer/index.html",
 ]
+BUILD_STAMP_FILE = "dist/.linkterm-build-stamp"
 
 
 class SetupError(RuntimeError):
@@ -85,6 +86,36 @@ def run(
     if check and completed.returncode != 0:
         raise SetupError(f"命令执行失败，退出码 {completed.returncode}: {' '.join(command)}")
     return completed
+
+
+def start_detached(command: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.Popen[bytes]:
+    """Start a long-running GUI command detached from this terminal.
+
+    Args:
+        command: Command and arguments to execute.
+        cwd: Working directory for the child process.
+        env: Environment variables for the child process.
+
+    Returns:
+        The detached child process handle.
+    """
+    resolved_command = resolve_command(command)
+    print(f"\n$ {' '.join(command)}")
+    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+    try:
+        return subprocess.Popen(
+            resolved_command,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+    except KeyboardInterrupt as exc:
+        raise CommandInterruptedError(f"命令被中断: {' '.join(command)}") from exc
+    except OSError as exc:
+        raise SetupError(f"命令启动失败: {' '.join(command)}: {exc}") from exc
 
 
 def capture(command: list[str]) -> str | None:
@@ -234,6 +265,17 @@ def install_dependencies(root: Path) -> None:
     run(["pnpm", "install"], cwd=root)
 
 
+def mark_build_success(root: Path) -> None:
+    """Record that the full build completed successfully.
+
+    Args:
+        root: Repository root.
+    """
+    stamp = root / BUILD_STAMP_FILE
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text("ok\n", encoding="utf-8")
+
+
 def build_project(root: Path) -> None:
     """Build the project with pnpm.
 
@@ -241,6 +283,7 @@ def build_project(root: Path) -> None:
         root: Repository root.
     """
     run(["pnpm", "run", "build"], cwd=root)
+    mark_build_success(root)
 
 
 def newest_mtime(paths: list[Path]) -> float:
@@ -278,9 +321,12 @@ def build_needed(root: Path) -> bool:
     if any(not path.exists() for path in output_paths):
         return True
 
-    oldest_output_mtime = min(path.stat().st_mtime for path in output_paths)
+    stamp = root / BUILD_STAMP_FILE
+    if not stamp.exists():
+        return True
+
     input_paths = [root / relative for relative in [*BUILD_INPUT_FILES, *BUILD_INPUT_DIRS]]
-    return newest_mtime(input_paths) > oldest_output_mtime
+    return newest_mtime(input_paths) > stamp.stat().st_mtime
 
 
 def build_if_needed(root: Path) -> None:
@@ -310,6 +356,26 @@ def electron_package_dir(root: Path) -> Path:
     return package_dir.resolve()
 
 
+def electron_executable_path(root: Path) -> Path | None:
+    """Return Electron executable path when the binary metadata is available.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        The Electron executable path, or None when path.txt is missing or empty.
+    """
+    package_dir = electron_package_dir(root)
+    path_file = package_dir / "path.txt"
+    try:
+        executable_name = path_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not executable_name:
+        return None
+    return package_dir / "dist" / executable_name
+
+
 def electron_binary_installed(root: Path) -> bool:
     """Check whether the Electron executable binary has already been downloaded.
 
@@ -319,15 +385,8 @@ def electron_binary_installed(root: Path) -> bool:
     Returns:
         True when electron's path.txt and executable both exist.
     """
-    package_dir = electron_package_dir(root)
-    path_file = package_dir / "path.txt"
-    try:
-        executable_name = path_file.read_text(encoding="utf-8").strip()
-    except OSError:
-        return False
-    if not executable_name:
-        return False
-    return (package_dir / "dist" / executable_name).exists()
+    executable = electron_executable_path(root)
+    return executable is not None and executable.exists()
 
 
 def ensure_electron_binary_installed(root: Path) -> None:
@@ -357,6 +416,70 @@ def ensure_electron_binary_installed(root: Path) -> None:
         run(["pnpm", "exec", "install-electron", "--no"], cwd=root, env=env)
 
 
+def stop_existing_linkterm_instances(root: Path) -> None:
+    """Close existing LinkTerm Electron processes for this workspace.
+
+    Args:
+        root: Repository root.
+    """
+    executable = electron_executable_path(root)
+    if executable is None or not executable.exists():
+        return
+
+    script = r"""
+param([string] $ElectronPath, [string] $RootPath)
+$matches = Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" |
+  Where-Object {
+    $_.ExecutablePath -and
+    [string]::Equals($_.ExecutablePath, $ElectronPath, [System.StringComparison]::OrdinalIgnoreCase) -and
+    $_.CommandLine -and
+    ($_.CommandLine.IndexOf($RootPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) -and
+    ($_.CommandLine.IndexOf('--type=', [System.StringComparison]::OrdinalIgnoreCase) -lt 0)
+  }
+$matches | ForEach-Object {
+  Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+}
+"""
+    escaped_script = script.strip()
+    powershell = (
+        Path(os.environ.get("SystemRoot", r"C:\Windows"))
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    powershell_command = str(powershell) if powershell.exists() else "powershell.exe"
+    script_fd, script_name = tempfile.mkstemp(prefix="linkterm-stop-", suffix=".ps1")
+    script_path = Path(script_name)
+    try:
+        with os.fdopen(script_fd, "w", encoding="utf-8") as script_file:
+            script_file.write(escaped_script)
+        completed = subprocess.run(
+            [
+                powershell_command,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+                "-ElectronPath",
+                str(executable.resolve()),
+                "-RootPath",
+                str(root.resolve()),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        try:
+            script_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    if completed.returncode != 0:
+        raise SetupError((completed.stderr or completed.stdout or "无法关闭旧 LinkTerm 实例").strip())
+
+
 def start_project(root: Path) -> None:
     """Start the built Electron app with pnpm.
 
@@ -364,8 +487,10 @@ def start_project(root: Path) -> None:
         root: Repository root.
     """
     ensure_electron_binary_installed(root)
+    stop_existing_linkterm_instances(root)
     env = {**os.environ, "LINKTERM_FORCE_DIST": "1"}
-    run(["pnpm", "start"], cwd=root, env=env)
+    process = start_detached(["pnpm", "start"], cwd=root, env=env)
+    print(f"LinkTerm 已在后台启动，PID: {process.pid}")
 
 
 def validate(root: Path, *, install: bool, skip_install_deps: bool, build: bool, start: bool) -> None:

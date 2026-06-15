@@ -29,42 +29,54 @@ export function getMainWindow(): BrowserWindow | null {
   return mainWindow;
 }
 
-app.whenReady().then(async () => {
-  context = await registerIpcHandlers({ getMainWindow });
-  mainWindow = createMainWindow();
+const singleInstanceLock = app.requestSingleInstanceLock();
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+if (!singleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
   });
 
-  handleWindowClose(mainWindow);
-});
-
-app.on('window-all-closed', () => {
-  // macOS 习惯：所有窗口关闭后应用仍驻留 Dock，由用户显式 quit
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
-
-app.on('will-quit', (event) => {
-  if (!context) return;
-  // dispose 是异步：阻塞 quit 等待 MCP server / 所有 session 干净关闭
-  event.preventDefault();
-  const ctx = context;
-  context = null;
-  ctx
-    .dispose()
-    .catch(() => undefined)
-    .finally(() => app.quit());
-});
-
-app.on('activate', () => {
-  // macOS 习惯：Dock 图标点击时若无窗口则重建一个
-  if (!mainWindow) {
+  app.whenReady().then(async () => {
+    context = await registerIpcHandlers({ getMainWindow });
     mainWindow = createMainWindow();
+
     mainWindow.on('closed', () => {
       mainWindow = null;
     });
-  }
-});
+
+    handleWindowClose(mainWindow);
+  });
+
+  app.on('window-all-closed', () => {
+    // macOS 习惯：所有窗口关闭后应用仍驻留 Dock，由用户显式 quit
+    if (process.platform !== 'darwin') {
+      app.quit();
+    }
+  });
+
+  app.on('will-quit', (event) => {
+    if (!context) return;
+    // dispose 是异步：阻塞 quit 等待 MCP server / 所有 session 干净关闭
+    event.preventDefault();
+    const ctx = context;
+    context = null;
+    ctx
+      .dispose()
+      .catch(() => undefined)
+      .finally(() => app.quit());
+  });
+
+  app.on('activate', () => {
+    // macOS 习惯：Dock 图标点击时若无窗口则重建一个
+    if (!mainWindow) {
+      mainWindow = createMainWindow();
+      mainWindow.on('closed', () => {
+        mainWindow = null;
+      });
+    }
+  });
+}
