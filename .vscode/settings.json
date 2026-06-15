@@ -7,10 +7,9 @@
         "name": "$(rocket) 编译并启动 LinkTerm",
         "tooltip": "准备环境，按需编译并启动 LinkTerm Electron 应用",
         "color": "#f59e0b",
-        "command": "python scripts/setup_env.py --install --start",
-        "cwd": "${workspaceFolder}",
-        "singleInstance": true,
-        "focus": true,
+        "command": "workbench.action.tasks.runTask",
+        "args": ["启动 LinkTerm"],
+        "useVsCodeApi": true,
         "saveAll": true
       }
     ]
