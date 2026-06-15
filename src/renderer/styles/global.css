@@ -1,1 +1,11 @@
 @import 'tailwindcss';
+
+.xterm .xterm-screen,
+.xterm .xterm-rows,
+.xterm .xterm-rows > div,
+.xterm .xterm-viewport,
+.xterm .xterm-helpers,
+.xterm .xterm-helper-textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}

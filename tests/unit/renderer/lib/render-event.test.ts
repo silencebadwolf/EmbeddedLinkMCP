@@ -57,7 +57,7 @@ describe('decodeBase64', () => {
 });
 
 describe('renderEventToXterm', () => {
-  it('renders human data with cyan [H] prefix', () => {
+  it('does not render human data in UI to avoid duplicate local echo', () => {
     const term = makeWriteStub();
     const state = createRenderState();
     const event: SerializedTranscriptEvent = {
@@ -68,11 +68,7 @@ describe('renderEventToXterm', () => {
       dataBase64: b64('hello'),
     };
     renderEventToXterm({ write: term.write }, event, state, SID);
-    const out = term.calls().join('');
-    expect(out).toContain('[H]');
-    expect(out).toContain('hello');
-    // 青色 ANSI
-    expect(out).toContain('\x1b[36m');
+    expect(term.calls()).toEqual([]);
   });
 
   it('renders ai data with purple [A] prefix', () => {
@@ -205,66 +201,25 @@ describe('renderEventToXterm', () => {
 
   // === Phase 6 评审 H1：跨事件行状态 ===
 
-  it('H1: two consecutive non-newline-terminated human chunks share one [H] prefix', () => {
+  it('H1: two consecutive non-newline-terminated ai chunks share one [A] prefix', () => {
     const term = makeWriteStub();
     const state = createRenderState();
-    const evHuman = (text: string, seq: number): SerializedTranscriptEvent => ({
+    const evAi = (text: string, seq: number): SerializedTranscriptEvent => ({
       type: 'data',
-      origin: 'human',
+      origin: 'ai',
       sequence: seq,
       timestamp: 0,
       dataBase64: b64(text),
     });
-    renderEventToXterm({ write: term.write }, evHuman('foo', 1), state, SID);
-    renderEventToXterm({ write: term.write }, evHuman('bar', 2), state, SID);
+    renderEventToXterm({ write: term.write }, evAi('foo', 1), state, SID);
+    renderEventToXterm({ write: term.write }, evAi('bar', 2), state, SID);
     const out = term.calls().join('');
-    const matches = out.match(/\[H\]/g);
+    const matches = out.match(/\[A\]/g);
     expect(matches?.length).toBe(1);
     expect(out).toContain('foobar');
   });
 
   it('H1: switching origin mid-line inserts \\r\\n before new prefix', () => {
-    const term = makeWriteStub();
-    const state = createRenderState();
-    renderEventToXterm(
-      { write: term.write },
-      { type: 'data', origin: 'human', sequence: 1, timestamp: 0, dataBase64: b64('hi') },
-      state,
-      SID,
-    );
-    renderEventToXterm(
-      { write: term.write },
-      { type: 'data', origin: 'ai', sequence: 2, timestamp: 0, dataBase64: b64('yo') },
-      state,
-      SID,
-    );
-    const out = term.calls().join('');
-    // 期望：[H] hi\r\n[A] yo
-    expect(out).toMatch(/\[H\][^\n]*hi\r\n.*\[A\][^\n]*yo/);
-  });
-
-  it('H1: chunk ending with \\n returns to line start (next same-origin chunk gets prefix)', () => {
-    const term = makeWriteStub();
-    const state = createRenderState();
-    renderEventToXterm(
-      { write: term.write },
-      { type: 'data', origin: 'human', sequence: 1, timestamp: 0, dataBase64: b64('foo\n') },
-      state,
-      SID,
-    );
-    renderEventToXterm(
-      { write: term.write },
-      { type: 'data', origin: 'human', sequence: 2, timestamp: 0, dataBase64: b64('bar') },
-      state,
-      SID,
-    );
-    const out = term.calls().join('');
-    const matches = out.match(/\[H\]/g);
-    // foo 自己一段、bar 因前一段以 \n 结尾回到行首，再次注入前缀 → 共 2 个
-    expect(matches?.length).toBe(2);
-  });
-
-  it('H1: device origin (no prefix) does not break subsequent origin switch newline', () => {
     const term = makeWriteStub();
     const state = createRenderState();
     renderEventToXterm(
@@ -275,13 +230,72 @@ describe('renderEventToXterm', () => {
     );
     renderEventToXterm(
       { write: term.write },
-      { type: 'data', origin: 'human', sequence: 2, timestamp: 0, dataBase64: b64('hi') },
+      { type: 'data', origin: 'ai', sequence: 2, timestamp: 0, dataBase64: b64('yo') },
       state,
       SID,
     );
     const out = term.calls().join('');
-    // device 行未以 \n 结尾 → 切到 human 时应补 \r\n + [H]
-    expect(out).toMatch(/raw\r\n.*\[H\][^\n]*hi/);
+    expect(out).toMatch(/raw\r\n.*\[A\][^\n]*yo/);
+  });
+
+  it('H1: chunk ending with \\n returns to line start (next same-origin chunk gets prefix)', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'ai', sequence: 1, timestamp: 0, dataBase64: b64('foo\n') },
+      state,
+      SID,
+    );
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'ai', sequence: 2, timestamp: 0, dataBase64: b64('bar') },
+      state,
+      SID,
+    );
+    const out = term.calls().join('');
+    const matches = out.match(/\[A\]/g);
+    expect(matches?.length).toBe(2);
+  });
+
+  it('keeps device prompt and echo contiguous when human input is hidden', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'device', sequence: 1, timestamp: 0, dataBase64: b64('msh />') },
+      state,
+      SID,
+    );
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'human', sequence: 2, timestamp: 0, dataBase64: b64('l') },
+      state,
+      SID,
+    );
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'human', sequence: 3, timestamp: 0, dataBase64: b64('s') },
+      state,
+      SID,
+    );
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'human', sequence: 4, timestamp: 0, dataBase64: b64('\r') },
+      state,
+      SID,
+    );
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'device', sequence: 5, timestamp: 0, dataBase64: b64('ls\r\n') },
+      state,
+      SID,
+    );
+    const out = term.calls().join('');
+    expect(out).toBe('msh />ls\r\n');
+    expect(out).not.toContain('[H]');
+    expect(out).not.toContain('ll');
+    expect(out).not.toContain('ss');
   });
 
   // === Phase 6 评审 M1：UTF-8 跨 chunk 流式解码 ===
@@ -372,7 +386,7 @@ describe('renderEventToXterm', () => {
     const state = createRenderState();
     renderEventToXterm(
       { write: term.write },
-      { type: 'data', origin: 'human', sequence: 1, timestamp: 0, dataBase64: b64('hi') },
+      { type: 'data', origin: 'ai', sequence: 1, timestamp: 0, dataBase64: b64('hi') },
       state,
       SID,
     );

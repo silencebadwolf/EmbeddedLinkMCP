@@ -15,6 +15,7 @@ import type { SessionId } from '../../shared/types.js';
 import { useTranscript } from '../hooks/useTranscript.js';
 import { useAppStore } from '../store/app-store.js';
 import { getLinkterm } from '../lib/linkterm-bridge.js';
+import { installTerminalCopyShortcut } from '../lib/terminal-clipboard.js';
 
 /** TerminalView props。 */
 export interface TerminalViewProps {
@@ -67,6 +68,7 @@ export function TerminalView({ sessionId }: TerminalViewProps): React.ReactEleme
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(container);
+    installTerminalCopyShortcut(term);
 
     const state: {
       term: Terminal;
