@@ -5,13 +5,12 @@
  * 所有逻辑只在本文件实现；TerminalView 仅负责调度。
  *
  * Origin 颜色映射（行首前缀）：
- * - A（AI）   → 紫色 `\x1b[35m`
  * - S（System）→ 灰色 `\x1b[90m`
  * - D（Device）→ 默认色，不加前缀（保留终端原貌，避免 device chunk 频繁换行污染）
- * - Human data → 不渲染到 UI（输入仍写入 transcript 供 MCP 取证；UI 等待设备/PTY 回显，避免本地重复回显）
+ * - Human/AI data → 不渲染到 UI（写入仍进 transcript 供 MCP 取证；UI 等待设备/PTY 回显，避免本地重复回显）
  *
- * Phase 6 评审 H1：行级前缀依赖跨事件的"行首/行内"状态。两次 origin='ai' 的不带 `\n`
- * 数据本来不应再注入第二次 `[A]`；而 origin 跨切换时（Device→AI）需要先补 `\r\n` 再插入前缀。
+ * Phase 6 评审 H1：行级前缀依赖跨事件的“行首/行内”状态。两次带前缀 origin（如 system）的不带 `\n`
+ * 数据本来不应再注入第二次前缀；而 origin 跨切换时（Device→System）需要先补 `\r\n` 再插入前缀。
  * 这要求渲染器持有一份 per-session 的行状态 —— 由调用方（hook）维护并传入。
  *
  * Phase 6 评审 M1：UTF-8 多字节字符可能跨 chunk 边界（例如 `中`=0xE4 0xB8 0xAD 三字节，
@@ -103,9 +102,8 @@ export function decodeBase64(base64: string): Uint8Array {
   return out;
 }
 
-/** 行首前缀颜色映射；device 不加前缀。 */
+/** 行首前缀颜色映射；device/outgoing data 不加前缀。 */
 const ORIGIN_PREFIX: Readonly<Record<string, string>> = {
-  ai: '\x1b[35m[A]\x1b[0m ',
   system: '\x1b[90m[S]\x1b[0m ',
 };
 
@@ -211,8 +209,8 @@ export function renderEventToXterm(
   switch (event.type) {
     case 'data': {
       if (!event.dataBase64) return;
-      if (event.origin === 'human') {
-        // UI 不本地回显 human 输入；等待设备/PTY 自己 echo，避免串口终端出现 [H] 与重复字符。
+      if (event.origin === 'human' || event.origin === 'ai') {
+        // UI 不本地回显 outgoing 输入；等待设备/PTY 自己 echo，避免串口终端出现 [A] 与重复命令。
         return;
       }
       const bytes = decodeBase64(event.dataBase64);

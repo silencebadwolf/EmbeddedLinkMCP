@@ -71,7 +71,7 @@ describe('renderEventToXterm', () => {
     expect(term.calls()).toEqual([]);
   });
 
-  it('renders ai data with purple [A] prefix', () => {
+  it('does not render ai data in UI to avoid duplicate device echo', () => {
     const term = makeWriteStub();
     const state = createRenderState();
     renderEventToXterm(
@@ -81,12 +81,12 @@ describe('renderEventToXterm', () => {
         origin: 'ai',
         sequence: 1,
         timestamp: 0,
-        dataBase64: b64('exec'),
+        dataBase64: b64('help\r\n'),
       },
       state,
       SID,
     );
-    expect(term.calls().join('')).toContain('\x1b[35m[A]');
+    expect(term.calls()).toEqual([]);
   });
 
   it('does NOT prefix device data (raw passthrough)', () => {
@@ -178,14 +178,14 @@ describe('renderEventToXterm', () => {
     expect(term.calls()).toEqual([]);
   });
 
-  it('applies prefix to each line of multi-line chunk', () => {
+  it('applies system prefix to each line of multi-line chunk', () => {
     const term = makeWriteStub();
     const state = createRenderState();
     renderEventToXterm(
       { write: term.write },
       {
         type: 'data',
-        origin: 'ai',
+        origin: 'system',
         sequence: 1,
         timestamp: 0,
         dataBase64: b64('line1\nline2'),
@@ -194,32 +194,31 @@ describe('renderEventToXterm', () => {
       SID,
     );
     const out = term.calls().join('');
-    // 两行各自有 [A] 前缀
-    const matches = out.match(/\[A\]/g);
+    const matches = out.match(/\[S\]/g);
     expect(matches?.length).toBe(2);
   });
 
   // === Phase 6 评审 H1：跨事件行状态 ===
 
-  it('H1: two consecutive non-newline-terminated ai chunks share one [A] prefix', () => {
+  it('H1: two consecutive non-newline-terminated system chunks share one [S] prefix', () => {
     const term = makeWriteStub();
     const state = createRenderState();
-    const evAi = (text: string, seq: number): SerializedTranscriptEvent => ({
+    const evSystem = (text: string, seq: number): SerializedTranscriptEvent => ({
       type: 'data',
-      origin: 'ai',
+      origin: 'system',
       sequence: seq,
       timestamp: 0,
       dataBase64: b64(text),
     });
-    renderEventToXterm({ write: term.write }, evAi('foo', 1), state, SID);
-    renderEventToXterm({ write: term.write }, evAi('bar', 2), state, SID);
+    renderEventToXterm({ write: term.write }, evSystem('foo', 1), state, SID);
+    renderEventToXterm({ write: term.write }, evSystem('bar', 2), state, SID);
     const out = term.calls().join('');
-    const matches = out.match(/\[A\]/g);
+    const matches = out.match(/\[S\]/g);
     expect(matches?.length).toBe(1);
     expect(out).toContain('foobar');
   });
 
-  it('H1: switching origin mid-line inserts \\r\\n before new prefix', () => {
+  it('H1: switching origin mid-line inserts \r\n before system prefix', () => {
     const term = makeWriteStub();
     const state = createRenderState();
     renderEventToXterm(
@@ -230,31 +229,31 @@ describe('renderEventToXterm', () => {
     );
     renderEventToXterm(
       { write: term.write },
-      { type: 'data', origin: 'ai', sequence: 2, timestamp: 0, dataBase64: b64('yo') },
+      { type: 'data', origin: 'system', sequence: 2, timestamp: 0, dataBase64: b64('yo') },
       state,
       SID,
     );
     const out = term.calls().join('');
-    expect(out).toMatch(/raw\r\n.*\[A\][^\n]*yo/);
+    expect(out).toMatch(/raw\r\n.*\[S\][^\n]*yo/);
   });
 
-  it('H1: chunk ending with \\n returns to line start (next same-origin chunk gets prefix)', () => {
+  it('H1: system chunk ending with \n returns to line start (next same-origin chunk gets prefix)', () => {
     const term = makeWriteStub();
     const state = createRenderState();
     renderEventToXterm(
       { write: term.write },
-      { type: 'data', origin: 'ai', sequence: 1, timestamp: 0, dataBase64: b64('foo\n') },
+      { type: 'data', origin: 'system', sequence: 1, timestamp: 0, dataBase64: b64('foo\n') },
       state,
       SID,
     );
     renderEventToXterm(
       { write: term.write },
-      { type: 'data', origin: 'ai', sequence: 2, timestamp: 0, dataBase64: b64('bar') },
+      { type: 'data', origin: 'system', sequence: 2, timestamp: 0, dataBase64: b64('bar') },
       state,
       SID,
     );
     const out = term.calls().join('');
-    const matches = out.match(/\[A\]/g);
+    const matches = out.match(/\[S\]/g);
     expect(matches?.length).toBe(2);
   });
 
@@ -296,6 +295,33 @@ describe('renderEventToXterm', () => {
     expect(out).not.toContain('[H]');
     expect(out).not.toContain('ll');
     expect(out).not.toContain('ss');
+  });
+
+  it('keeps device prompt and echo contiguous when ai input is hidden', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'device', sequence: 1, timestamp: 0, dataBase64: b64('msh />') },
+      state,
+      SID,
+    );
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'ai', sequence: 2, timestamp: 0, dataBase64: b64('help\r\n') },
+      state,
+      SID,
+    );
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'device', sequence: 3, timestamp: 0, dataBase64: b64('help\r\nRT-Thread shell commands:\r\nmsh />') },
+      state,
+      SID,
+    );
+    const out = term.calls().join('');
+    expect(out).toBe('msh />help\r\nRT-Thread shell commands:\r\nmsh />');
+    expect(out).not.toContain('[A]');
+    expect(out.match(/help/g)?.length).toBe(1);
   });
 
   // === Phase 6 评审 M1：UTF-8 跨 chunk 流式解码 ===
@@ -386,7 +412,7 @@ describe('renderEventToXterm', () => {
     const state = createRenderState();
     renderEventToXterm(
       { write: term.write },
-      { type: 'data', origin: 'ai', sequence: 1, timestamp: 0, dataBase64: b64('hi') },
+      { type: 'data', origin: 'device', sequence: 1, timestamp: 0, dataBase64: b64('hi') },
       state,
       SID,
     );

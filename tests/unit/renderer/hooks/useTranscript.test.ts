@@ -65,13 +65,12 @@ describe('useTranscript', () => {
     expect(mock.spies.session.read).not.toHaveBeenCalled();
   });
 
-  it('renders streamed events to terminal', async () => {
+  it('does not render outgoing ai events but renders device events', async () => {
     const term = fakeTerm();
     renderHook(() => useTranscript('sess_1', term));
     // wait for subscribe to happen so onEvent listener is registered
     await waitFor(() => expect(mock.spies.session.subscribe).toHaveBeenCalled());
 
-    const b64 = btoa('hi');
     mock.emitTranscript({
       sessionId: 'sess_1',
       event: {
@@ -79,10 +78,22 @@ describe('useTranscript', () => {
         origin: 'ai',
         sequence: 1,
         timestamp: 0,
-        dataBase64: b64,
+        dataBase64: btoa('hi'),
       },
     });
-    expect(term.writes.join('')).toContain('[A]');
+    expect(term.writes.join('')).toBe('');
+
+    mock.emitTranscript({
+      sessionId: 'sess_1',
+      event: {
+        type: 'data',
+        origin: 'device',
+        sequence: 2,
+        timestamp: 0,
+        dataBase64: btoa('hi'),
+      },
+    });
+    expect(term.writes.join('')).not.toContain('[A]');
     expect(term.writes.join('')).toContain('hi');
   });
 
