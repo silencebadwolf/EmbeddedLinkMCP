@@ -34,6 +34,30 @@
         "panel": "dedicated",
         "clear": true
       }
+    },
+    {
+      "label": "打包 LinkTerm",
+      "type": "process",
+      "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "python scripts/setup_env.py --install --build; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm run dist; exit $LASTEXITCODE"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "Path": "${env:Path};C:\\Windows\\System32\\WindowsPowerShell\\v1.0"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     }
   ]
 }

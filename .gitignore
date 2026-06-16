@@ -4,6 +4,8 @@ release/
 out/
 *.js.map
 *.d.ts.map
+*.ldtmp
+*.ldenc
 
 # IDE
 .vscode/*
@@ -30,5 +32,6 @@ pnpm-debug.log*
 .claude/
 
 # Python
+.venv/
 __pycache__/
 *.py[cod]

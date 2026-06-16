@@ -11,6 +11,15 @@
         "args": ["启动 LinkTerm"],
         "useVsCodeApi": true,
         "saveAll": true
+      },
+      {
+        "name": "$(package) 打包 LinkTerm",
+        "tooltip": "编译并生成 LinkTerm Windows 安装包/便携包到 release 目录",
+        "color": "#22c55e",
+        "command": "workbench.action.tasks.runTask",
+        "args": ["打包 LinkTerm"],
+        "useVsCodeApi": true,
+        "saveAll": true
       }
     ]
   }
