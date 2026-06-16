@@ -241,9 +241,19 @@ function launchConfigMatches(
     current.command === expected.command &&
     JSON.stringify(current.args ?? []) === JSON.stringify(expected.args) &&
     isPlainObject(current.env) &&
-    expected.env.LINKTERM_MCP_STDIO === current.env.LINKTERM_MCP_STDIO &&
-    expected.env.LINKTERM_FORCE_DIST === current.env.LINKTERM_FORCE_DIST;
+    envContainsExpected(current.env, expected.env);
   return configKind === 'vscode-mcp-json' ? baseMatches && current.type === 'stdio' : baseMatches;
+}
+
+/**
+ * Check whether the current launch environment contains every LinkTerm-managed variable.
+ *
+ * @param current Environment object from the external agent config.
+ * @param expected LinkTerm-managed environment variables.
+ * @returns True when all expected keys and values are present.
+ */
+function envContainsExpected(current: JsonObject, expected: Record<string, string>): boolean {
+  return Object.entries(expected).every(([key, value]) => current[key] === value);
 }
 
 function isNotFound(err: unknown): boolean {

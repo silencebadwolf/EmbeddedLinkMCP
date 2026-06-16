@@ -1,10 +1,10 @@
-import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { BrowserWindow, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import type { SessionManager } from '../../core/session/session-manager.js';
 import type { TranscriptEvent } from '../../core/transcript/types.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import { WriteQueueFullError } from '../../core/write-queue/types.js';
 import { SessionNotOpenError, SessionNotFoundError } from '../../core/session/types.js';
-import type { SessionId, SessionState } from '../../shared/types.js';
+import type { SessionId, SessionLifecycleEvent, SessionState, SessionSummary } from '../../shared/types.js';
 import {
   serializeTranscriptEvent,
   type SerializedTranscriptEvent,
@@ -81,26 +81,41 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
 
   const subscriberIdOf = (wc: WebContents): string => `wc:${wc.id}`;
 
+  /** 广播会话生命周期事件；没有监听器的窗口会自动忽略该 channel。 */
+  const broadcastSessionLifecycle = (event: SessionLifecycleEvent): void => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      sendToWebContents(win.webContents, IPC_CHANNELS.SESSION_LIFECYCLE, event);
+    }
+  };
+
   const onSessionEvent = (sessionId: SessionId, event: TranscriptEvent): void => {
+    if (event.type === 'state') {
+      const summary = sessionManager.summaryOf(sessionId);
+      if (summary) broadcastSessionLifecycle({ type: 'stateChanged', session: summary });
+    }
     const serialized = serializeTranscriptEvent(event);
     for (const wc of subscribers.values()) {
-      if (!wc.isDestroyed()) {
-        wc.send(IPC_CHANNELS.TRANSCRIPT_EVENT, { sessionId, event: serialized });
-      }
+      sendToWebContents(wc, IPC_CHANNELS.TRANSCRIPT_EVENT, { sessionId, event: serialized });
     }
   };
   sessionManager.on('session:event', onSessionEvent);
 
+  const onSessionCreated = (sessionId: SessionId): void => {
+    const summary = sessionManager.summaryOf(sessionId);
+    if (!summary) return;
+    broadcastSessionLifecycle({ type: 'created', session: summary });
+  };
+  sessionManager.on('session:created', onSessionCreated);
+
   const onSessionDestroyed = (sessionId: SessionId): void => {
+    broadcastSessionLifecycle({ type: 'destroyed', sessionId });
     // session 被销毁时也广播一条系统通知，让渲染端更新 UI；用 transcript:event 通道复用
     for (const wc of subscribers.values()) {
-      if (!wc.isDestroyed()) {
-        wc.send(IPC_CHANNELS.TRANSCRIPT_EVENT, {
-          sessionId,
-          event: null,
-          destroyed: true,
-        });
-      }
+      sendToWebContents(wc, IPC_CHANNELS.TRANSCRIPT_EVENT, {
+        sessionId,
+        event: null,
+        destroyed: true,
+      });
     }
   };
   sessionManager.on('session:destroyed', onSessionDestroyed);
@@ -178,8 +193,8 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
 
   ipcMain.handle(
     IPC_CHANNELS.SESSION_LIST,
-    async (): Promise<PreloadResult<{ sessionIds: ReadonlyArray<SessionId> }>> =>
-      wrap(async () => ({ sessionIds: sessionManager.list() })),
+    async (): Promise<PreloadResult<{ sessions: ReadonlyArray<SessionSummary> }>> =>
+      wrap(async () => ({ sessions: sessionManager.listSummaries() })),
   );
 
   ipcMain.handle(
@@ -276,9 +291,20 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
     ipcMain.removeHandler(IPC_CHANNELS.SESSION_DESTROY);
     ipcMain.removeHandler(IPC_CHANNELS.TRANSCRIPT_SUBSCRIBE);
     sessionManager.off('session:event', onSessionEvent);
+    sessionManager.off('session:created', onSessionCreated);
     sessionManager.off('session:destroyed', onSessionDestroyed);
     subscribers.clear();
   };
+}
+
+/** Safely send an IPC event to a webContents that may be destroyed between checks. */
+function sendToWebContents(wc: WebContents, channel: string, payload: unknown): void {
+  if (wc.isDestroyed()) return;
+  try {
+    wc.send(channel, payload);
+  } catch {
+    // Window was destroyed between isDestroyed() and send(); skip like ui-bridge.
+  }
 }
 
 /** 序列化 TranscriptEvent 给 IPC：data 改为 base64 字符串，避免 Buffer 跨 worker 复制。 */

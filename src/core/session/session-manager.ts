@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type { Origin, SessionId } from '../../shared/types.js';
+import type { SessionMetadata, SessionSummary } from '../../shared/types.js';
 import type { ReadResult, SequenceCursor, TranscriptEvent } from '../transcript/types.js';
 import type { ISession, SessionWriteOptions } from './types.js';
 import { SessionNotFoundError } from './types.js';
@@ -19,6 +20,11 @@ export type SessionFactory = (id: SessionId) => ISession;
  * 不关心字符串内容。
  */
 export type SubscriberId = string;
+
+/** 会话元信息默认值。 */
+const DEFAULT_SESSION_METADATA: SessionMetadata = {
+  connectionType: 'local-shell',
+};
 
 /**
  * `SessionManager.waitFor()` 的判定结果。
@@ -61,6 +67,8 @@ export interface WaitForOptions {
  */
 export class SessionManager extends EventEmitter {
   readonly #sessions: Map<SessionId, ISession> = new Map();
+  readonly #sessionMetadata: Map<SessionId, SessionMetadata> = new Map();
+  readonly #visibleSessions: Set<SessionId> = new Set();
   readonly #unsubscribers: Map<SessionId, () => void> = new Map();
   /**
    * 每个 subscriber 持有的 (sessionId → cursor) 映射。
@@ -71,6 +79,30 @@ export class SessionManager extends EventEmitter {
   /** 当前活跃的 session id 列表（含 idle/open/errored）。 */
   list(): SessionId[] {
     return Array.from(this.#sessions.keys());
+  }
+
+  /**
+   * 查询单个会话摘要。
+   *
+   * @param id 会话 id.
+   * @returns 会话存在时返回 UI/MCP 可展示的非敏感摘要，否则返回 null.
+   */
+  summaryOf(id: SessionId): SessionSummary | null {
+    if (!this.#visibleSessions.has(id)) return null;
+    const session = this.#sessions.get(id);
+    if (!session) return null;
+    return this.#buildSummary(id, session);
+  }
+
+  /**
+   * 列出当前会话的 UI 水合摘要。
+   *
+   * @returns 每个活跃会话的 id、状态和非敏感显示元信息。
+   */
+  listSummaries(): SessionSummary[] {
+    return Array.from(this.#visibleSessions)
+      .map((id) => this.summaryOf(id))
+      .filter((summary): summary is SessionSummary => summary !== null);
   }
 
   /**
@@ -100,8 +132,9 @@ export class SessionManager extends EventEmitter {
    * @returns 已注册并完成事件桥接的 ISession 实例
    * @throws 当 factory 返回的 session.id 与生成的 id 不一致，或同一 id 重复注册时
    */
-  create(factory: SessionFactory): ISession {
-    const session = this.#registerNew(factory);
+  create(factory: SessionFactory, metadata?: SessionMetadata): ISession {
+    const session = this.#registerNew(factory, metadata);
+    this.#visibleSessions.add(session.id);
     this.emit('session:created', session.id);
     return session;
   }
@@ -118,8 +151,8 @@ export class SessionManager extends EventEmitter {
    * @returns 已 open 的 ISession
    * @throws factory 校验失败 / open 抛错时透传
    */
-  async createAndOpen(factory: SessionFactory): Promise<ISession> {
-    const session = this.#registerNew(factory);
+  async createAndOpen(factory: SessionFactory, metadata?: SessionMetadata): Promise<ISession> {
+    const session = this.#registerNew(factory, metadata);
     try {
       await session.open();
     } catch (err) {
@@ -127,14 +160,17 @@ export class SessionManager extends EventEmitter {
       this.#unsubscribers.get(session.id)?.();
       this.#unsubscribers.delete(session.id);
       this.#sessions.delete(session.id);
+      this.#sessionMetadata.delete(session.id);
+      this.#visibleSessions.delete(session.id);
       throw err;
     }
+    this.#visibleSessions.add(session.id);
     this.emit('session:created', session.id);
     return session;
   }
 
   /** 内部：分配 id、订阅事件、入表，但**不**广播 'session:created'。供 create / createAndOpen 共用。 */
-  #registerNew(factory: SessionFactory): ISession {
+  #registerNew(factory: SessionFactory, metadata?: SessionMetadata): ISession {
     const id = `sess_${randomUUID()}`;
     const session = factory(id);
     if (session.id !== id) {
@@ -146,12 +182,17 @@ export class SessionManager extends EventEmitter {
       throw new Error(`Duplicate session id: ${id}`);
     }
     this.#sessions.set(id, session);
+    this.#sessionMetadata.set(id, sanitizeSessionMetadata(metadata));
 
     const onEvent = (event: TranscriptEvent): void => {
-      this.emit('session:event', id, event);
+      if (this.#visibleSessions.has(id)) {
+        this.emit('session:event', id, event);
+      }
     };
     const onState = (state: ISession['state']): void => {
-      this.emit('session:state', id, state);
+      if (this.#visibleSessions.has(id)) {
+        this.emit('session:state', id, state);
+      }
     };
     session.on('event', onEvent);
     session.on('state', onState);
@@ -179,6 +220,8 @@ export class SessionManager extends EventEmitter {
       this.#unsubscribers.get(id)?.();
       this.#unsubscribers.delete(id);
       this.#sessions.delete(id);
+      this.#sessionMetadata.delete(id);
+      this.#visibleSessions.delete(id);
       // 清掉所有订阅者持有的该 session cursor，避免下次 destroyed-then-recreated 时
       // 残留旧 sequence 让 readForSubscriber 误以为"已读到 N"
       for (const cursors of this.#subscriberCursors.values()) {
@@ -408,4 +451,42 @@ export class SessionManager extends EventEmitter {
     if (!session) throw new SessionNotFoundError(id);
     return session;
   }
+
+  /** 内部：按当前状态和元信息构造非敏感会话摘要。 */
+  #buildSummary(id: SessionId, session: ISession): SessionSummary {
+    const meta = this.#sessionMetadata.get(id) ?? DEFAULT_SESSION_METADATA;
+    return {
+      sessionId: id,
+      state: session.state,
+      connectionType: meta.connectionType,
+      label: meta.label ?? defaultSessionLabel(id, meta.connectionType),
+      ...(meta.createdBy ? { createdBy: meta.createdBy } : {}),
+    };
+  }
+}
+
+/**
+ * 清理并补全 SessionManager 保存的非敏感会话元信息。
+ *
+ * @param metadata 创建入口传入的元信息。
+ * @returns 可安全跨 IPC/MCP 边界展示的元信息。
+ */
+function sanitizeSessionMetadata(metadata: SessionMetadata | undefined): SessionMetadata {
+  return {
+    connectionType: metadata?.connectionType ?? DEFAULT_SESSION_METADATA.connectionType,
+    ...(metadata?.label ? { label: metadata.label } : {}),
+    ...(metadata?.createdBy ? { createdBy: metadata.createdBy } : {}),
+  };
+}
+
+/**
+ * 生成没有显式 label 时的稳定 UI 默认名。
+ *
+ * @param id 会话 id.
+ * @param connectionType 连接类型.
+ * @returns 面向 tab 的简短显示名.
+ */
+function defaultSessionLabel(id: SessionId, connectionType: SessionMetadata['connectionType']): string {
+  const suffix = id.slice(-4);
+  return `${connectionType}:${suffix}`;
 }

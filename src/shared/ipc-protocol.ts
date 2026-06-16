@@ -18,6 +18,7 @@ export const IPC_CHANNELS = {
   SESSION_STATUS: 'session:status',
   SESSION_CLEAR: 'session:clear',
   SESSION_RESIZE: 'session:resize',
+  SESSION_LIFECYCLE: 'session:lifecycle',
   SERIAL_LIST_PORTS: 'serial:listPorts',
   SERIAL_PORT_CHANGED: 'serial:portChanged',
   /**

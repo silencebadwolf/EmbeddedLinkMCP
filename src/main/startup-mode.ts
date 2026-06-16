@@ -32,5 +32,5 @@ export function shouldQuitForMissingSingleInstanceLock(state: StartupLockState):
  * @returns True when this process owns the desktop single-instance role.
  */
 export function shouldCreateMainWindow(state: StartupLockState): boolean {
-  return state.hasSingleInstanceLock;
+  return state.hasSingleInstanceLock && !state.isMcpStdioMode;
 }

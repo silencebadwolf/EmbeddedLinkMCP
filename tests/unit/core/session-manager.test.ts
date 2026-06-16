@@ -286,4 +286,79 @@ describe('SessionManager', () => {
     expect(created).not.toHaveBeenCalled();
     expect(destroyed).not.toHaveBeenCalled();
   });
+
+  it('createAndOpen() suppresses session:event before a successful open', async () => {
+    const mgr = new SessionManager();
+    const events = vi.fn();
+    mgr.on('session:event', events);
+
+    await expect(
+      mgr.createAndOpen(
+        (id) => new TestSession(id, new MockTransport({ failOnOpen: new Error('no port') })),
+      ),
+    ).rejects.toThrow(/no port/);
+
+    expect(mgr.list()).toEqual([]);
+    expect(events).not.toHaveBeenCalled();
+  });
+
+  it('does not expose createAndOpen() sessions before open succeeds', async () => {
+    const mgr = new SessionManager();
+    let resolveOpen!: () => void;
+    const openGate = new Promise<void>((resolve) => {
+      resolveOpen = resolve;
+    });
+    const transport = new MockTransport();
+    transport.open = async (): Promise<void> => {
+      await openGate;
+    };
+
+    const pending = mgr.createAndOpen((id) => new TestSession(id, transport), {
+      connectionType: 'serial',
+      label: 'Pending COM',
+    });
+
+    expect(mgr.listSummaries()).toEqual([]);
+
+    resolveOpen();
+    const session = await pending;
+    expect(mgr.listSummaries()).toEqual([
+      {
+        sessionId: session.id,
+        state: 'open',
+        connectionType: 'serial',
+        label: 'Pending COM',
+      },
+    ]);
+  });
+});
+
+describe('SessionManager summaries', () => {
+  it('exposes UI hydration metadata for manager-owned sessions', () => {
+    const mgr = new SessionManager();
+    const session = mgr.create((id) => new TestSession(id, new MockTransport()), {
+      connectionType: 'serial',
+      label: 'COM6',
+    });
+
+    const summaries = (
+      mgr as unknown as {
+        listSummaries(): ReadonlyArray<{
+          sessionId: SessionId;
+          state: string;
+          connectionType: string;
+          label: string;
+        }>;
+      }
+    ).listSummaries();
+
+    expect(summaries).toEqual([
+      {
+        sessionId: session.id,
+        state: 'idle',
+        connectionType: 'serial',
+        label: 'COM6',
+      },
+    ]);
+  });
 });

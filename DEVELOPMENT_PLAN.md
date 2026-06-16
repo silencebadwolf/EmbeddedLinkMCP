@@ -32,7 +32,7 @@ LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形
 
 - **Main Process** — 拥有所有状态资源：SessionManager、TranscriptBuffer、WriteQueue、Transport 适配器、MCP Server、工作区配置、J-Link backend 抽象
 - **Renderer Process** — 薄 UI 壳：React 组件承载 xterm.js、连接对话框、i18n、IPC 绑定
-- **MCP Server** — 运行在 Main Process 内（或 fork 子进程），共享 SessionManager 实例，通过 stdio/本地 TCP 与外部 MCP Host 通信
+- **MCP Server** — 运行在 Electron Main Process 的唯一 backend runtime 内；外部 MCP Host 通过 stdio 入口启动同一 Electron runtime，若已有 owner 则 stdio proxy 转发到 authenticated localhost HTTP endpoint，共享同一个 SessionManager
 - **IPC Bridge** — Request/response 用 `ipcRenderer.invoke` / `ipcMain.handle`；流式终端数据用事件推送
 
 ### 核心抽象关系
@@ -638,7 +638,8 @@ link-terminal-demo/
 
 ### 变更记录（相对原计划）
 
-- **2026-06-15（Agent 自动接入）** — 新增产品内 Agent Integrations：Renderer 提供“Agent 集成”面板，用户显式点击安装/修复后，Main IPC 调用 Electron-free `AgentIntegrationManager` 自动检测并写入本机 Agent MCP 配置。默认支持 VS Code Copilot（`User/mcp.json` 顶层 `servers.linkterm`，写入 `type: 'stdio'`）、Claude Desktop（`claude_desktop_config.json` 顶层 `mcpServers.linkterm`）和 Cursor（`~/.cursor/mcp.json` 顶层 `mcpServers.linkterm`）；core 仍保留 VS Code 旧式 `settings.json` 字面量 `chat.mcpServers.linkterm` 兼容能力。安全决策：不静默写入；写入前备份原始文本；invalid JSON 拒绝覆盖；VS Code JSONC 注释/尾逗号兼容；按 target 串行安装并使用唯一 sidecar 路径避免同秒/并发备份覆盖；外部 Agent 启动命令使用 Electron/LinkTerm runtime 的 Node mode 直接执行 `dist/main/mcp/stdio-entry.js` 独立 stdio 入口，避免启动 Electron UI 主入口时被 VS Code/Electron Host 的 `ELECTRON_RUN_AS_NODE` 环境污染触发 `BrowserWindow` 导出错误或无响应。
+- **2026-06-15（Agent 自动接入）** — 新增产品内 Agent Integrations：Renderer 提供“Agent 集成”面板，用户显式点击安装/修复后，Main IPC 调用 Electron-free `AgentIntegrationManager` 自动检测并写入本机 Agent MCP 配置。默认支持 VS Code Copilot（`User/mcp.json` 顶层 `servers.linkterm`，写入 `type: 'stdio'`）、Claude Desktop（`claude_desktop_config.json` 顶层 `mcpServers.linkterm`）和 Cursor（`~/.cursor/mcp.json` 顶层 `mcpServers.linkterm`）；core 仍保留 VS Code 旧式 `settings.json` 字面量 `chat.mcpServers.linkterm` 兼容能力。安全决策：不静默写入；写入前备份原始文本；invalid JSON 拒绝覆盖；VS Code JSONC 注释/尾逗号兼容；按 target 串行安装并使用唯一 sidecar 路径避免同秒/并发备份覆盖；外部 Agent 启动命令已在 2026-06-15 后续架构修正中改为 Electron main runtime + `LINKTERM_MCP_STDIO=1`，由单实例锁决定作为 backend owner 或 stdio proxy 接入现有 runtime；不得再使用孤立的 `dist/main/mcp/stdio-entry.js` 作为默认 Agent 入口。
+- **2026-06-15（MCP/App 单 runtime 同步修正）** — 用户实测 MCP 控制串口后发现 App UI 看不到 MCP 创建的 session 与 AI/device transcript，根因是 Agent stdio 入口与 Electron App 各自持有独立 `SessionManager`，违背“AI 与人共享同一会话”的核心目标。本次修正：Electron main runtime 成为唯一 backend owner；App-first 时 owner 启动 authenticated localhost Streamable HTTP endpoint 并写 runtime metadata，后续 MCP stdio 进程拿不到单实例锁后读取 metadata 并作为 stdio proxy 转发到现有 runtime；AI-first 时 MCP 进程持有单实例锁但不创建窗口，用户后启动 App 通过 `second-instance` 在同一 runtime 创建窗口。`SessionManager` 新增非敏感 `SessionMetadata/SessionSummary`，IPC/preload 新增 `session:lifecycle`，renderer `useSessionHydration()` 先订阅 lifecycle 再读取 `session.list()` 快照，覆盖初始水合、MCP 后续新建、后台状态变化与销毁。安全边界：metadata 仅允许 `127.0.0.1` endpoint + bearer token + live pid；HTTP close 删除 metadata 并停止活跃 MCP request；summary 不携带 SSH 凭据。复审修正：`createAndOpen()` 成功前不再向 manager 外发 `session:event`，`listSummaries()` 只暴露 visible session，避免 open 失败或 pending open 时 UI 幽灵 tab；AI-first owner/proxy 的 stdio hook 在任何异步启动前安装，direct stdio 断开后会停止 MCP server，无 UI 窗口时退出并清理 runtime。2026-06-16 实机修正：VS Code/Electron MCP Host 会向子进程继承 `ELECTRON_RUN_AS_NODE`，直接配置 `electron.exe <appPath>` 会把 Electron main 当 Node 跑并报 `BrowserWindow` named export 错误；Agent launch config 改为 `electron.exe electron-runtime-launcher.js <metadataPath> <runtimePath> [appPath]`，launcher 先尝试在 Node-mode 进程内直连现有 HTTP runtime，metadata 不存在时再清除 `ELECTRON_RUN_AS_NODE` 并转发 stdio 启动真正 Electron runtime，避免 App-first 和 AI-first 都被宿主环境污染。验证：`pnpm run build` ✅，`pnpm run lint` ✅，`pnpm test` ✅ 59 文件 / **542 个测试通过**，`pnpm run validate:licenses` ✅ 19 个依赖清单一致。
 - **2026-06-13** — Phase 4 实施 + 复审。澄清问题落定如下决策：仅 Stdio transport（暂不做本地 TCP）；snake_case 工具名；close_session 仅关闭 transport 保留 transcript；send_and_wait 基础版仅等首条 device 输出 + timeout。
 - **2026-06-13 (修正)** — 复审发现 7 类问题并全部修复：
   1. `server.ts` 加 `stopping` Promise 防并发关闭；`start()` 失败时清空 `starting`；start 看到正在 stop 时先等待。
@@ -1187,6 +1188,8 @@ diagnostics (2): `snapshot_capture/crash_diagnose`
 - `npm run validate:licenses` 通过
 - 缺少许可证文件 → 校验失败
 - 新增依赖未更新清单 → 校验失败
+- 删依赖未删 manifest → 校验失败
+- bump 依赖未 bump manifest → 校验失败
 
 ### 相对工作量：0.5x
 
@@ -1258,6 +1261,15 @@ diagnostics (2): `snapshot_capture/crash_diagnose`
 | `pnpm run lint` | ✅ exit 0 |
 | `pnpm test` | ✅ 49 文件 / **500 个测试通过**（baseline 473 + 27 个 Phase 12 新增） |
 | `pnpm run build` | ✅ tsc -b + vite build 双侧成功（renderer chunk 622 KB） |
+| `pnpm run validate:licenses` | ✅ PASS: All 19 dependencies have valid license entries |
+
+### 后续架构修正验收（2026-06-15）
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm run build` | ✅ tsc -b + vite build 双侧成功（renderer chunk warning only） |
+| `pnpm run lint` | ✅ exit 0 |
+| `pnpm test` | ✅ 59 文件 / **542 个测试通过** |
 | `pnpm run validate:licenses` | ✅ PASS: All 19 dependencies have valid license entries |
 
 ### 相对工作量：2x（实际符合预估）

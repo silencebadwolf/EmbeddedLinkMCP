@@ -41,7 +41,7 @@ export function registerConnectionProfilesIpc(
       try {
         const input = parseSaveAndOpen(raw);
         const profile = await profileManager.save(input);
-        const session = await createAndOpenSession(sessionManager, input.config);
+        const session = await createAndOpenSession(sessionManager, input.config, input.label);
         return { success: true, data: { profile, ...session } };
       } catch (err) {
         return toIpcError(err);
@@ -55,9 +55,9 @@ export function registerConnectionProfilesIpc(
       try {
         const profileId = parseProfileId(raw);
         const config = await profileManager.openConfig(profileId);
-        const session = await createAndOpenSession(sessionManager, config);
         const profile = (await profileManager.list()).find((p) => p.id === profileId);
         if (!profile) throw new ConnectionProfileNotFoundError(profileId);
+        const session = await createAndOpenSession(sessionManager, config, profile.label);
         return { success: true, data: { profile, ...session } };
       } catch (err) {
         return toIpcError(err);

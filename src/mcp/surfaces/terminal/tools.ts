@@ -70,14 +70,11 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
 
   registerTool(server, {
     name: 'list_sessions',
-    description: 'List all active session ids and their states.',
+    description: 'List all active sessions with states and non-sensitive UI metadata.',
     sensitivity: 'read-only',
     inputSchema: listSessionsInputSchema,
     handler: (_input: ListSessionsInput): ToolHandlerResult => {
-      const sessions = sessionManager.list().map((id) => {
-        const sess = sessionManager.get(id);
-        return { sessionId: id, state: sess?.state ?? 'closed' };
-      });
+      const sessions = sessionManager.listSummaries();
       return successOk({
         evidence: {
           kind: 'terminal_output',
@@ -102,7 +99,11 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
         // input.config 的形态由 zod 强校验，等价于 SessionCreateRequestConfig；
         // 显式 cast 把匿名联合类型贴到 shared 命名类型，让 buildSession 跨入口签名一致。
         const config = input.config as unknown as SessionCreateRequestConfig;
-        session = await sessionManager.createAndOpen((id) => buildSession(id, config));
+        session = await sessionManager.createAndOpen((id) => buildSession(id, config), {
+          connectionType: config.type,
+          label: config.label,
+          createdBy: 'ai',
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         throw new ToolError(

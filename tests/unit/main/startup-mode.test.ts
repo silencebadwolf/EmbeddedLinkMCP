@@ -29,7 +29,7 @@ describe('startup mode', () => {
     ).toBe(true);
   });
 
-  it('creates a window for desktop mode or the first MCP-owned instance only', () => {
+  it('creates a window only for ordinary desktop mode', () => {
     expect(
       shouldCreateMainWindow({
         hasSingleInstanceLock: true,
@@ -41,7 +41,7 @@ describe('startup mode', () => {
         hasSingleInstanceLock: true,
         isMcpStdioMode: true,
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       shouldCreateMainWindow({
         hasSingleInstanceLock: false,

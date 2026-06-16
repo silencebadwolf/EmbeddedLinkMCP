@@ -156,3 +156,30 @@ export interface LocalShellSessionConfig extends SessionConfig {
 
 /** 三种会话配置的判别联合，IPC/MCP 接口使用此类型作为入参。 */
 export type AnySessionConfig = SerialSessionConfig | SshSessionConfig | LocalShellSessionConfig;
+
+/**
+ * 会话元信息。由创建入口在 SessionManager 注册时写入，用于 UI 从后台 runtime 水合会话列表。
+ */
+export interface SessionMetadata {
+  /** 连接类型，供 UI 选择图标/标签。 */
+  connectionType: ConnectionType;
+  /** 非敏感显示名称；不得包含密码、私钥、token 等敏感字段。 */
+  label?: string;
+  /** 创建来源；仅用于展示/审计，不参与权限判断。 */
+  createdBy?: Origin;
+}
+
+/** 后台 runtime 暴露给 UI/MCP 的会话摘要。 */
+export interface SessionSummary {
+  sessionId: SessionId;
+  state: SessionState;
+  connectionType: ConnectionType;
+  label: string;
+  createdBy?: Origin;
+}
+
+/** 后台 runtime 推送给 UI 的会话生命周期事件。 */
+export type SessionLifecycleEvent =
+  | { type: 'created'; session: SessionSummary }
+  | { type: 'stateChanged'; session: SessionSummary }
+  | { type: 'destroyed'; sessionId: SessionId };

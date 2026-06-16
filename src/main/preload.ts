@@ -27,7 +27,7 @@ import type {
   AgentIntegrationStatus,
   AgentIntegrationInstallResult,
 } from '../shared/preload-api.js';
-import type { SessionId, SessionState, SerialPortInfo } from '../shared/types.js';
+import type { SessionId, SessionLifecycleEvent, SessionState, SessionSummary, SerialPortInfo } from '../shared/types.js';
 import type { TranscriptEventEnvelope } from '../shared/transcript-ipc-types.js';
 
 /** 包一层 invoke：把 channel 字符串集中在 preload，而非散落到 hooks。 */
@@ -60,7 +60,7 @@ const api: PreloadAPI = {
     read: (req: SessionReadRequestPayload) =>
       invoke<SessionReadSuccess>(IPC_CHANNELS.SESSION_READ, req),
     clear: (req) => invoke<{ sequence: number }>(IPC_CHANNELS.SESSION_CLEAR, req),
-    list: () => invoke<{ sessionIds: ReadonlyArray<SessionId> }>(IPC_CHANNELS.SESSION_LIST),
+    list: () => invoke<{ sessions: ReadonlyArray<SessionSummary> }>(IPC_CHANNELS.SESSION_LIST),
     status: (req) =>
       invoke<{ sessionId: SessionId; state: SessionState; latestCursor: number }>(
         IPC_CHANNELS.SESSION_STATUS,
@@ -68,6 +68,8 @@ const api: PreloadAPI = {
       ),
     resize: (req) => invoke<{ resized: boolean }>(IPC_CHANNELS.SESSION_RESIZE, req),
     destroy: (req) => invoke<{ destroyed: true }>(IPC_CHANNELS.SESSION_DESTROY, req),
+    onLifecycle: (handler) =>
+      subscribe<SessionLifecycleEvent>(IPC_CHANNELS.SESSION_LIFECYCLE, handler),
     subscribe: (req) =>
       invoke<TranscriptSubscribeSuccess>(IPC_CHANNELS.TRANSCRIPT_SUBSCRIBE, req),
   },

@@ -11,6 +11,8 @@
 import type {
   SessionId,
   SessionState,
+  SessionLifecycleEvent,
+  SessionSummary,
   SerialSessionConfig,
   LocalShellSessionConfig,
   SshSessionConfig,
@@ -109,7 +111,7 @@ export interface SessionReadSuccess {
 /** transcript.subscribe 的成功负载（与 read 同构）。 */
 export type TranscriptSubscribeSuccess = SessionReadSuccess;
 
-/** session 命名空间下的 9 个方法。 */
+/** session 命名空间下的方法。 */
 export interface SessionNamespace {
   /** 创建并尝试 open；open 失败时仍返回 success=true 但 state='errored'，由 UI 决定后续动作。 */
   create(req: SessionCreateRequestPayload): Promise<PreloadResult<{ sessionId: SessionId; state: SessionState }>>;
@@ -119,14 +121,16 @@ export interface SessionNamespace {
   read(req: SessionReadRequestPayload): Promise<PreloadResult<SessionReadSuccess>>;
   /** 在 transcript 追加 clear 事件（不真正删除历史）。 */
   clear(req: { sessionId: SessionId }): Promise<PreloadResult<{ sequence: number }>>;
-  /** 列出当前所有活跃 session id。 */
-  list(): Promise<PreloadResult<{ sessionIds: ReadonlyArray<SessionId> }>>;
+  /** 列出当前所有活跃 session 摘要，供 renderer 从后台 runtime 水合 tab。 */
+  list(): Promise<PreloadResult<{ sessions: ReadonlyArray<SessionSummary> }>>;
   /** 查询 session 的当前 state 与最新 cursor。 */
   status(req: { sessionId: SessionId }): Promise<PreloadResult<{ sessionId: SessionId; state: SessionState; latestCursor: number }>>;
   /** 调整 PTY 窗口尺寸；串口 session 静默返回 resized=false。 */
   resize(req: { sessionId: SessionId; cols: number; rows: number }): Promise<PreloadResult<{ resized: boolean }>>;
   /** 关闭并销毁 session；保留 transcript 直到进程退出。 */
   destroy(req: { sessionId: SessionId }): Promise<PreloadResult<{ destroyed: true }>>;
+  /** 订阅 session 生命周期变化，供 UI 在 MCP 新建/销毁会话时同步 tab。 */
+  onLifecycle(handler: (event: SessionLifecycleEvent) => void): Unsubscribe;
   /** 订阅 session 的 transcript 增量；返回 mount-时刻的快照（events + cursor）。 */
   subscribe(req: { sessionId: SessionId }): Promise<PreloadResult<TranscriptSubscribeSuccess>>;
 }

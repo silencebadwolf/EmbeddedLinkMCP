@@ -1,7 +1,7 @@
 /**
- * 应用根组件：装配顶栏 + SessionTabBar + TerminalView + ConnectionDialog。
+ * 应用根组件：装配顶栏 + SessionTabBar + TerminalView + ConnectionDialog.
  *
- * 单一 store 模式 —— 所有共享状态都在 useAppStore。
+ * 单一 store 模式 —— 所有共享状态都在 useAppStore.
  */
 
 import * as React from 'react';
@@ -13,13 +13,15 @@ import { Button } from './components/ui/button.js';
 import { useAppStore } from './store/app-store.js';
 import { useT, type Locale } from './i18n/index.js';
 import { useUiPatchSubscription } from './hooks/useUiPatchSubscription.js';
+import { useSessionHydration } from './hooks/useSessionHydration.js';
 
 /**
- * App 根组件。
+ * App 根组件.
  */
 export function App(): React.ReactElement {
   // Phase 10：在根组件一次性挂载 MCP UI patch 订阅；卸载时随 React 自动清理。
   useUiPatchSubscription();
+  useSessionHydration();
 
   const t = useT();
   const locale = useAppStore((s) => s.locale);

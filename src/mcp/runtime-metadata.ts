@@ -1,0 +1,105 @@
+import { randomBytes } from 'node:crypto';
+import { chmod, readFile, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+const RUNTIME_METADATA_FILE = 'mcp-runtime.json';
+const RUNTIME_METADATA_SCHEMA_VERSION = 'linkterm-mcp-runtime/1.0.0';
+
+/** LinkTerm MCP HTTP runtime endpoint metadata persisted for local stdio proxy processes. */
+export interface McpRuntimeMetadata {
+  schemaVersion: typeof RUNTIME_METADATA_SCHEMA_VERSION;
+  pid: number;
+  url: string;
+  token: string;
+  startedAt: string;
+}
+
+/**
+ * Build the metadata file path under Electron userData.
+ *
+ * @param userDataDir Electron userData directory.
+ * @returns Absolute runtime metadata file path.
+ */
+export function runtimeMetadataPath(userDataDir: string): string {
+  return path.join(userDataDir, RUNTIME_METADATA_FILE);
+}
+
+/**
+ * Generate a bearer token for localhost MCP HTTP proxy authentication.
+ *
+ * @returns URL-safe random token string.
+ */
+export function createRuntimeToken(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+/**
+ * Persist MCP runtime metadata for later local stdio proxy attachment.
+ *
+ * @param filePath Metadata file path.
+ * @param metadata Runtime endpoint metadata.
+ */
+export async function writeRuntimeMetadata(
+  filePath: string,
+  metadata: Omit<McpRuntimeMetadata, 'schemaVersion' | 'startedAt'>,
+): Promise<void> {
+  const payload: McpRuntimeMetadata = {
+    schemaVersion: RUNTIME_METADATA_SCHEMA_VERSION,
+    startedAt: new Date().toISOString(),
+    ...metadata,
+  };
+  await writeFile(filePath, JSON.stringify(payload), { encoding: 'utf-8', mode: 0o600 });
+  await chmod(filePath, 0o600).catch(() => undefined);
+}
+
+/**
+ * Read and validate MCP runtime metadata.
+ *
+ * @param filePath Metadata file path.
+ * @returns Runtime metadata, or null if absent/invalid/stale.
+ */
+export async function readRuntimeMetadata(filePath: string): Promise<McpRuntimeMetadata | null> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(filePath, 'utf-8'));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const candidate = parsed as Partial<McpRuntimeMetadata>;
+  if (candidate.schemaVersion !== RUNTIME_METADATA_SCHEMA_VERSION) return null;
+  if (typeof candidate.pid !== 'number' || !Number.isInteger(candidate.pid) || candidate.pid <= 0) {
+    return null;
+  }
+  if (typeof candidate.url !== 'string' || !candidate.url.startsWith('http://127.0.0.1:')) {
+    return null;
+  }
+  if (typeof candidate.token !== 'string' || candidate.token.length < 32) return null;
+  if (typeof candidate.startedAt !== 'string') return null;
+  if (!isProcessAlive(candidate.pid)) return null;
+  return candidate as McpRuntimeMetadata;
+}
+
+/**
+ * Remove the runtime metadata file on clean shutdown.
+ *
+ * @param filePath Metadata file path.
+ */
+export async function removeRuntimeMetadata(filePath: string): Promise<void> {
+  await rm(filePath, { force: true });
+}
+
+/**
+ * Check whether a pid still exists.
+ *
+ * @param pid Process id from metadata.
+ * @returns True when the process appears alive.
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}

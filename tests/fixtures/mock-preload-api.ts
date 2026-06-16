@@ -18,13 +18,15 @@ import type {
   AgentIntegrationInstallResult,
 } from '../../src/shared/preload-api.js';
 import type { TranscriptEventEnvelope } from '../../src/shared/transcript-ipc-types.js';
-import type { SerialPortInfo } from '../../src/shared/types.js';
+import type { SerialPortInfo, SessionLifecycleEvent, SessionSummary } from '../../src/shared/types.js';
 
 /** 可观测的 mock preload API；所有方法都是 vi.fn()。 */
 export interface MockPreloadAPI {
   api: PreloadAPI;
   /** 测试可调用此函数模拟主进程推送 transcript 事件。 */
   emitTranscript(envelope: TranscriptEventEnvelope): void;
+  /** 测试可调用此函数模拟主进程推送 session 生命周期事件。 */
+  emitSessionLifecycle(event: SessionLifecycleEvent): void;
   /** 测试可调用此函数模拟串口插拔变化。 */
   emitPortChange(ports: ReadonlyArray<SerialPortInfo>): void;
   /**
@@ -70,6 +72,7 @@ const okEmpty = <T>(data: T): PreloadResult<T> => ({ success: true, data });
  */
 export function createMockPreloadAPI(): MockPreloadAPI {
   const transcriptListeners = new Set<(env: TranscriptEventEnvelope) => void>();
+  const lifecycleListeners = new Set<(event: SessionLifecycleEvent) => void>();
   const portListeners = new Set<(p: ReadonlyArray<SerialPortInfo>) => void>();
   const uiPatchListeners = new Set<(patch: UiStatePatch) => void>();
 
@@ -85,12 +88,16 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       }),
     ),
     clear: vi.fn(async () => okEmpty({ sequence: 0 })),
-    list: vi.fn(async () => okEmpty({ sessionIds: [] as string[] })),
+    list: vi.fn(async () => okEmpty<{ sessions: ReadonlyArray<SessionSummary> }>({ sessions: [] })),
     status: vi.fn(async () =>
       okEmpty({ sessionId: 'sess_test', state: 'open' as const, latestCursor: 0 }),
     ),
     resize: vi.fn(async () => okEmpty({ resized: true })),
     destroy: vi.fn(async () => okEmpty({ destroyed: true as const })),
+    onLifecycle: (handler: (event: SessionLifecycleEvent) => void): Unsubscribe => {
+      lifecycleListeners.add(handler);
+      return () => lifecycleListeners.delete(handler);
+    },
     subscribe: vi.fn(async () =>
       okEmpty<TranscriptSubscribeSuccess>({
         events: [],
@@ -195,6 +202,9 @@ export function createMockPreloadAPI(): MockPreloadAPI {
     api,
     emitTranscript: (envelope) => {
       for (const l of transcriptListeners) l(envelope);
+    },
+    emitSessionLifecycle: (event) => {
+      for (const l of lifecycleListeners) l(event);
     },
     emitPortChange: (ports) => {
       for (const l of portListeners) l(ports);

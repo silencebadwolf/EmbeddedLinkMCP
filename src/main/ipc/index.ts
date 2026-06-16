@@ -5,13 +5,15 @@ import { WorkspaceConfigManager } from '../../core/workspace/index.js';
 import { ConnectionProfileManager } from '../../core/connections/index.js';
 import {
   AgentIntegrationManager,
-  buildNodeMcpLaunchConfig,
+  buildElectronMcpLaunchConfig,
   type AgentIntegrationTarget,
   type LinkTermMcpLaunchConfig,
 } from '../../core/agent-integrations/index.js';
 import { JLinkAdapter } from '../../jlink/index.js';
 import type { IJLinkBackend } from '../../jlink/index.js';
 import { createMcpServer, type LinkTermMcpServer } from '../../mcp/index.js';
+import { startMcpHttpRuntimeServer, type McpHttpRuntimeServer } from '../../mcp/http-runtime-server.js';
+import { runtimeMetadataPath } from '../../mcp/runtime-metadata.js';
 import type { CapturableWindow } from '../../mcp/surfaces/ui/types.js';
 import { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
 import { registerSerialIpc } from './serial-ipc.js';
@@ -45,6 +47,8 @@ export interface MainProcessContext {
    */
   jlinkBackend: IJLinkBackend;
   mcpServer: LinkTermMcpServer;
+  /** 本地 HTTP MCP endpoint，供后启动的 stdio proxy 连接到同一 runtime。 */
+  mcpHttpServer: McpHttpRuntimeServer;
   /** 反注册所有 IPC handler 并停止 MCP server / 销毁所有 session；应用退出/测试 teardown 调用。 */
   dispose: () => Promise<void>;
 }
@@ -124,6 +128,19 @@ export async function registerIpcHandlers(
     getActiveWindow,
   });
 
+  const mcpHttpServer = await startMcpHttpRuntimeServer({
+    sessionManager,
+    serialDiscovery,
+    workspaceConfigManager,
+    workspaceEvidenceFn: async () => ({
+      serialPorts: await serialDiscovery.listPorts(),
+    }),
+    jlinkBackend,
+    uiBridge,
+    getActiveWindow,
+    metadataPath: runtimeMetadataPath(app.getPath('userData')),
+  });
+
   const unregisterSerial = registerSerialIpc(serialDiscovery);
   const unregisterSession = registerSessionIpc(sessionManager);
   const unregisterSessionCreate = registerSessionCreate(sessionManager);
@@ -147,6 +164,7 @@ export async function registerIpcHandlers(
       unregisterSessionCreate();
       unregisterConnectionProfiles();
       unregisterAgentIntegrations();
+      await mcpHttpServer.close().catch(() => undefined);
       serialDiscovery.dispose();
       throw err;
     }
@@ -160,6 +178,7 @@ export async function registerIpcHandlers(
     unregisterAgentIntegrations();
     // 先停 MCP，避免 destroyAll 期间还有新工具调用进来
     await mcpServer.stop().catch(() => undefined);
+    await mcpHttpServer.close().catch(() => undefined);
     await sessionManager.destroyAll().catch(() => undefined);
     serialDiscovery.dispose();
   };
@@ -172,6 +191,7 @@ export async function registerIpcHandlers(
     agentIntegrationManager,
     jlinkBackend,
     mcpServer,
+    mcpHttpServer,
     dispose,
   };
 }
@@ -212,12 +232,23 @@ function buildDefaultAgentIntegrationTargets(): AgentIntegrationTarget[] {
  * @returns Launch configuration with MCP stdio enabled.
  */
 function buildLinkTermMcpLaunchConfig(): LinkTermMcpLaunchConfig {
-  const appPath = app.getAppPath();
-  return buildNodeMcpLaunchConfig({
+  return buildElectronMcpLaunchConfig({
     runtimePath: process.execPath,
-    entryPath: app.isPackaged
-      ? path.join(path.dirname(process.execPath), 'resources', 'app.asar', 'dist', 'main', 'mcp', 'stdio-entry.js')
-      : path.join(appPath, 'dist', 'main', 'mcp', 'stdio-entry.js'),
+    metadataPath: runtimeMetadataPath(app.getPath('userData')),
+    launcherPath: electronRuntimeLauncherPath(),
+    appPath: app.isPackaged ? undefined : app.getAppPath(),
   });
+}
+
+/**
+ * Resolve the compiled launcher script used to clear Electron Node-mode before MCP runtime startup.
+ *
+ * @returns Absolute path to the launcher script in development or packaged builds.
+ */
+function electronRuntimeLauncherPath(): string {
+  const relativeLauncherPath = path.join('dist', 'main', 'mcp', 'electron-runtime-launcher.js');
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar', relativeLauncherPath)
+    : path.join(app.getAppPath(), relativeLauncherPath);
 }
 
