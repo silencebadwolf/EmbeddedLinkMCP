@@ -44,6 +44,9 @@ export type ToolErrorCode =
   | 'WORKSPACE_ALREADY_INITIALIZED'
   | 'WORKSPACE_CONFLICT'
   | 'WORKSPACE_SCHEMA_VERSION_MISMATCH'
+  | 'CONTROL_PROFILE_NOT_FOUND'
+  | 'CONTROL_PROFILE_ALREADY_INITIALIZED'
+  | 'CONTROL_PROFILE_SCHEMA_VERSION_MISMATCH'
   | 'PROBE_NOT_FOUND'
   | 'PROBE_BUSY'
   | 'JLINK_OPERATION_FAILED'
@@ -55,7 +58,7 @@ export type ToolErrorCode =
   | 'INTERNAL';
 
 /**
- * Handler 内部用来抛出已归类的错误；registry 会把它转成 LinkTermToolResult.error。
+ * Handler 内部用来抛出已归类的错误；registry 会把它转成 LinkTermToolResult.error.
  *
  * **不要把任何敏感字段塞进 message 或 details**（密码 / 私钥 / token）。
  */
@@ -143,7 +146,7 @@ export interface ToolDefinition<TSchema extends z.ZodType> {
 }
 
 /**
- * 把一个 ToolDefinition 注册到 McpServer。
+ * 把一个 ToolDefinition 注册到 McpServer.
  *
  * @param server McpServer 实例
  * @param def 工具定义
@@ -232,7 +235,7 @@ export function registerTool<TSchema extends z.ZodType<{ correlationId?: string;
 }
 
 /**
- * 把任意 throw 归一化为 ToolHandlerFailure。
+ * 把任意 throw 归一化为 ToolHandlerFailure.
  *
  * - {@link ToolError}：原样使用其 code/message/details
  * - 其它 Error：包装为 INTERNAL，message 保留为常规错误描述（不含敏感字段）
@@ -258,7 +261,7 @@ function normalizeError(err: unknown): ToolHandlerFailure {
 }
 
 /**
- * 把 LinkTermToolResult 序列化为 MCP CallToolResult。
+ * 把 LinkTermToolResult 序列化为 MCP CallToolResult.
  *
  * MCP CallToolResult 既有 `content[]`（给人/AI 阅读的文本）也有 `structuredContent`
  * （结构化字段，便于 AI 通过 JSON 路径读取）。我们：

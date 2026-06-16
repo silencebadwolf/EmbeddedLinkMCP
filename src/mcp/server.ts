@@ -18,6 +18,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { SessionManager } from '../core/session/session-manager.js';
 import type { SerialDiscovery } from '../transports/serial/serial-discovery.js';
 import type {
+  ControlProfileManager,
   EvidenceSnapshot,
   WorkspaceConfigManager,
 } from '../core/workspace/index.js';
@@ -31,6 +32,10 @@ import {
 import { LINKTERM_MCP_SCHEMA_VERSION } from './versioning/version-check.js';
 import { registerTerminalTools } from './surfaces/terminal/tools.js';
 import { registerWorkspaceTools } from './surfaces/workspace/tools.js';
+import {
+  registerControlProfileTools,
+  type ControlProfileOpenSerial,
+} from './surfaces/control-profile/tools.js';
 import { registerDebugTools } from './surfaces/debug/tools.js';
 import { registerDebugBinaryTools } from './surfaces/debug/tools-binary.js';
 import { registerUiTools } from './surfaces/ui/tools.js';
@@ -50,6 +55,13 @@ export interface CreateMcpServerOptions {
    * 仅在提供 workspaceConfigManager 时有意义。
    */
   workspaceEvidenceFn?: () => Promise<EvidenceSnapshot>;
+  /**
+   * 控制配置管理器。注入时 server 注册 init/get/activate_control_profile，
+   * 用于显式生成/读取/拉起 `<root>/.linkterm/control-profile.json`。
+   */
+  controlProfileManager?: ControlProfileManager;
+  /** 测试注入用串口激活函数；生产省略时走 SessionManager + buildSession。 */
+  controlProfileOpenSerial?: ControlProfileOpenSerial;
   /**
    * J-Link backend（Phase 9）。注入时 server 会注册 28 个 debug 工具；
    * 缺省时使用 NullJLinkBackend，工具仍然注册并对所有调用返回 NO_BACKEND
@@ -137,6 +149,16 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
   // Phase 9: 始终注册 28 个 debug 工具；未注入 backend 时挂 NullJLinkBackend，
   // 让所有调用都返回结构化的 NO_BACKEND 拒绝（req §4.6）。
   const jlinkBackend = options.jlinkBackend ?? new NullJLinkBackend();
+
+  if (options.controlProfileManager) {
+    registerControlProfileTools(server, {
+      controlProfileManager: options.controlProfileManager,
+      sessionManager: options.sessionManager,
+      jlinkBackend,
+      controlProfileOpenSerial: options.controlProfileOpenSerial,
+    });
+  }
+
   registerDebugTools(server, { jlinkBackend });
   registerDebugBinaryTools(server, { jlinkBackend });
 

@@ -9,6 +9,7 @@ import { SessionTabBar } from './components/SessionTabBar.js';
 import { TerminalView } from './components/TerminalView.js';
 import { ConnectionDialog } from './components/ConnectionDialog.js';
 import { AgentIntegrationsPanel } from './components/AgentIntegrationsPanel.js';
+import { ControlProfilePanel } from './components/ControlProfilePanel.js';
 import { Button } from './components/ui/button.js';
 import { useAppStore } from './store/app-store.js';
 import { useT, type Locale } from './i18n/index.js';
@@ -29,6 +30,7 @@ export function App(): React.ReactElement {
   const activeId = useAppStore((s) => s.activeSessionId);
   const sessions = useAppStore((s) => s.sessions);
   const [agentPanelOpen, setAgentPanelOpen] = React.useState(false);
+  const [controlPanelOpen, setControlPanelOpen] = React.useState(false);
   const sessionList = React.useMemo(() => Array.from(sessions.values()), [sessions]);
 
   return (
@@ -44,6 +46,14 @@ export function App(): React.ReactElement {
           </div>
         </div>
         <div className="flex items-center gap-1">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setControlPanelOpen(true)}
+            data-testid="control-profile-open"
+          >
+            {t('controlProfile.entry')}
+          </Button>
           <Button
             variant="secondary"
             size="sm"
@@ -95,6 +105,7 @@ export function App(): React.ReactElement {
       </main>
 
       <ConnectionDialog />
+      <ControlProfilePanel open={controlPanelOpen} onOpenChange={setControlPanelOpen} />
       <AgentIntegrationsPanel open={agentPanelOpen} onOpenChange={setAgentPanelOpen} />
     </div>
   );

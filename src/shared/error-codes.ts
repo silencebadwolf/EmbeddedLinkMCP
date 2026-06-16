@@ -36,6 +36,12 @@ export const ERROR_CODES = {
   WORKSPACE_CONFLICT: 'WORKSPACE_CONFLICT',
   /** 工作区 config.json 的 schemaVersion 与运行时常量不匹配（需迁移）。 */
   WORKSPACE_SCHEMA_VERSION_MISMATCH: 'WORKSPACE_SCHEMA_VERSION_MISMATCH',
+  /** 工作区控制配置文件不存在（caller 未先 init_control_profile）。 */
+  CONTROL_PROFILE_NOT_FOUND: 'CONTROL_PROFILE_NOT_FOUND',
+  /** 工作区已存在 control-profile.json，但 caller 未传 force=true。 */
+  CONTROL_PROFILE_ALREADY_INITIALIZED: 'CONTROL_PROFILE_ALREADY_INITIALIZED',
+  /** 工作区 control-profile.json 的 schemaVersion 与运行时常量不匹配（需迁移）。 */
+  CONTROL_PROFILE_SCHEMA_VERSION_MISMATCH: 'CONTROL_PROFILE_SCHEMA_VERSION_MISMATCH',
   /** J-Link backend 未注入；当前 server 仅暴露空实现。 */
   NO_BACKEND: 'NO_BACKEND',
   /** 给定 probeId 不存在或已 disconnect。 */

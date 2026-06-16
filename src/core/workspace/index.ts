@@ -46,3 +46,43 @@ export {
   assertValidRoot,
   type WorkspaceConfigManagerOptions,
 } from './workspace-config-manager.js';
+
+export {
+  CONTROL_PROFILE_SCHEMA_VERSION,
+  type ControlSerialProfile,
+  type ControlJLinkProfile,
+  type ControlFlashProfile,
+  type ControlRttProfile,
+  type ControlProfile,
+} from './control-profile-types.js';
+
+export {
+  hexAddressSchema,
+  controlSerialProfileSchema,
+  controlJLinkProfileSchema,
+  controlFlashProfileSchema,
+  controlRttProfileSchema,
+  controlProfileBodySchema,
+  controlProfileSchema,
+  type ControlProfileBody,
+} from './control-profile-schema.js';
+
+export {
+  ControlProfileManager,
+  ControlProfileAlreadyInitializedError,
+  ControlProfileNotFoundError,
+  ControlProfileTooLargeError,
+  ControlProfileSchemaVersionMismatchError,
+  controlProfilePath,
+  type ControlProfileManagerOptions,
+} from './control-profile-manager.js';
+
+export {
+  parseControlProfileAnswer,
+  inspectControlProfileCompleteness,
+  buildControlProfileQuestion,
+  type ControlProfileField,
+  type RejectedControlProfileField,
+  type ParsedControlProfileAnswer,
+  type ControlProfileCompletenessReport,
+} from './control-profile-answer-parser.js';

@@ -16,6 +16,7 @@ import type {
   UiStatePatch,
   AgentIntegrationStatus,
   AgentIntegrationInstallResult,
+  ControlProfileFilePayload,
 } from '../../src/shared/preload-api.js';
 import type { TranscriptEventEnvelope } from '../../src/shared/transcript-ipc-types.js';
 import type { SerialPortInfo, SessionLifecycleEvent, SessionSummary } from '../../src/shared/types.js';
@@ -59,6 +60,12 @@ export interface MockPreloadAPI {
     agentIntegrations: {
       list: ReturnType<typeof vi.fn>;
       install: ReturnType<typeof vi.fn>;
+    };
+    controlProfile: {
+      save: ReturnType<typeof vi.fn>;
+      load: ReturnType<typeof vi.fn>;
+      pickWorkspaceRoot: ReturnType<typeof vi.fn>;
+      pickFirmwareFile: ReturnType<typeof vi.fn>;
     };
   };
 }
@@ -165,6 +172,22 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       }),
   );
 
+  const defaultControlProfile: ControlProfileFilePayload = {
+    schemaVersion: 'linkterm-control/1.0.0',
+    serial: { enabled: true, port: 'COM1', baudRate: 115200, mode: 'terminal' },
+    jlink: { enabled: false },
+    flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+    rtt: { enabled: false, channels: [0] },
+  };
+  const controlProfileSave = vi.fn(async () =>
+    okEmpty({ path: 'C:/repo/.linkterm/control-profile.json', profile: defaultControlProfile }),
+  );
+  const controlProfileLoad = vi.fn(async () =>
+    okEmpty({ path: 'C:/repo/.linkterm/control-profile.json', profile: defaultControlProfile }),
+  );
+  const controlProfilePickWorkspaceRoot = vi.fn(async () => okEmpty({ root: 'C:/repo' }));
+  const controlProfilePickFirmwareFile = vi.fn(async () => okEmpty({ path: 'build/app.bin' }));
+
   const api: PreloadAPI = {
     session,
     serial: {
@@ -196,6 +219,12 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       list: agentIntegrationList,
       install: agentIntegrationInstall,
     },
+    controlProfile: {
+      save: controlProfileSave,
+      load: controlProfileLoad,
+      pickWorkspaceRoot: controlProfilePickWorkspaceRoot,
+      pickFirmwareFile: controlProfilePickFirmwareFile,
+    },
   };
 
   return {
@@ -226,6 +255,12 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       agentIntegrations: {
         list: agentIntegrationList,
         install: agentIntegrationInstall,
+      },
+      controlProfile: {
+        save: controlProfileSave,
+        load: controlProfileLoad,
+        pickWorkspaceRoot: controlProfilePickWorkspaceRoot,
+        pickFirmwareFile: controlProfilePickFirmwareFile,
       },
     },
   };

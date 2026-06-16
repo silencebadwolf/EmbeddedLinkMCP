@@ -26,6 +26,7 @@ import type {
   SavedConnectionSummary,
   AgentIntegrationStatus,
   AgentIntegrationInstallResult,
+  ControlProfileFilePayload,
 } from '../shared/preload-api.js';
 import type { SessionId, SessionLifecycleEvent, SessionState, SessionSummary, SerialPortInfo } from '../shared/types.js';
 import type { TranscriptEventEnvelope } from '../shared/transcript-ipc-types.js';
@@ -109,6 +110,22 @@ const api: PreloadAPI = {
       invoke<ReadonlyArray<AgentIntegrationStatus>>(IPC_CHANNELS.AGENT_INTEGRATIONS_LIST),
     install: (req) =>
       invoke<AgentIntegrationInstallResult>(IPC_CHANNELS.AGENT_INTEGRATIONS_INSTALL, req),
+  },
+  controlProfile: {
+    save: (req) =>
+      invoke<{ path: string; profile: ControlProfileFilePayload }>(
+        IPC_CHANNELS.CONTROL_PROFILE_SAVE,
+        req,
+      ),
+    load: (req) =>
+      invoke<{ path: string; profile: ControlProfileFilePayload }>(
+        IPC_CHANNELS.CONTROL_PROFILE_LOAD,
+        req,
+      ),
+    pickWorkspaceRoot: () =>
+      invoke<{ root: string | null }>(IPC_CHANNELS.CONTROL_PROFILE_PICK_WORKSPACE_ROOT),
+    pickFirmwareFile: () =>
+      invoke<{ path: string | null }>(IPC_CHANNELS.CONTROL_PROFILE_PICK_FIRMWARE_FILE),
   },
 };
 

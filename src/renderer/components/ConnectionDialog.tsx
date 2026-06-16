@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from './ui/select.js';
 import { SerialPortPicker } from './SerialPortPicker.js';
+import { BaudRateInput } from './BaudRateInput.js';
 import { useAppStore } from '../store/app-store.js';
 import { useSessions } from '../hooks/useSession.js';
 import { getLinkterm } from '../lib/linkterm-bridge.js';
@@ -44,19 +45,6 @@ import type {
   SavedConnectionSummary,
   SessionCreateRequestConfig,
 } from '../../shared/preload-api.js';
-
-const COMMON_BAUD_RATES = [
-  '9600',
-  '19200',
-  '38400',
-  '57600',
-  '115200',
-  '230400',
-  '460800',
-  '921600',
-  '1000000',
-  '2000000',
-] as const;
 
 const DATA_BITS = ['5', '6', '7', '8'] as const;
 const STOP_BITS = ['1', '1.5', '2'] as const;
@@ -242,7 +230,6 @@ export function ConnectionDialog(): React.ReactElement {
   const [savedProfiles, setSavedProfiles] = React.useState<ReadonlyArray<SavedConnectionSummary>>([]);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [baudListOpen, setBaudListOpen] = React.useState(false);
 
   const loadSavedProfiles = React.useCallback(async (): Promise<void> => {
     const api = getLinkterm();
@@ -260,7 +247,6 @@ export function ConnectionDialog(): React.ReactElement {
       setForm(INITIAL_FORM);
       setError(null);
       setSubmitting(false);
-      setBaudListOpen(false);
       return;
     }
     void loadSavedProfiles();
@@ -479,48 +465,11 @@ export function ConnectionDialog(): React.ReactElement {
               </FormField>
               <div className="grid grid-cols-2 gap-2">
                 <FormField id="conn-baud" label={t('dialog.serial.baudRate')}>
-                  <div className="relative">
-                    <Input
-                      id="conn-baud"
-                      value={form.baudRate}
-                      onChange={(e) => update('baudRate', e.target.value)}
-                      inputMode="numeric"
-                      className="pr-10"
-                    />
-                    <button
-                      type="button"
-                      aria-label={t('dialog.serial.commonBaudRates')}
-                      aria-expanded={baudListOpen}
-                      aria-haspopup="listbox"
-                      className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-md border-l border-gray-700 text-xs text-gray-300 hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                      onClick={() => setBaudListOpen((prev) => !prev)}
-                    >
-                      v
-                    </button>
-                    {baudListOpen && (
-                      <div
-                        role="listbox"
-                        aria-label={t('dialog.serial.baudRate')}
-                        className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-gray-700 bg-gray-900 p-1 text-sm text-gray-100 shadow-lg"
-                      >
-                        {COMMON_BAUD_RATES.map((rate) => (
-                          <button
-                            key={rate}
-                            type="button"
-                            role="option"
-                            aria-selected={form.baudRate === rate}
-                            className="block w-full rounded-sm px-2 py-1.5 text-left hover:bg-gray-800 aria-selected:bg-blue-600"
-                            onClick={() => {
-                              update('baudRate', rate);
-                              setBaudListOpen(false);
-                            }}
-                          >
-                            {rate}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <BaudRateInput
+                    id="conn-baud"
+                    value={form.baudRate}
+                    onChange={(value) => update('baudRate', value)}
+                  />
                 </FormField>
                 <FormField id="conn-mode" label={t('dialog.serial.mode')}>
                   <Select

@@ -1,0 +1,65 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import {
+  CONTROL_PROFILE_SCHEMA_VERSION,
+  ControlProfileAlreadyInitializedError,
+  ControlProfileManager,
+  ControlProfileNotFoundError,
+} from '@/core/workspace/index.js';
+
+async function createTmpRoot(): Promise<string> {
+  return mkdtemp(path.join(tmpdir(), 'lt-control-profile-'));
+}
+
+describe('ControlProfileManager (real fs)', () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await createTmpRoot();
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('init creates .linkterm/control-profile.json and preserves hex addresses as strings', async () => {
+    const manager = new ControlProfileManager();
+    const profile = await manager.init(root, {
+      serial: { enabled: true, port: 'COM3', baudRate: 115200, mode: 'terminal' },
+      jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+      flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+      rtt: { enabled: false, channels: [0] },
+    });
+
+    expect(profile.schemaVersion).toBe(CONTROL_PROFILE_SCHEMA_VERSION);
+    expect(profile.flash?.baseAddress).toBe('0x08000000');
+
+    const raw = await readFile(path.join(root, '.linkterm', 'control-profile.json'), 'utf-8');
+    const persisted = JSON.parse(raw) as { flash: { baseAddress: string } };
+    expect(persisted.flash.baseAddress).toBe('0x08000000');
+  });
+
+  it('load throws ControlProfileNotFoundError when the profile does not exist', async () => {
+    const manager = new ControlProfileManager();
+    await expect(manager.load(root)).rejects.toBeInstanceOf(ControlProfileNotFoundError);
+  });
+
+  it('init throws ControlProfileAlreadyInitializedError on second call without force', async () => {
+    const manager = new ControlProfileManager();
+    await manager.init(root, { jlink: { enabled: false } });
+    await expect(manager.init(root, { jlink: { enabled: false } })).rejects.toBeInstanceOf(
+      ControlProfileAlreadyInitializedError,
+    );
+  });
+
+  it('rejects decimal flash baseAddress strings', async () => {
+    const manager = new ControlProfileManager();
+    await expect(
+      manager.init(root, {
+        flash: { binary: 'build/app.bin', baseAddress: '134217728', verify: true },
+      } as never),
+    ).rejects.toThrow();
+  });
+});

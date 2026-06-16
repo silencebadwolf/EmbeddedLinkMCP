@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { SessionManager } from '../../core/session/session-manager.js';
-import { WorkspaceConfigManager } from '../../core/workspace/index.js';
+import { ControlProfileManager, WorkspaceConfigManager } from '../../core/workspace/index.js';
 import { ConnectionProfileManager } from '../../core/connections/index.js';
 import {
   AgentIntegrationManager,
@@ -21,6 +21,7 @@ import { registerSessionIpc } from './session-ipc.js';
 import { registerSessionCreate } from './session-create-handler.js';
 import { registerConnectionProfilesIpc } from './connection-profiles-ipc.js';
 import { registerAgentIntegrationsIpc } from './agent-integrations-ipc.js';
+import { registerControlProfileIpc } from './control-profile-ipc.js';
 import { SafeStorageSecretCodec } from '../connections/safe-storage-secret-codec.js';
 import { createUiBridge } from './ui-bridge.js';
 export { createUiBridge, type UiPatchTarget } from './ui-bridge.js';
@@ -38,6 +39,7 @@ export interface MainProcessContext {
   serialDiscovery: SerialDiscovery;
   sessionManager: SessionManager;
   workspaceConfigManager: WorkspaceConfigManager;
+  controlProfileManager: ControlProfileManager;
   connectionProfileManager: ConnectionProfileManager;
   /** 本机 Agent MCP 配置检测与安装管理器。 */
   agentIntegrationManager: AgentIntegrationManager;
@@ -94,6 +96,7 @@ export async function registerIpcHandlers(
       serialPorts: await serialDiscovery.listPorts(),
     }),
   });
+  const controlProfileManager = new ControlProfileManager();
   const connectionProfileManager = new ConnectionProfileManager({
     filePath: path.join(app.getPath('userData'), 'connections.json'),
     secretCodec: new SafeStorageSecretCodec(),
@@ -123,6 +126,7 @@ export async function registerIpcHandlers(
     workspaceEvidenceFn: async () => ({
       serialPorts: await serialDiscovery.listPorts(),
     }),
+    controlProfileManager,
     jlinkBackend,
     uiBridge,
     getActiveWindow,
@@ -135,6 +139,7 @@ export async function registerIpcHandlers(
     workspaceEvidenceFn: async () => ({
       serialPorts: await serialDiscovery.listPorts(),
     }),
+    controlProfileManager,
     jlinkBackend,
     uiBridge,
     getActiveWindow,
@@ -151,6 +156,7 @@ export async function registerIpcHandlers(
   const unregisterAgentIntegrations = registerAgentIntegrationsIpc(
     agentIntegrationManager,
   );
+  const unregisterControlProfile = registerControlProfileIpc(controlProfileManager);
 
   const shouldAutoStart =
     options.autoStartMcp ?? process.env.LINKTERM_MCP_STDIO === '1';
@@ -164,6 +170,7 @@ export async function registerIpcHandlers(
       unregisterSessionCreate();
       unregisterConnectionProfiles();
       unregisterAgentIntegrations();
+      unregisterControlProfile();
       await mcpHttpServer.close().catch(() => undefined);
       serialDiscovery.dispose();
       throw err;
@@ -176,6 +183,7 @@ export async function registerIpcHandlers(
     unregisterSessionCreate();
     unregisterConnectionProfiles();
     unregisterAgentIntegrations();
+    unregisterControlProfile();
     // 先停 MCP，避免 destroyAll 期间还有新工具调用进来
     await mcpServer.stop().catch(() => undefined);
     await mcpHttpServer.close().catch(() => undefined);
@@ -187,6 +195,7 @@ export async function registerIpcHandlers(
     serialDiscovery,
     sessionManager,
     workspaceConfigManager,
+    controlProfileManager,
     connectionProfileManager,
     agentIntegrationManager,
     jlinkBackend,

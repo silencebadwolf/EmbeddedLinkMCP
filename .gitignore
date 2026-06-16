@@ -31,6 +31,9 @@ npm-debug.log*
 pnpm-debug.log*
 .claude/
 
+# LinkTerm workspace-local files
+.linkterm/
+
 # Python
 .venv/
 __pycache__/

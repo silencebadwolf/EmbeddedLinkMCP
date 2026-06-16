@@ -262,6 +262,48 @@ export interface AgentIntegrationsNamespace {
   install(req: { targetId: AgentIntegrationTargetId }): Promise<PreloadResult<AgentIntegrationInstallResult>>;
 }
 
+/** renderer/preload 可见的工作区控制配置主体。 */
+export interface ControlProfilePayload {
+  serial?: {
+    enabled: boolean;
+    port?: string;
+    baudRate?: number;
+    mode?: 'normal' | 'terminal';
+  };
+  jlink?: {
+    enabled: boolean;
+    target?: string;
+    interface?: 'swd' | 'jtag';
+    speedKHz?: number | 'auto';
+  };
+  flash?: {
+    binary?: string;
+    baseAddress?: string;
+    verify?: boolean;
+  };
+  rtt?: {
+    enabled: boolean;
+    channels?: number[];
+  };
+}
+
+/** renderer/preload 可见的完整工作区控制配置。 */
+export type ControlProfileFilePayload = ControlProfilePayload & {
+  schemaVersion: 'linkterm-control/1.0.0';
+};
+
+/** 工作区控制配置命名空间。 */
+export interface ControlProfileNamespace {
+  /** 保存/覆盖 `<root>/.linkterm/control-profile.json`。 */
+  save(req: { root: string; profile: ControlProfilePayload }): Promise<PreloadResult<{ path: string; profile: ControlProfileFilePayload }>>;
+  /** 读取 `<root>/.linkterm/control-profile.json`。 */
+  load(req: { root: string }): Promise<PreloadResult<{ path: string; profile: ControlProfileFilePayload }>>;
+  /** 选择工作区目录；用户取消时 root 为 null。 */
+  pickWorkspaceRoot(): Promise<PreloadResult<{ root: string | null }>>;
+  /** 选择固件文件；用户取消时 path 为 null。 */
+  pickFirmwareFile(): Promise<PreloadResult<{ path: string | null }>>;
+}
+
 /**
  * `window.linkterm` 的完整类型。
  *
@@ -274,6 +316,7 @@ export interface PreloadAPI {
   ui: UiNamespace;
   connections: ConnectionsNamespace;
   agentIntegrations: AgentIntegrationsNamespace;
+  controlProfile: ControlProfileNamespace;
 }
 
 declare global {

@@ -35,6 +35,10 @@ export const IPC_CHANNELS = {
   CONNECTIONS_DELETE: 'connections:delete',
   AGENT_INTEGRATIONS_LIST: 'agentIntegrations:list',
   AGENT_INTEGRATIONS_INSTALL: 'agentIntegrations:install',
+  CONTROL_PROFILE_SAVE: 'controlProfile:save',
+  CONTROL_PROFILE_LOAD: 'controlProfile:load',
+  CONTROL_PROFILE_PICK_WORKSPACE_ROOT: 'controlProfile:pickWorkspaceRoot',
+  CONTROL_PROFILE_PICK_FIRMWARE_FILE: 'controlProfile:pickFirmwareFile',
 } as const;
 
 /** IPC_CHANNELS 字典中所有 value 的联合类型。 */

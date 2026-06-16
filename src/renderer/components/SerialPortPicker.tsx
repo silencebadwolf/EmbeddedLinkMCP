@@ -64,7 +64,7 @@ export function SerialPortPicker({
           {t('serial.picker.empty')}
         </p>
       ) : (
-        <Select value={value || undefined} onValueChange={onChange}>
+        <Select value={value || ports[0]?.path} onValueChange={onChange}>
           <SelectTrigger data-testid="picker-select-trigger">
             <SelectValue placeholder={t('serial.picker.placeholder')} />
           </SelectTrigger>
