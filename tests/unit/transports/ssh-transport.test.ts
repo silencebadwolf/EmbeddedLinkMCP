@@ -105,6 +105,19 @@ describe('SshTransport', () => {
     expect(created[0]!.endCalls).toBe(1);
   });
 
+  it('swallows late client errors after open() has already failed', async () => {
+    const { factory, created } = createMockSshClientFactory();
+    const transport = new SshTransport({
+      config: baseConfig,
+      credentials: passwordCreds,
+      hostVerifier: () => false,
+      clientFactory: factory,
+    });
+    await expect(transport.open()).rejects.toThrow(/host key rejected/);
+
+    expect(() => created[0]!.emit('error', new Error('Connection lost before handshake'))).not.toThrow();
+  });
+
   it('rejects open() when shell() callback returns an error', async () => {
     const failure = new Error('no shell');
     const { factory, created } = createMockSshClientFactory({ failOnShell: failure });

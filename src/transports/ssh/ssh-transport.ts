@@ -224,6 +224,7 @@ export class SshTransport extends EventEmitter implements ITransport {
 
   /** 释放 open() 半初始化路径上的 client 引用，并把任何错误规整成 Error 后抛出。 */
   #abortOpen(client: SshClientLike, err: unknown): never {
+    client.on('error', swallowLateOpenError);
     try {
       client.end();
     } catch {
@@ -294,3 +295,7 @@ export class SshTransport extends EventEmitter implements ITransport {
     };
   }
 }
+
+const swallowLateOpenError = (): void => {
+  /* swallow late ssh2 errors after open() has already failed */
+};
