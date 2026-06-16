@@ -32,6 +32,8 @@ export const IPC_CHANNELS = {
   CONNECTIONS_SAVE_AND_OPEN: 'connections:saveAndOpen',
   CONNECTIONS_OPEN: 'connections:open',
   CONNECTIONS_DELETE: 'connections:delete',
+  AGENT_INTEGRATIONS_LIST: 'agentIntegrations:list',
+  AGENT_INTEGRATIONS_INSTALL: 'agentIntegrations:install',
 } as const;
 
 /** IPC_CHANNELS 字典中所有 value 的联合类型。 */

@@ -14,6 +14,8 @@ import type {
   TranscriptSubscribeSuccess,
   Unsubscribe,
   UiStatePatch,
+  AgentIntegrationStatus,
+  AgentIntegrationInstallResult,
 } from '../../src/shared/preload-api.js';
 import type { TranscriptEventEnvelope } from '../../src/shared/transcript-ipc-types.js';
 import type { SerialPortInfo } from '../../src/shared/types.js';
@@ -52,13 +54,17 @@ export interface MockPreloadAPI {
       open: ReturnType<typeof vi.fn>;
       delete: ReturnType<typeof vi.fn>;
     };
+    agentIntegrations: {
+      list: ReturnType<typeof vi.fn>;
+      install: ReturnType<typeof vi.fn>;
+    };
   };
 }
 
 const okEmpty = <T>(data: T): PreloadResult<T> => ({ success: true, data });
 
 /**
- * 构造 PreloadAPI mock。
+ * 构造 PreloadAPI mock.
  *
  * 默认所有方法返回 `{success:true, data:{}}` 占位；具体测试用 `.mockResolvedValueOnce(...)` 覆盖。
  */
@@ -68,7 +74,7 @@ export function createMockPreloadAPI(): MockPreloadAPI {
   const uiPatchListeners = new Set<(patch: UiStatePatch) => void>();
 
   const session = {
-    create: vi.fn(async () => okEmpty({ sessionId: 'sess_test', state: 'open' })),
+    create: vi.fn(async () => okEmpty({ sessionId: 'sess_test', state: 'open' as const })),
     write: vi.fn(async () => okEmpty({ bytesWritten: 0 })),
     read: vi.fn(async () =>
       okEmpty<SessionReadSuccess>({
@@ -81,7 +87,7 @@ export function createMockPreloadAPI(): MockPreloadAPI {
     clear: vi.fn(async () => okEmpty({ sequence: 0 })),
     list: vi.fn(async () => okEmpty({ sessionIds: [] as string[] })),
     status: vi.fn(async () =>
-      okEmpty({ sessionId: 'sess_test', state: 'open', latestCursor: 0 }),
+      okEmpty({ sessionId: 'sess_test', state: 'open' as const, latestCursor: 0 }),
     ),
     resize: vi.fn(async () => okEmpty({ resized: true })),
     destroy: vi.fn(async () => okEmpty({ destroyed: true as const })),
@@ -134,6 +140,24 @@ export function createMockPreloadAPI(): MockPreloadAPI {
   );
   const connectionDelete = vi.fn(async () => okEmpty({ deleted: true as const }));
 
+  const agentIntegrationList = vi.fn(
+    async (): Promise<PreloadResult<ReadonlyArray<AgentIntegrationStatus>>> => okEmpty([]),
+  );
+  const agentIntegrationInstall = vi.fn(
+    async (): Promise<PreloadResult<AgentIntegrationInstallResult>> =>
+      okEmpty({
+        status: {
+          id: 'vscode',
+          label: 'VS Code Copilot',
+          configPath: 'mcp.json',
+          configKind: 'vscode-mcp-json',
+          status: 'configured',
+          configured: true,
+          canInstall: false,
+        },
+      }),
+  );
+
   const api: PreloadAPI = {
     session,
     serial: {
@@ -161,6 +185,10 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       open: connectionOpen,
       delete: connectionDelete,
     },
+    agentIntegrations: {
+      list: agentIntegrationList,
+      install: agentIntegrationInstall,
+    },
   };
 
   return {
@@ -185,12 +213,16 @@ export function createMockPreloadAPI(): MockPreloadAPI {
         open: connectionOpen,
         delete: connectionDelete,
       },
+      agentIntegrations: {
+        list: agentIntegrationList,
+        install: agentIntegrationInstall,
+      },
     },
   };
 }
 
 /**
- * 注入 mock 到 `window.linkterm`，并返回控制器；clearable in afterEach。
+ * 注入 mock 到 `window.linkterm`，并返回控制器；clearable in afterEach.
  */
 export function installMockPreload(): MockPreloadAPI {
   const mock = createMockPreloadAPI();

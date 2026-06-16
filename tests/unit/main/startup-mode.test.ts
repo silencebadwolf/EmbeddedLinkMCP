@@ -1,0 +1,52 @@
+import { describe, expect, it } from 'vitest';
+import {
+  isMcpStdioMode,
+  shouldCreateMainWindow,
+  shouldQuitForMissingSingleInstanceLock,
+} from '@/main/startup-mode.js';
+
+describe('startup mode', () => {
+  it('treats LINKTERM_MCP_STDIO=1 as MCP stdio mode', () => {
+    expect(isMcpStdioMode({ LINKTERM_MCP_STDIO: '1' })).toBe(true);
+    expect(isMcpStdioMode({ LINKTERM_MCP_STDIO: '0' })).toBe(false);
+  });
+
+  it('does not quit a stdio MCP subprocess when another desktop instance owns the lock', () => {
+    expect(
+      shouldQuitForMissingSingleInstanceLock({
+        hasSingleInstanceLock: false,
+        isMcpStdioMode: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('keeps ordinary desktop launches single-instance guarded', () => {
+    expect(
+      shouldQuitForMissingSingleInstanceLock({
+        hasSingleInstanceLock: false,
+        isMcpStdioMode: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('creates a window for desktop mode or the first MCP-owned instance only', () => {
+    expect(
+      shouldCreateMainWindow({
+        hasSingleInstanceLock: true,
+        isMcpStdioMode: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldCreateMainWindow({
+        hasSingleInstanceLock: true,
+        isMcpStdioMode: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldCreateMainWindow({
+        hasSingleInstanceLock: false,
+        isMcpStdioMode: true,
+      }),
+    ).toBe(false);
+  });
+});

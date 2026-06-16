@@ -24,6 +24,8 @@ import type {
   Unsubscribe,
   UiStatePatch,
   SavedConnectionSummary,
+  AgentIntegrationStatus,
+  AgentIntegrationInstallResult,
 } from '../shared/preload-api.js';
 import type { SessionId, SessionState, SerialPortInfo } from '../shared/types.js';
 import type { TranscriptEventEnvelope } from '../shared/transcript-ipc-types.js';
@@ -99,6 +101,12 @@ const api: PreloadAPI = {
         state: SessionState;
       }>(IPC_CHANNELS.CONNECTIONS_OPEN, req),
     delete: (req) => invoke<{ deleted: true }>(IPC_CHANNELS.CONNECTIONS_DELETE, req),
+  },
+  agentIntegrations: {
+    list: () =>
+      invoke<ReadonlyArray<AgentIntegrationStatus>>(IPC_CHANNELS.AGENT_INTEGRATIONS_LIST),
+    install: (req) =>
+      invoke<AgentIntegrationInstallResult>(IPC_CHANNELS.AGENT_INTEGRATIONS_INSTALL, req),
   },
 };
 

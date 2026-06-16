@@ -3,6 +3,12 @@ import { app, BrowserWindow } from 'electron';
 import { SessionManager } from '../../core/session/session-manager.js';
 import { WorkspaceConfigManager } from '../../core/workspace/index.js';
 import { ConnectionProfileManager } from '../../core/connections/index.js';
+import {
+  AgentIntegrationManager,
+  buildNodeMcpLaunchConfig,
+  type AgentIntegrationTarget,
+  type LinkTermMcpLaunchConfig,
+} from '../../core/agent-integrations/index.js';
 import { JLinkAdapter } from '../../jlink/index.js';
 import type { IJLinkBackend } from '../../jlink/index.js';
 import { createMcpServer, type LinkTermMcpServer } from '../../mcp/index.js';
@@ -12,6 +18,7 @@ import { registerSerialIpc } from './serial-ipc.js';
 import { registerSessionIpc } from './session-ipc.js';
 import { registerSessionCreate } from './session-create-handler.js';
 import { registerConnectionProfilesIpc } from './connection-profiles-ipc.js';
+import { registerAgentIntegrationsIpc } from './agent-integrations-ipc.js';
 import { SafeStorageSecretCodec } from '../connections/safe-storage-secret-codec.js';
 import { createUiBridge } from './ui-bridge.js';
 export { createUiBridge, type UiPatchTarget } from './ui-bridge.js';
@@ -30,6 +37,8 @@ export interface MainProcessContext {
   sessionManager: SessionManager;
   workspaceConfigManager: WorkspaceConfigManager;
   connectionProfileManager: ConnectionProfileManager;
+  /** 本机 Agent MCP 配置检测与安装管理器。 */
+  agentIntegrationManager: AgentIntegrationManager;
   /**
    * Phase 9：J-Link backend。当前仅 lifecycle 可用（probeConnect/disconnect/status
    * /detect），其余方法抛 NOT_IMPLEMENTED；Phase 13+ 替换为真实 SEGGER 适配器。
@@ -57,16 +66,16 @@ export interface RegisterIpcHandlersOptions {
    * Phase 10：当前主窗口 thunk。注入后 MCP `ui_screenshot` 可以拿到 BrowserWindow
    * 调用 `webContents.capturePage()`；缺省时 ui_screenshot 一律 UI_NOT_AVAILABLE。
    *
-   * 必须是 thunk —— 详见 `src/main/index.ts` `getMainWindow` JSDoc。
+   * 必须是 thunk —— 详见 `src/main/index.ts` `getMainWindow` JSDoc.
    */
   getMainWindow?: () => BrowserWindow | null;
 }
 
 /**
- * 注册所有主进程 ↔ 渲染进程的 IPC handler，并返回拥有所有 main-side 状态的 context。
+ * 注册所有主进程 ↔ 渲染进程的 IPC handler，并返回拥有所有 main-side 状态的 context.
  *
  * 启动失败保证：MCP server 启动抛错时，已注册的 IPC handler 会被回滚 ——
- * 否则下次 register 会撞 `ipcMain.handle` 的 \"already registered\"。
+ * 否则下次 register 会撞 `ipcMain.handle` 的 \"already registered\".
  *
  * @param options 可选行为开关
  * @returns 包含 sessionManager / mcpServer 的 context；调用方应在退出时 await dispose()
@@ -84,6 +93,10 @@ export async function registerIpcHandlers(
   const connectionProfileManager = new ConnectionProfileManager({
     filePath: path.join(app.getPath('userData'), 'connections.json'),
     secretCodec: new SafeStorageSecretCodec(),
+  });
+  const agentIntegrationManager = new AgentIntegrationManager({
+    targets: buildDefaultAgentIntegrationTargets(),
+    launchConfig: buildLinkTermMcpLaunchConfig(),
   });
   const jlinkBackend: IJLinkBackend = new JLinkAdapter();
 
@@ -118,6 +131,9 @@ export async function registerIpcHandlers(
     sessionManager,
     connectionProfileManager,
   );
+  const unregisterAgentIntegrations = registerAgentIntegrationsIpc(
+    agentIntegrationManager,
+  );
 
   const shouldAutoStart =
     options.autoStartMcp ?? process.env.LINKTERM_MCP_STDIO === '1';
@@ -130,6 +146,7 @@ export async function registerIpcHandlers(
       unregisterSession();
       unregisterSessionCreate();
       unregisterConnectionProfiles();
+      unregisterAgentIntegrations();
       serialDiscovery.dispose();
       throw err;
     }
@@ -140,6 +157,7 @@ export async function registerIpcHandlers(
     unregisterSession();
     unregisterSessionCreate();
     unregisterConnectionProfiles();
+    unregisterAgentIntegrations();
     // 先停 MCP，避免 destroyAll 期间还有新工具调用进来
     await mcpServer.stop().catch(() => undefined);
     await sessionManager.destroyAll().catch(() => undefined);
@@ -151,9 +169,55 @@ export async function registerIpcHandlers(
     sessionManager,
     workspaceConfigManager,
     connectionProfileManager,
+    agentIntegrationManager,
     jlinkBackend,
     mcpServer,
     dispose,
   };
+}
+
+/**
+ * Build the default local Agent configuration targets that LinkTerm can install into.
+ *
+ * @returns Supported Agent config file targets for the current OS user.
+ */
+function buildDefaultAgentIntegrationTargets(): AgentIntegrationTarget[] {
+  const appData = app.getPath('appData');
+  const home = app.getPath('home');
+  return [
+    {
+      id: 'vscode',
+      label: 'VS Code Copilot',
+      configPath: path.join(appData, 'Code', 'User', 'mcp.json'),
+      configKind: 'vscode-mcp-json',
+    },
+    {
+      id: 'claude-desktop',
+      label: 'Claude Desktop',
+      configPath: path.join(appData, 'Claude', 'claude_desktop_config.json'),
+      configKind: 'mcp-servers',
+    },
+    {
+      id: 'cursor',
+      label: 'Cursor',
+      configPath: path.join(home, '.cursor', 'mcp.json'),
+      configKind: 'mcp-servers',
+    },
+  ];
+}
+
+/**
+ * Build the stdio launch command external Agents should use to start LinkTerm MCP.
+ *
+ * @returns Launch configuration with MCP stdio enabled.
+ */
+function buildLinkTermMcpLaunchConfig(): LinkTermMcpLaunchConfig {
+  const appPath = app.getAppPath();
+  return buildNodeMcpLaunchConfig({
+    runtimePath: process.execPath,
+    entryPath: app.isPackaged
+      ? path.join(path.dirname(process.execPath), 'resources', 'app.asar', 'dist', 'main', 'mcp', 'stdio-entry.js')
+      : path.join(appPath, 'dist', 'main', 'mcp', 'stdio-entry.js'),
+  });
 }
 

@@ -638,6 +638,7 @@ link-terminal-demo/
 
 ### 变更记录（相对原计划）
 
+- **2026-06-15（Agent 自动接入）** — 新增产品内 Agent Integrations：Renderer 提供“Agent 集成”面板，用户显式点击安装/修复后，Main IPC 调用 Electron-free `AgentIntegrationManager` 自动检测并写入本机 Agent MCP 配置。默认支持 VS Code Copilot（`User/mcp.json` 顶层 `servers.linkterm`，写入 `type: 'stdio'`）、Claude Desktop（`claude_desktop_config.json` 顶层 `mcpServers.linkterm`）和 Cursor（`~/.cursor/mcp.json` 顶层 `mcpServers.linkterm`）；core 仍保留 VS Code 旧式 `settings.json` 字面量 `chat.mcpServers.linkterm` 兼容能力。安全决策：不静默写入；写入前备份原始文本；invalid JSON 拒绝覆盖；VS Code JSONC 注释/尾逗号兼容；按 target 串行安装并使用唯一 sidecar 路径避免同秒/并发备份覆盖；外部 Agent 启动命令使用 Electron/LinkTerm runtime 的 Node mode 直接执行 `dist/main/mcp/stdio-entry.js` 独立 stdio 入口，避免启动 Electron UI 主入口时被 VS Code/Electron Host 的 `ELECTRON_RUN_AS_NODE` 环境污染触发 `BrowserWindow` 导出错误或无响应。
 - **2026-06-13** — Phase 4 实施 + 复审。澄清问题落定如下决策：仅 Stdio transport（暂不做本地 TCP）；snake_case 工具名；close_session 仅关闭 transport 保留 transcript；send_and_wait 基础版仅等首条 device 输出 + timeout。
 - **2026-06-13 (修正)** — 复审发现 7 类问题并全部修复：
   1. `server.ts` 加 `stopping` Promise 防并发关闭；`start()` 失败时清空 `starting`；start 看到正在 stop 时先等待。

@@ -15,6 +15,11 @@
 import { app, BrowserWindow } from 'electron';
 import { createMainWindow, handleWindowClose } from './app-lifecycle.js';
 import { registerIpcHandlers, type MainProcessContext } from './ipc/index.js';
+import {
+  isMcpStdioMode,
+  shouldCreateMainWindow,
+  shouldQuitForMissingSingleInstanceLock,
+} from './startup-mode.js';
 
 let mainWindow: BrowserWindow | null = null;
 let context: MainProcessContext | null = null;
@@ -29,26 +34,37 @@ export function getMainWindow(): BrowserWindow | null {
   return mainWindow;
 }
 
-const singleInstanceLock = app.requestSingleInstanceLock();
+const mcpStdioMode = isMcpStdioMode(process.env);
+const singleInstanceLock = mcpStdioMode ? false : app.requestSingleInstanceLock();
 
-if (!singleInstanceLock) {
+if (shouldQuitForMissingSingleInstanceLock({
+  hasSingleInstanceLock: singleInstanceLock,
+  isMcpStdioMode: mcpStdioMode,
+})) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  });
+  if (singleInstanceLock) {
+    app.on('second-instance', () => {
+      if (!mainWindow) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    });
+  }
 
   app.whenReady().then(async () => {
     context = await registerIpcHandlers({ getMainWindow });
-    mainWindow = createMainWindow();
+    if (shouldCreateMainWindow({
+      hasSingleInstanceLock: singleInstanceLock,
+      isMcpStdioMode: mcpStdioMode,
+    })) {
+      mainWindow = createMainWindow();
 
-    mainWindow.on('closed', () => {
-      mainWindow = null;
-    });
+      mainWindow.on('closed', () => {
+        mainWindow = null;
+      });
 
-    handleWindowClose(mainWindow);
+      handleWindowClose(mainWindow);
+    }
   });
 
   app.on('window-all-closed', () => {
@@ -72,7 +88,7 @@ if (!singleInstanceLock) {
 
   app.on('activate', () => {
     // macOS 习惯：Dock 图标点击时若无窗口则重建一个
-    if (!mainWindow) {
+    if (!mcpStdioMode && !mainWindow) {
       mainWindow = createMainWindow();
       mainWindow.on('closed', () => {
         mainWindow = null;

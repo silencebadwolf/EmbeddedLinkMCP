@@ -18,6 +18,16 @@ import type {
   ConnectionType,
 } from './types.js';
 import type { TranscriptEventEnvelope, SerializedTranscriptEvent } from './transcript-ipc-types.js';
+import type {
+  AgentIntegrationInstallResult,
+  AgentIntegrationStatus,
+  AgentIntegrationTargetId,
+} from './agent-integrations.js';
+export type {
+  AgentIntegrationInstallResult,
+  AgentIntegrationStatus,
+  AgentIntegrationTargetId,
+} from './agent-integrations.js';
 
 /**
  * IPC 标准成功结果。
@@ -134,7 +144,7 @@ export interface SerialNamespace {
   /**
    * 订阅串口插拔变化；返回 unsubscribe 函数。
    *
-   * 注意：preload 不暴露 ipcRenderer，渲染端只能用 unsubscribe，不能用 channel.removeAllListeners。
+   * 注意：preload 不暴露 ipcRenderer，渲染端只能用 unsubscribe，不能用 channel.removeAllListeners.
    */
   onPortChanged(handler: (ports: ReadonlyArray<SerialPortInfo>) => void): Unsubscribe;
 }
@@ -173,10 +183,10 @@ export interface NonSensitivePrefill {
 
 /**
  * MCP `ui_configure` 工具的判别联合 patch；由主进程通过 `UI_STATE_PATCH` channel
- * 广播给渲染端。renderer 在 store 里 dispatch 对应 action。
+ * 广播给渲染端。renderer 在 store 里 dispatch 对应 action.
  *
  * Phase 10：fire-and-forget 单向广播 —— evidence 返回的是"已发送的 patch"快照，
- * 不等待 store 应用回执。AI 客户端如需验证可立即调用 `ui_screenshot`。
+ * 不等待 store 应用回执。AI 客户端如需验证可立即调用 `ui_screenshot`.
  */
 export type UiStatePatch =
   | { action: 'set_locale'; locale: 'en' | 'zh' }
@@ -192,9 +202,9 @@ export type UiStatePatch =
  */
 export interface UiNamespace {
   /**
-   * 订阅 `UI_STATE_PATCH` 主→渲染推送；返回 unsubscribe。
+   * 订阅 `UI_STATE_PATCH` 主→渲染推送；返回 unsubscribe.
    *
-   * 与 transcript subscriber 同生命周期：webContents 销毁时主进程自动清理订阅。
+   * 与 transcript subscriber 同生命周期：webContents 销毁时主进程自动清理订阅.
    */
   onStatePatch(handler: (patch: UiStatePatch) => void): Unsubscribe;
 }
@@ -240,6 +250,14 @@ export interface ConnectionsNamespace {
   delete(req: { profileId: ConnectionProfileId }): Promise<PreloadResult<{ deleted: true }>>;
 }
 
+/** Agent MCP 集成命名空间。 */
+export interface AgentIntegrationsNamespace {
+  /** 检测本机支持的 Agent 配置状态。 */
+  list(): Promise<PreloadResult<ReadonlyArray<AgentIntegrationStatus>>>;
+  /** 安装或修复一个 Agent 的 LinkTerm MCP 配置；主进程会在写入前备份。 */
+  install(req: { targetId: AgentIntegrationTargetId }): Promise<PreloadResult<AgentIntegrationInstallResult>>;
+}
+
 /**
  * `window.linkterm` 的完整类型。
  *
@@ -251,6 +269,7 @@ export interface PreloadAPI {
   transcript: TranscriptNamespace;
   ui: UiNamespace;
   connections: ConnectionsNamespace;
+  agentIntegrations: AgentIntegrationsNamespace;
 }
 
 declare global {
