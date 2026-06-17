@@ -1,12 +1,11 @@
 /**
- * JLinkAdapter：probe lifecycle 真实，其它 stub 抛 NOT_IMPLEMENTED。
+ * JLinkAdapter：probe lifecycle 真实；非 lifecycle 方法必须先校验 probeId。
  */
 
 import { describe, expect, it } from 'vitest';
 import {
   JLinkAdapter,
   JLinkInvalidStateError,
-  JLinkNotImplementedError,
   ProbeNotFoundError,
 } from '@/jlink/index.js';
 
@@ -64,14 +63,8 @@ describe('JLinkAdapter', () => {
     });
   });
 
-  describe('non-lifecycle methods are NOT_IMPLEMENTED', () => {
-    it('cpuHalt throws JLinkNotImplementedError after a real probe is connected', async () => {
-      const a = new JLinkAdapter();
-      const info = await a.probeConnect({ target: 'STM32F4' });
-      await expect(a.cpuHalt(info.probeId)).rejects.toBeInstanceOf(JLinkNotImplementedError);
-    });
-
-    it('non-lifecycle methods first validate probeId (ProbeNotFoundError before NOT_IMPLEMENTED)', async () => {
+  describe('non-lifecycle probe validation', () => {
+    it('non-lifecycle methods first validate probeId', async () => {
       const a = new JLinkAdapter();
       await expect(a.cpuHalt('00000000-0000-4000-8000-000000000000')).rejects.toBeInstanceOf(
         ProbeNotFoundError,
@@ -82,19 +75,6 @@ describe('JLinkAdapter', () => {
       await expect(
         a.flashDownload('00000000-0000-4000-8000-000000000000', Buffer.alloc(4)),
       ).rejects.toBeInstanceOf(ProbeNotFoundError);
-    });
-
-    it('JLinkNotImplementedError carries method name', async () => {
-      const a = new JLinkAdapter();
-      const info = await a.probeConnect({ target: 'STM32F4' });
-      try {
-        await a.flashErase(info.probeId);
-        throw new Error('should have thrown');
-      } catch (err) {
-        expect(err).toBeInstanceOf(JLinkNotImplementedError);
-        expect((err as JLinkNotImplementedError).method).toBe('flashErase');
-        expect((err as JLinkNotImplementedError).code).toBe('NOT_IMPLEMENTED');
-      }
     });
   });
 });

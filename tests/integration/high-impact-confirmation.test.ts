@@ -148,4 +148,17 @@ describe('Phase 12 / scenario 9 — high-impact confirm gate', () => {
       });
     });
   }
+
+  it('flash_write 在 confirm 缺失时先返回 CONFIRMATION_REQUIRED，不解码空白 base64', async () => {
+    const callsBefore = h.fake.callsOf('flashWrite').length;
+    const out = await callTool(h.client, 'flash_write', {
+      probeId: h.probeId,
+      address: 0x0800_0000,
+      dataBase64: '   \r\n\t  ',
+    });
+
+    expect(out.success).toBe(false);
+    expect((out.error as { code: string }).code).toBe('CONFIRMATION_REQUIRED');
+    expect(h.fake.callsOf('flashWrite').length).toBe(callsBefore);
+  });
 });

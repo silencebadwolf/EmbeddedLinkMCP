@@ -978,7 +978,8 @@ link-terminal-demo/
 | `src/jlink/types.ts` | IJLinkBackend 接口 + 11 个 DTO 类型 |
 | `src/jlink/errors.ts` | JLinkError 基类 + 8 个子类 |
 | `src/jlink/null-backend.ts` | 无 backend 时显式列出所有方法抛 NoBackendError |
-| `src/jlink/jlink-adapter.ts` | probe lifecycle 真实，其余抛 NOT_IMPLEMENTED（Phase 13+ 替换） |
+| `src/jlink/jlink-adapter.ts` | probe lifecycle 真实；CPU halt/run/step、断点、寄存器、内存、flash download/erase/write/verify、RTT、GDB server lifecycle、snapshot/crash diagnose 均通过 `src/jlink/` backend 抽象实现；缺硬件/运行态异常返回域错误，不再以 NOT_IMPLEMENTED 作为常规结果 |
+| `src/jlink/segger-command-runner.ts` | SEGGER Commander/GDB server/RTT telnet 受控封装：绝对路径、无 shell、bounded output、序列号脱敏、临时命令文件和可注入 runner/client |
 | `src/jlink/index.ts` | 桶导出 |
 | `src/mcp/surfaces/debug/schemas.ts` | 28 工具 Zod schema |
 | `src/mcp/surfaces/debug/binary-codec.ts` | 16 MiB 上限 + 严格 base64 校验 |
@@ -987,7 +988,9 @@ link-terminal-demo/
 | `src/mcp/surfaces/debug/tools-binary.ts` | 8 个二进制工具（base64 codec 集中处） |
 | `tests/fixtures/fake-jlink-backend.ts` | calls 账本 + failOnce + delayMs |
 | `tests/unit/jlink/null-backend.test.ts` | 全方法 NoBackendError 验证 |
-| `tests/unit/jlink/jlink-adapter.test.ts` | lifecycle + NOT_IMPLEMENTED 边界 |
+| `tests/unit/jlink/jlink-adapter.test.ts` | lifecycle + 非 lifecycle probeId 预校验边界 |
+| `tests/unit/jlink/jlink-adapter-flash.test.ts` | Commander 注入下 CPU/register/memory/breakpoint/RTT/snapshot/crash/flash adapter 行为 |
+| `tests/unit/jlink/segger-command-runner.test.ts` | Commander/GDB server/RTT runner 参数、命令脚本与解析行为 |
 | `tests/unit/mcp/debug/tools.test.ts` | 注册 + sensitivity + NO_BACKEND + roundtrip |
 | `tests/unit/mcp/debug/tools-binary.test.ts` | base64 翻译 + AbortSignal + BUFFER_TOO_LARGE |
 
@@ -1033,11 +1036,33 @@ diagnostics (2): `snapshot_capture/crash_diagnose`
 - **L（Simpl）**：`encodeBase64` no-op 删除内联；`abortable.ts` fold 进 `error-translate.ts`；`ok` helper 共享。
 - **L（Bugs/Conv）**：28 schemas 全 `.strict()` 拒未知字段。
 
-### 给 Phase 13 的 backlog
+### Phase 9 backend completion 追记（2026-06-17）
 
-- 替换 `JLinkAdapter` 内除 `requireProbe` 之外的所有 NOT_IMPLEMENTED 实现；不必触 MCP 层
-- gdb_server_start 真实 bind 后评估 host 回显语义（Phase 6 评审 M3-bugs）
-- AbortSignal 完成-时-超时争用：当前 cosmetic；真 backend 协作取消后再观察
+OpenSpec change `complete-jlink-debug-backend` 补齐生产 `JLinkAdapter` 已注册 debug tools 的 backend 行为：
+
+- CPU：`cpu_halt/run/step` 通过 Commander `h/g/s` 执行。
+- Register：`register_read/list/write` 解析 Commander dump 并做寄存器名和值校验。
+- Memory：`memory_read/write` 使用 bounded Buffer，MCP 边界继续保持 16 MiB base64 cap。
+- Breakpoint：`breakpoint_set/clear/list` 增加 per-probe breakpoint ledger，`clear(id)` 失败时不伪造成功、不移除账本。
+- RTT：新增 backend-owned RTT client/session，经已确认启动的 GDB server RTT telnet 端口连接；`read` 消费、`search` 不消费、`clear` drain。
+- Diagnostics：`snapshot_capture` 读取寄存器和请求内存片段；`crash_diagnose` 做 Cortex-M fault registers 最小解码，并在无 fault bit 时稳定降级为 `unknown`。
+- Flash：`flash_erase/write` 通过 Commander 实现；MCP 高影响确认门禁保持在 backend 调用和 base64 解码前。
+- 参考 `Klievan/jlink-mcp` 的 Commander/GDB/RTT/diagnostics 行为模型，但未复制源码；按 LinkTerm 的 backend DTO、evidence、错误翻译和安全边界重做。
+
+验证记录：
+
+- `pnpm test -- tests/unit/jlink tests/unit/mcp/debug` ✅ 6 files / 109 tests
+- `pnpm run build:main` ✅
+- `pnpm run lint` ✅
+- `pnpm run validate:licenses` ✅ 19 dependencies
+- `openspec validate --all` ✅ 4 items
+- 实机硬件验证：本会话未暴露 LinkTerm MCP J-Link 工具；按硬件纪律未使用 SEGGER/J-Link/GDB CLI 兜底。
+
+### 给 Phase 13+ 的 backlog
+
+- 通过 LinkTerm MCP/HTTP runtime bridge 做分阶段实机验证：connect → CPU/register → memory → breakpoint → RTT → snapshot/crash → flash erase/write。
+- gdb_server_start 真实 bind 后评估 host 回显语义（Phase 6 评审 M3-bugs）。
+- AbortSignal 完成-时-超时争用：当前 cosmetic；真 backend 协作取消后再观察。
 
 ### 依赖阶段：Phase 4
 
