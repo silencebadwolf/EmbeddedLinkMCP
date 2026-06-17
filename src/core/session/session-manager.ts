@@ -461,6 +461,7 @@ export class SessionManager extends EventEmitter {
       connectionType: meta.connectionType,
       label: meta.label ?? defaultSessionLabel(id, meta.connectionType),
       ...(meta.createdBy ? { createdBy: meta.createdBy } : {}),
+      ...(meta.serial ? { serial: meta.serial } : {}),
     };
   }
 }
@@ -472,10 +473,18 @@ export class SessionManager extends EventEmitter {
  * @returns 可安全跨 IPC/MCP 边界展示的元信息。
  */
 function sanitizeSessionMetadata(metadata: SessionMetadata | undefined): SessionMetadata {
+  const serial = metadata?.connectionType === 'serial' && metadata.serial !== undefined
+    ? {
+        port: metadata.serial.port,
+        baudRate: metadata.serial.baudRate,
+        mode: metadata.serial.mode,
+      }
+    : undefined;
   return {
     connectionType: metadata?.connectionType ?? DEFAULT_SESSION_METADATA.connectionType,
     ...(metadata?.label ? { label: metadata.label } : {}),
     ...(metadata?.createdBy ? { createdBy: metadata.createdBy } : {}),
+    ...(serial ? { serial } : {}),
   };
 }
 

@@ -245,13 +245,14 @@ export function registerControlProfileTools(
  * @param sessionManager 主进程共享 SessionManager
  * @returns 可打开串口 session 的函数
  */
-function defaultOpenSerial(sessionManager: SessionManager): ControlProfileOpenSerial {
+export function defaultOpenSerial(sessionManager: SessionManager): ControlProfileOpenSerial {
   return async (config: SerialSessionConfig): Promise<ControlProfileSerialActivation> => {
     const createConfig = config as SessionCreateRequestConfig;
     const session = await sessionManager.createAndOpen((id) => buildSession(id, createConfig), {
       connectionType: 'serial',
       label: config.label,
       createdBy: 'ai',
+      serial: { port: config.port, baudRate: config.baudRate, mode: config.mode },
     });
     return { sessionId: session.id, state: session.state };
   };

@@ -11,7 +11,7 @@ const commonSchema = {
 };
 
 const isSafeAbsoluteRoot = (p: string): boolean =>
-  path.isAbsolute(p) && !p.split(path.sep).includes('..');
+  path.isAbsolute(p) && !p.split(/[\\/]+/u).includes('..');
 
 const safeRootMessage = 'root must be an absolute path without ".." segments';
 

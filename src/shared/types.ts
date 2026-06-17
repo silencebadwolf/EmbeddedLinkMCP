@@ -167,6 +167,15 @@ export interface SessionMetadata {
   label?: string;
   /** 创建来源；仅用于展示/审计，不参与权限判断。 */
   createdBy?: Origin;
+  /** 串口会话的非敏感匹配键，用于控制工作流复用已打开端口。 */
+  serial?: {
+    /** 系统串口路径，如 COM3 或 /dev/ttyUSB0。 */
+    port: string;
+    /** 波特率。 */
+    baudRate: number;
+    /** 串口工作模式。 */
+    mode: SerialMode;
+  };
 }
 
 /** 后台 runtime 暴露给 UI/MCP 的会话摘要。 */
@@ -176,6 +185,11 @@ export interface SessionSummary {
   connectionType: ConnectionType;
   label: string;
   createdBy?: Origin;
+  serial?: {
+    port: string;
+    baudRate: number;
+    mode: SerialMode;
+  };
 }
 
 /** 后台 runtime 推送给 UI 的会话生命周期事件。 */

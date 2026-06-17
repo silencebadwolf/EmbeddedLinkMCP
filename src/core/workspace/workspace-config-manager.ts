@@ -93,7 +93,7 @@ export class WorkspaceSchemaVersionMismatchError extends Error {
  * @throws {WorkspaceInvalidRootError} 路径非绝对或含 ".."
  */
 export function assertValidRoot(root: string): void {
-  if (!path.isAbsolute(root) || root.split(path.sep).includes('..')) {
+  if (!path.isAbsolute(root) || root.split(/[\\/]+/u).includes('..')) {
     throw new WorkspaceInvalidRootError(root);
   }
 }

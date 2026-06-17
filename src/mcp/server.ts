@@ -36,6 +36,7 @@ import {
   registerControlProfileTools,
   type ControlProfileOpenSerial,
 } from './surfaces/control-profile/tools.js';
+import { registerControlWorkflowTools } from './surfaces/control-workflow/tools.js';
 import { registerDebugTools } from './surfaces/debug/tools.js';
 import { registerDebugBinaryTools } from './surfaces/debug/tools-binary.js';
 import { registerUiTools } from './surfaces/ui/tools.js';
@@ -152,6 +153,12 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
 
   if (options.controlProfileManager) {
     registerControlProfileTools(server, {
+      controlProfileManager: options.controlProfileManager,
+      sessionManager: options.sessionManager,
+      jlinkBackend,
+      controlProfileOpenSerial: options.controlProfileOpenSerial,
+    });
+    registerControlWorkflowTools(server, {
       controlProfileManager: options.controlProfileManager,
       sessionManager: options.sessionManager,
       jlinkBackend,

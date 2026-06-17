@@ -103,6 +103,9 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
           connectionType: config.type,
           label: config.label,
           createdBy: 'ai',
+          ...(config.type === 'serial'
+            ? { serial: { port: config.port, baudRate: config.baudRate, mode: config.mode } }
+            : {}),
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

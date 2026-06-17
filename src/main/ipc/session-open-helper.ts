@@ -22,6 +22,9 @@ export async function createAndOpenSession(
     connectionType: config.type,
     label: config.label ?? labelOverride,
     createdBy: 'human',
+    ...(config.type === 'serial'
+      ? { serial: { port: config.port, baudRate: config.baudRate, mode: config.mode } }
+      : {}),
   });
   try {
     await session.open();
