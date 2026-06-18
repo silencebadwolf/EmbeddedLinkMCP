@@ -21,8 +21,9 @@ import {
   shouldCreateMainWindow,
   shouldQuitForMissingSingleInstanceLock,
 } from './startup-mode.js';
-import { runtimeMetadataPath, readRuntimeMetadata } from '../mcp/runtime-metadata.js';
+import { runtimeMetadataPath } from '../mcp/runtime-metadata.js';
 import { startMcpStdioProxy, type McpStdioProxy } from '../mcp/stdio-proxy.js';
+import { waitForHealthyRuntimeMetadata } from '../mcp/electron-runtime-launcher-core.js';
 
 let mainWindow: BrowserWindow | null = null;
 let context: MainProcessContext | null = null;
@@ -147,23 +148,16 @@ function focusOrCreateMainWindow(): void {
 /** Start stdio proxy mode and attach to the runtime metadata written by the lock owner. */
 async function startProxyToExistingRuntime(): Promise<void> {
   const metadataPath = runtimeMetadataPath(app.getPath('userData'));
-  const metadata = await waitForRuntimeMetadata(metadataPath);
+  const metadata = await waitForHealthyRuntimeMetadata({
+    metadataPath,
+    timeoutMs: RUNTIME_METADATA_WAIT_MS,
+    retryMs: RUNTIME_METADATA_RETRY_MS,
+    delay,
+  });
   if (!metadata) {
-    throw new Error('LinkTerm MCP runtime metadata is unavailable; start LinkTerm once to initialize MCP.');
+    throw new Error('LinkTerm MCP runtime metadata is unavailable or unhealthy; start LinkTerm once to initialize MCP.');
   }
   stdioProxy = await startMcpStdioProxy(metadata);
-}
-
-/** Wait briefly for the lock owner to publish runtime metadata. */
-async function waitForRuntimeMetadata(metadataPath: string): Promise<Awaited<ReturnType<typeof readRuntimeMetadata>>> {
-  const deadline = Date.now() + RUNTIME_METADATA_WAIT_MS;
-  do {
-    const metadata = await readRuntimeMetadata(metadataPath);
-    if (metadata) return metadata;
-    if (Date.now() >= deadline) break;
-    await delay(RUNTIME_METADATA_RETRY_MS);
-  } while (true);
-  return null;
 }
 
 /** Install shutdown hooks for MCP-owner Electron instances. */

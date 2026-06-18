@@ -1,35 +1,28 @@
-import { spawn } from 'node:child_process';
-import { readRuntimeMetadata, type McpRuntimeMetadata } from './runtime-metadata.js';
+import { spawn, type ChildProcess } from 'node:child_process';
+import type { McpRuntimeMetadata } from './runtime-metadata.js';
 import { startMcpStdioProxy, type McpStdioProxy } from './stdio-proxy.js';
+import {
+  buildOwnerRuntimeEnv,
+  waitForHealthyRuntimeMetadata,
+} from './electron-runtime-launcher-core.js';
+
+const RUNTIME_METADATA_WAIT_MS = 10_000;
+const RUNTIME_METADATA_RETRY_MS = 100;
 
 /**
- * Return a child-process environment that forces LinkTerm MCP mode while clearing Electron's Node-mode flag.
- *
- * @returns Environment variables for the real Electron runtime child process.
- */
-function buildChildEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
-  env.LINKTERM_MCP_STDIO = '1';
-  env.LINKTERM_FORCE_DIST = '1';
-  return env;
-}
-
-/**
- * Launch the real Electron runtime as a child while this wrapper itself runs in Electron's Node mode.
+ * Launch the real Electron owner runtime while this wrapper owns MCP stdio.
  *
  * @param runtimePath Electron executable or packaged LinkTerm executable.
  * @param args Arguments forwarded to the real Electron runtime.
+ * @returns Spawned owner process.
  */
-function launchElectronRuntime(runtimePath: string, args: string[]): void {
+function launchElectronRuntime(runtimePath: string, args: string[]): ChildProcess {
   const child = spawn(runtimePath, args, {
-    env: buildChildEnv(),
-    stdio: ['pipe', 'pipe', 'pipe'],
+    env: buildOwnerRuntimeEnv(),
+    stdio: ['ignore', 'ignore', 'pipe'],
     windowsHide: true,
   });
 
-  if (child.stdin) process.stdin.pipe(child.stdin);
-  if (child.stdout) child.stdout.pipe(process.stdout);
   if (child.stderr) child.stderr.pipe(process.stderr);
 
   const terminate = (): void => {
@@ -46,11 +39,12 @@ function launchElectronRuntime(runtimePath: string, args: string[]): void {
   child.once('exit', (code, signal) => {
     process.off('SIGINT', terminate);
     process.off('SIGTERM', terminate);
-    if (typeof code === 'number') {
-      process.exit(code);
+    if (code !== 0) {
+      process.exit(typeof code === 'number' ? code : signal ? 1 : 0);
     }
-    process.exit(signal ? 1 : 0);
   });
+
+  return child;
 }
 
 /**
@@ -91,13 +85,26 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const metadata = await readRuntimeMetadata(metadataPath);
-  if (metadata) {
-    await runProxy(metadata);
+  const existing = await waitForHealthyRuntimeMetadata({
+    metadataPath,
+    timeoutMs: 0,
+    retryMs: RUNTIME_METADATA_RETRY_MS,
+  });
+  if (existing) {
+    await runProxy(existing);
     return;
   }
 
   launchElectronRuntime(runtimePath, forwardedArgs);
+  const metadata = await waitForHealthyRuntimeMetadata({
+    metadataPath,
+    timeoutMs: RUNTIME_METADATA_WAIT_MS,
+    retryMs: RUNTIME_METADATA_RETRY_MS,
+  });
+  if (!metadata) {
+    throw new Error('LinkTerm MCP runtime metadata is unavailable or unhealthy after owner startup.');
+  }
+  await runProxy(metadata);
 }
 
 main().catch((err: unknown) => {

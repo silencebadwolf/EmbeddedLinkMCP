@@ -37,10 +37,15 @@ import {
   type ControlProfileOpenSerial,
 } from './surfaces/control-profile/tools.js';
 import { registerControlWorkflowTools } from './surfaces/control-workflow/tools.js';
+import { createAgentRunbookInstructions } from './surfaces/agent-runbook/runbook.js';
+import { registerAgentRunbookTools } from './surfaces/agent-runbook/tools.js';
 import { registerDebugTools } from './surfaces/debug/tools.js';
 import { registerDebugBinaryTools } from './surfaces/debug/tools-binary.js';
 import { registerUiTools } from './surfaces/ui/tools.js';
 import type { CapturableWindow, UiStoreBridge } from './surfaces/ui/types.js';
+import { getRegisteredToolNames } from './registry.js';
+import { buildToolSetDiagnostics } from './tool-set.js';
+import { baseDiagnostics, type RuntimeDiagnosticsProvider } from './runtime-diagnostics.js';
 
 /** {@link createMcpServer} 的依赖容器。 */
 export interface CreateMcpServerOptions {
@@ -84,6 +89,8 @@ export interface CreateMcpServerOptions {
   transportFactory?: McpTransportFactory;
   /** 覆盖 server 自报版本号；默认从 APP_NAME / package.json 推导。 */
   serverInfo?: { name: string; version: string };
+  /** 只读 runtime 诊断；用于 get_app_status 区分 owner/proxy/stdio 等启动路径。 */
+  runtimeDiagnostics?: RuntimeDiagnosticsProvider;
 }
 
 /** {@link createMcpServer} 返回的句柄；start/stop 操控生命周期。 */
@@ -123,16 +130,29 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
         tools: {},
       },
       // SDK 没有专门的 schemaVersion 字段；我们把它放进 instructions，并让每个工具结果回填。
-      instructions:
-        `LinkTerm MCP terminal surface (schema=${LINKTERM_MCP_SCHEMA_VERSION}). ` +
-        'All writes are tagged origin="ai" and serialized with human input via the same WriteQueue. ' +
-        'Use sequence cursors with read_from_session to avoid missing concurrent human input.',
+      // instructions 会在 MCP initialize 阶段自动返回给客户端；必须包含足够的安全操作指南，
+      // 不能依赖用户提醒 AI 再去手动读取说明书。
+      instructions: createAgentRunbookInstructions(LINKTERM_MCP_SCHEMA_VERSION),
     },
   );
 
   registerTerminalTools(server, {
     sessionManager: options.sessionManager,
     serialDiscovery: options.serialDiscovery,
+  });
+
+  // Phase 9: 始终注册 28 个 debug 工具；未注入 backend 时挂 NullJLinkBackend，
+  // 让所有调用都返回结构化的 NO_BACKEND 拒绝（req §4.6）。
+  const jlinkBackend = options.jlinkBackend ?? new NullJLinkBackend();
+
+  registerAgentRunbookTools(server, {
+    sessionManager: options.sessionManager,
+    serialDiscovery: options.serialDiscovery,
+    controlProfileManager: options.controlProfileManager,
+    jlinkBackend,
+    getActiveWindow: options.getActiveWindow,
+    runtimeDiagnostics: options.runtimeDiagnostics ?? (() => baseDiagnostics(activeTransport === null ? 'not-started' : 'stdio')),
+    toolSetDiagnostics: () => buildToolSetDiagnostics(getRegisteredToolNames(server)),
   });
 
   if (options.workspaceConfigManager) {
@@ -146,10 +166,6 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
       evidenceFn,
     });
   }
-
-  // Phase 9: 始终注册 28 个 debug 工具；未注入 backend 时挂 NullJLinkBackend，
-  // 让所有调用都返回结构化的 NO_BACKEND 拒绝（req §4.6）。
-  const jlinkBackend = options.jlinkBackend ?? new NullJLinkBackend();
 
   if (options.controlProfileManager) {
     registerControlProfileTools(server, {

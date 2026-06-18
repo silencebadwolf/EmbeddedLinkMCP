@@ -13,6 +13,7 @@ import { JLinkAdapter } from '../../jlink/index.js';
 import type { IJLinkBackend } from '../../jlink/index.js';
 import { createMcpServer, type LinkTermMcpServer } from '../../mcp/index.js';
 import { startMcpHttpRuntimeServer, type McpHttpRuntimeServer } from '../../mcp/http-runtime-server.js';
+import { createRuntimeDiagnosticsProvider } from '../../mcp/runtime-diagnostics.js';
 import { runtimeMetadataPath } from '../../mcp/runtime-metadata.js';
 import type { CapturableWindow } from '../../mcp/surfaces/ui/types.js';
 import { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
@@ -119,6 +120,16 @@ export async function registerIpcHandlers(
       }
     : () => null;
 
+  const metadataPath = runtimeMetadataPath(app.getPath('userData'));
+  const ownerRuntimeDiagnostics = createRuntimeDiagnosticsProvider({
+    transportMode: 'http-owner',
+    metadataPath,
+  });
+  const directStdioRuntimeDiagnostics = createRuntimeDiagnosticsProvider({
+    transportMode: 'direct-stdio',
+    metadataPath,
+  });
+
   const mcpServer = createMcpServer({
     sessionManager,
     serialDiscovery,
@@ -130,6 +141,7 @@ export async function registerIpcHandlers(
     jlinkBackend,
     uiBridge,
     getActiveWindow,
+    runtimeDiagnostics: directStdioRuntimeDiagnostics,
   });
 
   const mcpHttpServer = await startMcpHttpRuntimeServer({
@@ -143,7 +155,8 @@ export async function registerIpcHandlers(
     jlinkBackend,
     uiBridge,
     getActiveWindow,
-    metadataPath: runtimeMetadataPath(app.getPath('userData')),
+    runtimeDiagnostics: ownerRuntimeDiagnostics,
+    metadataPath,
   });
 
   const unregisterSerial = registerSerialIpc(serialDiscovery);

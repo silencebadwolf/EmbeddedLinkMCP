@@ -35,7 +35,9 @@ export type EvidenceKind =
   | 'terminal_output'
   | 'debug_output'
   | 'ui_screenshot'
-  | 'workspace_config';
+  | 'workspace_config'
+  | 'agent_runbook'
+  | 'app_status';
 
 /**
  * 会话生命周期状态。

@@ -10,6 +10,7 @@ import {
   type ListToolsResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { APP_NAME } from '../shared/constants.js';
+import { createAgentRunbookInstructions } from './surfaces/agent-runbook/runbook.js';
 import { LINKTERM_MCP_SCHEMA_VERSION } from './versioning/version-check.js';
 import type { McpRuntimeMetadata } from './runtime-metadata.js';
 
@@ -44,9 +45,7 @@ export async function startMcpStdioProxy(metadata: McpRuntimeMetadata): Promise<
     },
     {
       capabilities: { tools: {} },
-      instructions:
-        `LinkTerm MCP stdio proxy (schema=${LINKTERM_MCP_SCHEMA_VERSION}). ` +
-        'Tool calls are forwarded to the active LinkTerm runtime so UI and AI share sessions.',
+      instructions: createAgentRunbookInstructions(LINKTERM_MCP_SCHEMA_VERSION),
     },
   );
 

@@ -145,6 +145,18 @@ export interface ToolDefinition<TSchema extends z.ZodType> {
   handler: ToolBusinessHandler<z.infer<TSchema>>;
 }
 
+const registeredToolNames = new WeakMap<McpServer, Set<string>>();
+
+/**
+ * 读取已通过 LinkTerm registry 注册的工具名。
+ *
+ * @param server McpServer 实例
+ * @returns 稳定排序后的工具名列表
+ */
+export function getRegisteredToolNames(server: McpServer): string[] {
+  return Array.from(registeredToolNames.get(server) ?? []).sort();
+}
+
 /**
  * 把一个 ToolDefinition 注册到 McpServer.
  *
@@ -161,6 +173,10 @@ export function registerTool<TSchema extends z.ZodType<{ correlationId?: string;
   // （ZodObject）比较自然，因此约束 TSchema 必须是 ZodObject。下面通过 unknown 转一次类型，避免 SDK
   // 内部繁琐的泛型推断与项目自身 ZodObject 的微小差异。
   const inputSchemaForSdk = (def.inputSchema as unknown as { shape: Record<string, z.ZodType> }).shape;
+
+  const tools = registeredToolNames.get(server) ?? new Set<string>();
+  tools.add(def.name);
+  registeredToolNames.set(server, tools);
 
   server.registerTool(
     def.name,
