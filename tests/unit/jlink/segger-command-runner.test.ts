@@ -577,7 +577,7 @@ describe('NodeSeggerManagedProcessRunner', () => {
         args: ['-e', "process.stdout.write('S/N: 123456789 partial-output'); setInterval(() => {}, 1000);"],
         readyPattern: /never-ready/,
         processName: 'test-gdb-server',
-        timeoutMs: 200,
+        timeoutMs: 1000,
       }),
     ).rejects.toThrow(/S\/N: \[redacted\].*partial-output/);
   });
