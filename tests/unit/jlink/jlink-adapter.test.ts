@@ -55,11 +55,20 @@ describe('JLinkAdapter', () => {
       expect(await a.probeDetect()).toEqual([]);
     });
 
-    it('multiple connects produce distinct ids', async () => {
+    it('reuses an existing handle when connecting the same probe selection twice', async () => {
       const a = new JLinkAdapter();
-      const a1 = await a.probeConnect({ target: 'STM32F4' });
-      const a2 = await a.probeConnect({ target: 'STM32F4' });
+      const a1 = await a.probeConnect({ target: 'STM32F4', interface: 'swd', speedKHz: 4000 });
+      const a2 = await a.probeConnect({ target: 'STM32F4', interface: 'swd', speedKHz: 4000 });
+      expect(a2.probeId).toBe(a1.probeId);
+      expect(await a.probeDetect()).toHaveLength(1);
+    });
+
+    it('keeps explicitly selected probes as distinct handles', async () => {
+      const a = new JLinkAdapter();
+      const a1 = await a.probeConnect({ target: 'STM32F4', serialNumber: '11111111' });
+      const a2 = await a.probeConnect({ target: 'STM32F4', serialNumber: '22222222' });
       expect(a1.probeId).not.toBe(a2.probeId);
+      expect(await a.probeDetect()).toHaveLength(2);
     });
   });
 

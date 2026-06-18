@@ -152,14 +152,19 @@ export class JLinkAdapter implements IJLinkBackend {
         actual: `"${opts?.target ?? ''}"`,
       });
     }
+    const normalizedOpts = this.#normalizeProbeConnectOptions(opts);
+    const existing = this.#findReusableProbe(normalizedOpts);
+    if (existing !== undefined) {
+      return this.#toProbeInfo(existing);
+    }
     const probeId = randomUUID();
     const handle: ProbeHandle = {
       probeId,
-      target: opts.target,
-      ...(opts.interface !== undefined ? { interface: opts.interface } : {}),
-      ...(opts.speedKHz !== undefined ? { speedKHz: opts.speedKHz } : {}),
-      ...(opts.serialNumber !== undefined ? { serialNumber: opts.serialNumber } : {}),
-      probeKey: this.#probeOperationKey(opts),
+      target: normalizedOpts.target,
+      ...(normalizedOpts.interface !== undefined ? { interface: normalizedOpts.interface } : {}),
+      ...(normalizedOpts.speedKHz !== undefined ? { speedKHz: normalizedOpts.speedKHz } : {}),
+      ...(normalizedOpts.serialNumber !== undefined ? { serialNumber: normalizedOpts.serialNumber } : {}),
+      probeKey: this.#probeOperationKey(normalizedOpts),
       busy: false,
       breakpoints: new Map<number, BreakpointSpec>(),
       nextBreakpointId: 1,
@@ -530,6 +535,31 @@ export class JLinkAdapter implements IJLinkBackend {
       ...(handle.speedKHz !== undefined ? { speedKHz: handle.speedKHz } : {}),
       ...(handle.serialNumber !== undefined ? { serialNumber: handle.serialNumber } : {}),
     };
+  }
+
+  /** 标准化连接选项，避免空白差异制造重复 handle。 */
+  #normalizeProbeConnectOptions(opts: ProbeConnectOptions): ProbeConnectOptions {
+    const target = opts.target.trim();
+    const serialNumber = opts.serialNumber?.trim();
+    return {
+      target,
+      ...(opts.interface !== undefined ? { interface: opts.interface } : {}),
+      ...(opts.speedKHz !== undefined ? { speedKHz: opts.speedKHz } : {}),
+      ...(serialNumber !== undefined && serialNumber !== '' ? { serialNumber } : {}),
+    };
+  }
+
+  /** 查找相同连接语义的已连接 handle，使控制配置反复激活保持幂等。 */
+  #findReusableProbe(opts: ProbeConnectOptions): ProbeHandle | undefined {
+    const probeKey = this.#probeOperationKey(opts);
+    return Array.from(this.#probes.values()).find(
+      (handle) =>
+        handle.probeKey === probeKey &&
+        handle.target === opts.target &&
+        handle.interface === opts.interface &&
+        handle.speedKHz === opts.speedKHz &&
+        handle.serialNumber === opts.serialNumber,
+    );
   }
 
   /** 生成物理 probe 级操作锁 key；未指定序列号时保守串行化所有默认选择操作。 */
