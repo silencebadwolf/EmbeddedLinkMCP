@@ -47,12 +47,18 @@ const confirmField = z
     'Must be true to execute this high-impact operation. Set false or omit to abort with CONFIRMATION_REQUIRED.',
   );
 
-/** base64 字符串字段：仅做字符集预检；上限/解码由 decodeBase64Capped 负责。 */
+/** base64 字符串字段：用于非确认门工具，schema 层先限制字符集和长度。 */
 const base64Field = z
   .string()
   .min(1)
   .max(MAX_BASE64_INPUT_LEN)
   .regex(/^[A-Za-z0-9+/=\r\n\t ]+$/, 'must be base64');
+
+/**
+ * 高影响二进制字段：未确认时必须先返回 CONFIRMATION_REQUIRED，不能暴露 base64
+ * 解析或大小细节；确认后的严格校验和上限由 decodeBase64Capped 负责。
+ */
+const highImpactBase64Field = z.string().min(1);
 
 /** 32 位地址字段；非负整数。 */
 const addressField = z.number().int().nonnegative();
@@ -216,8 +222,8 @@ export const flashDownloadInputSchema = z
     ...commonSchema,
     ...abortableMixin,
     probeId: probeIdField,
-    /** 烧录 binary 的 base64；上限 16 MiB。 */
-    binaryBase64: base64Field,
+    /** 烧录 binary 的 base64；确认后由 decodeBase64Capped 执行严格校验和 16 MiB 上限。 */
+    binaryBase64: highImpactBase64Field,
     address: addressField.optional(),
     verify: z.boolean().optional(),
     confirm: confirmField,
@@ -239,7 +245,7 @@ export const flashWriteInputSchema = z
     ...commonSchema,
     probeId: probeIdField,
     address: addressField,
-    dataBase64: base64Field,
+    dataBase64: highImpactBase64Field,
     confirm: confirmField,
   })
   .strict();
@@ -345,6 +351,16 @@ export const crashDiagnoseInputSchema = z
   })
   .strict();
 
+export const commanderScriptInputSchema = z
+  .object({
+    ...commonSchema,
+    ...abortableMixin,
+    probeId: probeIdField,
+    commands: z.array(z.string().min(1).max(256)).min(1).max(64),
+    confirm: confirmField,
+  })
+  .strict();
+
 // =====================================================================
 // inferred input types
 // =====================================================================
@@ -385,3 +401,4 @@ export type GdbServerStopInput = z.infer<typeof gdbServerStopInputSchema>;
 
 export type SnapshotCaptureInput = z.infer<typeof snapshotCaptureInputSchema>;
 export type CrashDiagnoseInput = z.infer<typeof crashDiagnoseInputSchema>;
+export type CommanderScriptInput = z.infer<typeof commanderScriptInputSchema>;

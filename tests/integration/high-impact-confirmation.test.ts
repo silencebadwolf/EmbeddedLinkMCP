@@ -1,15 +1,15 @@
 /**
  * Phase 12 — 边界场景 9：高影响 J-Link 工具的 confirm 闸门。
  *
- * 验证 5 个工具（flash_download / flash_write / flash_erase / cpu_reset /
- * gdb_server_start）× 3 种 confirm 状态：
+ * 验证 6 个工具（flash_download / flash_write / flash_erase / cpu_reset /
+ * gdb_server_start / jlink_commander_script）× 3 种 confirm 状态：
  *
  * - confirm 缺失 → `{ success: false, error: { code: 'CONFIRMATION_REQUIRED', details: { tool } } }`
  *   且 backend ledger 显示对应方法**未被调用**（守门发生在调 backend 之前）；
  * - confirm: false → 同上；
  * - confirm: true → backend 被调用（用 FakeJLinkBackend.callsOf 验证）。
  *
- * 设计：FakeJLinkBackend 对 5 个方法的成功路径已经实现，所以"调到了 backend"用
+ * 设计：FakeJLinkBackend 对这些方法的成功路径已经实现，所以"调到了 backend"用
  * `success: true` 也能间接断言；关键还是直接看 ledger，避免误把 zod-level reject
  * 也算成"门没守住"。
  */
@@ -19,6 +19,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SessionManager } from '@/core/session/session-manager.js';
 import { SerialDiscovery } from '@/transports/serial/serial-discovery.js';
 import { createMcpServer } from '@/mcp/index.js';
+import { MAX_BASE64_INPUT_LEN } from '@/mcp/limits.js';
 import type { LinkTermMcpServer } from '@/mcp/server.js';
 import { createInMemoryMcpTransportPair } from '../fixtures/mock-mcp-transport.js';
 import { FakeJLinkBackend } from '../fixtures/fake-jlink-backend.js';
@@ -93,6 +94,7 @@ const HIGH_IMPACT_TOOLS: Array<{
   { tool: 'flash_erase', backendMethod: 'flashErase', baseArgs: () => ({}) },
   { tool: 'cpu_reset', backendMethod: 'cpuReset', baseArgs: () => ({ halt: true }) },
   { tool: 'gdb_server_start', backendMethod: 'gdbServerStart', baseArgs: () => ({ port: 2331 }) },
+  { tool: 'jlink_commander_script', backendMethod: 'runCommanderScript', baseArgs: () => ({ commands: ['r', 'mem 0x08080000, 64'] }) },
 ];
 
 describe('Phase 12 / scenario 9 — high-impact confirm gate', () => {
@@ -149,16 +151,36 @@ describe('Phase 12 / scenario 9 — high-impact confirm gate', () => {
     });
   }
 
-  it('flash_write 在 confirm 缺失时先返回 CONFIRMATION_REQUIRED，不解码空白 base64', async () => {
-    const callsBefore = h.fake.callsOf('flashWrite').length;
-    const out = await callTool(h.client, 'flash_write', {
+  it.each([
+    {
+      tool: 'flash_download',
+      backendMethod: 'flashDownload',
+      args: { binaryBase64: '@@@' },
+    },
+    {
+      tool: 'flash_write',
+      backendMethod: 'flashWrite',
+      args: { address: 0x0800_0000, dataBase64: '@@@' },
+    },
+    {
+      tool: 'flash_download',
+      backendMethod: 'flashDownload',
+      args: { binaryBase64: 'A'.repeat(MAX_BASE64_INPUT_LEN + 4) },
+    },
+    {
+      tool: 'flash_write',
+      backendMethod: 'flashWrite',
+      args: { address: 0x0800_0000, dataBase64: 'A'.repeat(MAX_BASE64_INPUT_LEN + 4) },
+    },
+  ])('$tool 在 confirm 缺失时先返回 CONFIRMATION_REQUIRED，不解码畸形或超长 base64', async ({ tool, backendMethod, args }) => {
+    const callsBefore = h.fake.callsOf(backendMethod).length;
+    const out = await callTool(h.client, tool, {
       probeId: h.probeId,
-      address: 0x0800_0000,
-      dataBase64: '   \r\n\t  ',
+      ...args,
     });
 
     expect(out.success).toBe(false);
     expect((out.error as { code: string }).code).toBe('CONFIRMATION_REQUIRED');
-    expect(h.fake.callsOf('flashWrite').length).toBe(callsBefore);
+    expect(h.fake.callsOf(backendMethod).length).toBe(callsBefore);
   });
 });

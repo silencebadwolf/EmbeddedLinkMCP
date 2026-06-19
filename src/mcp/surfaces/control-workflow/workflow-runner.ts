@@ -33,11 +33,30 @@ export interface ControlWorkflowRunnerDeps {
   openSerial: ControlProfileOpenSerial;
 }
 
+/** run_control_workflow 的可选后台 job 集成点。 */
+export interface ControlWorkflowRunOptions {
+  signal?: AbortSignal;
+  onUpdate?: (data: ControlWorkflowData) => void;
+}
+
 interface ResolvedFirmware {
   absolutePath: string;
   baseAddress: number;
   verify: boolean;
   binary: Buffer;
+  timeoutMs?: number;
+  parameterSources: {
+    filePath: 'profile' | 'request';
+    baseAddress: 'profile' | 'request';
+    verify: 'default' | 'profile' | 'request';
+    timeoutMs: 'default' | 'request';
+  };
+}
+
+interface JLinkParameterSources {
+  target: 'profile';
+  interface: 'linkterm-default' | 'profile';
+  speedKHz: 'linkterm-default' | 'profile';
 }
 
 interface SpeedPolicyEvidence {
@@ -58,6 +77,8 @@ interface WorkflowContext {
   serialSessionId?: string;
   observeStartCursor?: number;
   probe?: Omit<ProbeInfo, 'serialNumber'>;
+  signal?: AbortSignal;
+  onUpdate?: (data: ControlWorkflowData) => void;
 }
 
 interface CommanderAvailability {
@@ -99,7 +120,9 @@ const DEFAULT_OBSERVE_MARKERS = ['msh', 'RT-Thread', 'ready', 'boot'] as const;
 export async function runControlWorkflow(
   deps: ControlWorkflowRunnerDeps,
   input: RunControlWorkflowInput,
+  options: ControlWorkflowRunOptions = {},
 ): Promise<ControlWorkflowData> {
+  throwIfAborted(options.signal);
   const profile = await deps.controlProfileManager.load(input.root);
   const ctx: WorkflowContext = {
     input,
@@ -109,6 +132,8 @@ export async function runControlWorkflow(
     nextActions: [],
     summary: emptySummary(),
   };
+  if (options.signal !== undefined) ctx.signal = options.signal;
+  if (options.onUpdate !== undefined) ctx.onUpdate = options.onUpdate;
 
   pushStep(ctx, 'load_profile', 'passed', { profileLoaded: true });
 
@@ -116,42 +141,52 @@ export async function runControlWorkflow(
     throw new ConfirmationRequiredError('run_control_workflow');
   }
 
+  throwIfAborted(ctx.signal);
   const firmware = await preflight(ctx, deps.jlinkBackend);
   if (ctx.failedStep !== undefined) {
     return toData(ctx);
   }
 
+  throwIfAborted(ctx.signal);
   if (input.dryRun === true) {
     pushDryRunSteps(ctx);
     return toData(ctx);
   }
 
   if (needsSerial(input)) {
+    throwIfAborted(ctx.signal);
     const serialReady = await openSerialStep(ctx, deps.openSerial, deps.sessionManager);
     if (!serialReady) return toData(ctx);
   }
 
+  throwIfAborted(ctx.signal);
   await connectProbeStep(ctx, deps.jlinkBackend);
 
   if (needsFlash(input)) {
+    throwIfAborted(ctx.signal);
     await flashStep(ctx, deps.jlinkBackend, firmware);
     if (ctx.failedStep !== undefined) return toData(ctx);
   }
 
   if (needsSerial(input)) {
+    throwIfAborted(ctx.signal);
     prepareSerialObservation(ctx, deps.sessionManager);
   }
 
   if (needsReset(input)) {
+    throwIfAborted(ctx.signal);
     await resetStep(ctx, deps.jlinkBackend);
   }
 
   if (needsSerial(input)) {
+    throwIfAborted(ctx.signal);
     await observeSerialStep(ctx, deps.sessionManager);
   }
 
   if (shouldCaptureDebug(ctx)) {
+    throwIfAborted(ctx.signal);
     await startGdbServerStep(ctx, deps.jlinkBackend);
+    throwIfAborted(ctx.signal);
     await diagnoseStep(ctx, deps.jlinkBackend);
   }
 
@@ -337,14 +372,30 @@ async function connectProbeStep(ctx: WorkflowContext, jlinkBackend: IJLinkBacken
     if (jlink?.target === undefined) {
       throw new ToolError(ERROR_CODES.INVALID_ARGUMENT, 'jlink.target is required');
     }
-    const opts: ProbeConnectOptions = { target: jlink.target };
-    if (jlink.interface !== undefined) opts.interface = jlink.interface;
+    if (jlink.interface === undefined) {
+      throw new ToolError(ERROR_CODES.INVALID_ARGUMENT, 'jlink.interface is required');
+    }
+    if (jlink.speedKHz === undefined) {
+      throw new ToolError(ERROR_CODES.INVALID_ARGUMENT, 'jlink.speedKHz is required');
+    }
+    const opts: ProbeConnectOptions = { target: jlink.target, interface: jlink.interface };
     const speedPolicy = resolveSafeSpeedPolicy(ctx);
     const speedKHz = speedPolicy?.resolvedSpeedKHz ?? jlink.speedKHz;
     const probe = await connectProbeWithConfiguredSpeed(jlinkBackend, opts, speedKHz);
     ctx.probe = sanitizeProbeForMcp(probe);
     ctx.summary.probeConnected = true;
-    const evidence: { probe: Omit<ProbeInfo, 'serialNumber'>; speedPolicy?: SpeedPolicyEvidence } = { probe: ctx.probe };
+    const evidence: {
+      probe: Omit<ProbeInfo, 'serialNumber'>;
+      parameterSources: JLinkParameterSources;
+      speedPolicy?: SpeedPolicyEvidence;
+    } = {
+      probe: ctx.probe,
+      parameterSources: {
+        target: 'profile',
+        interface: jlink.interface === undefined ? 'linkterm-default' : 'profile',
+        speedKHz: jlink.speedKHz === undefined ? 'linkterm-default' : 'profile',
+      },
+    };
     if (speedPolicy !== undefined) evidence.speedPolicy = speedPolicy;
     pushStep(ctx, 'connect_probe', 'passed', evidence, started);
   } catch (err) {
@@ -373,8 +424,8 @@ async function flashStep(
     const result = await jlinkBackend.flashDownload(
       probeId,
       firmware.binary,
-      { address: firmware.baseAddress, verify: firmware.verify },
-      undefined,
+      { address: firmware.baseAddress, verify: firmware.verify, timeoutMs: firmware.timeoutMs },
+      ctx.signal,
     );
     ctx.summary.flashed = true;
     ctx.summary.verified = result.verified;
@@ -387,6 +438,8 @@ async function flashStep(
         bytesWritten: result.bytesWritten,
         verified: result.verified,
         address: firmware.baseAddress,
+        timeoutMs: firmware.timeoutMs,
+        parameterSources: firmware.parameterSources,
       },
       started,
     );
@@ -451,17 +504,20 @@ async function observeSerialStep(
   const timeoutMs = ctx.input.observe?.timeoutMs ?? DEFAULT_OBSERVE_TIMEOUT_MS;
   let observedText = '';
 
-  const outcome = await sessionManager.waitFor(
-    sessionId,
-    (event) => {
-      if (event.type !== 'data' || event.origin !== 'device' || event.data === undefined) {
-        return false;
-      }
-      observedText += Buffer.from(event.data).toString('utf8');
-      if (markers.length === 0) return true;
-      return markers.some((marker) => observedText.includes(marker));
-    },
-    { timeoutMs, replayHistorySince: startCursor },
+  const outcome = await raceAbort(
+    sessionManager.waitFor(
+      sessionId,
+      (event) => {
+        if (event.type !== 'data' || event.origin !== 'device' || event.data === undefined) {
+          return false;
+        }
+        observedText += Buffer.from(event.data).toString('utf8');
+        if (markers.length === 0) return true;
+        return markers.some((marker) => observedText.includes(marker));
+      },
+      { timeoutMs, replayHistorySince: startCursor },
+    ),
+    ctx.signal,
   );
 
   const readBack = sessionManager.read(sessionId, startCursor);
@@ -513,7 +569,7 @@ async function observeSerialStep(
 async function startGdbServerStep(ctx: WorkflowContext, jlinkBackend: IJLinkBackend): Promise<void> {
   const started = Date.now();
   try {
-    const handle = await jlinkBackend.gdbServerStart(requireProbeId(ctx));
+    const handle = await jlinkBackend.gdbServerStart(requireProbeId(ctx), undefined, ctx.signal);
     ctx.summary.gdbServerStarted = true;
     pushStep(ctx, 'gdb_server_start', 'passed', { handle }, started);
   } catch (err) {
@@ -649,9 +705,18 @@ async function resolveFirmware(
   firmwareOverride: RunControlWorkflowInput['firmware'],
   profile: ControlProfile,
 ): Promise<ResolvedFirmware> {
+  const filePathSource = firmwareOverride?.filePath !== undefined ? 'request' : 'profile';
+  const baseAddressSource = firmwareOverride?.baseAddress !== undefined ? 'request' : 'profile';
+  const verifySource = firmwareOverride?.verify !== undefined
+    ? 'request'
+    : profile.flash?.verify !== undefined
+      ? 'profile'
+      : 'default';
+  const timeoutSource = firmwareOverride?.timeoutMs !== undefined ? 'request' : 'default';
   const filePath = firmwareOverride?.filePath ?? profile.flash?.binary;
   const baseAddressHex = firmwareOverride?.baseAddress ?? profile.flash?.baseAddress;
   const verify = firmwareOverride?.verify ?? profile.flash?.verify ?? false;
+  const timeoutMs = firmwareOverride?.timeoutMs;
   if (filePath === undefined || baseAddressHex === undefined) {
     throw new ToolError(
       ERROR_CODES.INVALID_ARGUMENT,
@@ -666,7 +731,14 @@ async function resolveFirmware(
     absolutePath: firmware.absolutePath,
     baseAddress: parseHexAddress(baseAddressHex),
     verify,
+    timeoutMs,
     binary: firmware.binary,
+    parameterSources: {
+      filePath: filePathSource,
+      baseAddress: baseAddressSource,
+      verify: verifySource,
+      timeoutMs: timeoutSource,
+    },
   };
 }
 
@@ -823,6 +895,27 @@ function resolveSafeSpeedPolicy(ctx: WorkflowContext): SpeedPolicyEvidence | und
   };
 }
 
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted === true) {
+    throw new ToolError(ERROR_CODES.ABORTED, 'Control workflow job was aborted');
+  }
+}
+
+async function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  throwIfAborted(signal);
+  if (signal === undefined) return promise;
+  return Promise.race([
+    promise,
+    new Promise<T>((_resolve, reject) => {
+      signal.addEventListener(
+        'abort',
+        () => reject(new ToolError(ERROR_CODES.ABORTED, 'Control workflow job was aborted')),
+        { once: true },
+      );
+    }),
+  ]);
+}
+
 function needsFlash(input: RunControlWorkflowInput): boolean {
   return input.mode === 'flash-observe' || input.mode === 'flash-observe-diagnose';
 }
@@ -904,6 +997,7 @@ function pushStep(
   if (evidence !== undefined) step.evidence = evidence;
   if (error !== undefined) step.error = error;
   ctx.steps.push(step);
+  ctx.onUpdate?.(toData(ctx));
 }
 
 function failStepAndThrow(
@@ -940,6 +1034,9 @@ function classifyWorkflowFailure(id: string, err: ToolError): ControlWorkflowFai
   if (err.code === ERROR_CODES.PROBE_NOT_FOUND) return 'probe_not_found';
   if (err.code === ERROR_CODES.ABORTED && /timeout|timed out/i.test(message)) return 'command_timeout';
   if (id !== 'flash' || err.code !== ERROR_CODES.JLINK_OPERATION_FAILED) return undefined;
+  if (/Timeout while erasing sectors|Failed to erase sectors/i.test(message) && /RAMCode did not respond/i.test(message)) {
+    return 'flash_sector_erase_timeout';
+  }
   if (/preserve target RAM|prepare for programming|RAMCode did not respond/i.test(message)) {
     return 'flash_ram_preserve_failed';
   }
@@ -952,6 +1049,14 @@ function classifyWorkflowFailure(id: string, err: ToolError): ControlWorkflowFai
 
 function addNextActionForFailure(ctx: WorkflowContext, failureCode: ControlWorkflowFailureCode): void {
   if (failureCode === 'flash_ram_preserve_failed') {
+    if (ctx.profile.jlink?.speedKHz === SAFE_RAW_FLASH_SPEED_KHZ) {
+      ctx.nextActions.push({
+        kind: 'user_action',
+        message:
+          'J-Link 烧录前保存目标 RAM 失败，且当前已使用 4000 kHz；请检查 SEGGER device add-on/flash algorithm、目标板供电、NRST/BOOT、低功耗状态和写保护后再重试。',
+      });
+      return;
+    }
     ctx.nextActions.push({
       kind: 'retry',
       tool: 'run_control_workflow',
@@ -959,6 +1064,13 @@ function addNextActionForFailure(ctx: WorkflowContext, failureCode: ControlWorkf
         'J-Link 烧录前保存目标 RAM 失败；请将 control-profile 的 jlink.speedKHz 固定为 4000 kHz 后，带 confirm=true 重试高层工作流。',
       argsPatch: { jlink: { speedKHz: SAFE_RAW_FLASH_SPEED_KHZ } },
       requiresConfirm: true,
+    });
+  }
+  if (failureCode === 'flash_sector_erase_timeout') {
+    ctx.nextActions.push({
+      kind: 'user_action',
+      message:
+        'J-Link 在擦除 flash sector 时 RAMCode 超时；请优先检查 SEGGER 是否安装支持 AT32F435VGT7 的 device add-on/flash algorithm，并确认目标板供电、BOOT/NRST、写保护和高地址 flash sector 状态后再重试。',
     });
   }
 }

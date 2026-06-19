@@ -156,32 +156,34 @@ describe('MCP debug binary tools', () => {
       expect((out.error as { code: string }).code).toBe('ABORTED');
     });
 
-    it('rejects oversize payload at schema cap (Zod-level reject)', async () => {
-      // 16 MiB + 256 bytes raw → base64 length 越过 schema MAX_BASE64_INPUT_LEN，
-      // Zod 阶段直接 reject，SDK 返回 isError + InvalidParams 文本。Phase 10 起
-      // schema cap 与 codec maxStripped 对齐，BUFFER_TOO_LARGE 仅作为 codec
-      // defense-in-depth（如 schema 被绕过时）。
+    it('rejects confirmed oversize payload with BUFFER_TOO_LARGE before backend call', async () => {
       const big = Buffer.alloc(16 * 1024 * 1024 + 256, 0);
-      const res = await h.client.callTool({
-        name: 'flash_download',
-        arguments: { probeId: h.probeId, binaryBase64: big.toString('base64') },
+      const callsBefore = h.fake.callsOf('flashDownload').length;
+
+      const out = await callTool(h.client, 'flash_download', {
+        probeId: h.probeId,
+        binaryBase64: big.toString('base64'),
+        confirm: true,
       });
-      expect(res.isError).toBe(true);
-      const text = (res.content as Array<{ text: string }>)[0]?.text ?? '';
-      expect(text).toMatch(/Invalid arguments|Input validation|too_big/);
+
+      expect(out.success).toBe(false);
+      expect((out.error as { code: string }).code).toBe('BUFFER_TOO_LARGE');
+      expect(h.fake.callsOf('flashDownload')).toHaveLength(callsBefore);
     });
 
-    it('rejects oversize base64 at schema cap (Zod precheck, no Buffer alloc)', async () => {
-      // 长度 = MAX_BASE64_INPUT_LEN + 4 → 越过 schema .max() 4 字符。
-      // Zod 直接拒绝，绝不进入 codec / Buffer.from。
-      const justOverSchema = 'A'.repeat(Math.ceil((16 * 1024 * 1024 * 4) / 3 / 4) * 4 + 4);
-      const res = await h.client.callTool({
-        name: 'flash_download',
-        arguments: { probeId: h.probeId, binaryBase64: justOverSchema },
+    it('rejects confirmed oversize base64 with codec precheck and no backend call', async () => {
+      const justOverCap = 'A'.repeat(Math.ceil((16 * 1024 * 1024 * 4) / 3 / 4) * 4 + 4);
+      const callsBefore = h.fake.callsOf('flashDownload').length;
+
+      const out = await callTool(h.client, 'flash_download', {
+        probeId: h.probeId,
+        binaryBase64: justOverCap,
+        confirm: true,
       });
-      expect(res.isError).toBe(true);
-      const text = (res.content as Array<{ text: string }>)[0]?.text ?? '';
-      expect(text).toMatch(/Invalid arguments|Input validation|too_big/);
+
+      expect(out.success).toBe(false);
+      expect((out.error as { code: string }).code).toBe('BUFFER_TOO_LARGE');
+      expect(h.fake.callsOf('flashDownload')).toHaveLength(callsBefore);
     });
 
     it('rejects whitespace-only base64 with INVALID_ARGUMENT', async () => {

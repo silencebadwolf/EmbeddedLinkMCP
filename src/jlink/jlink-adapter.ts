@@ -19,6 +19,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
   BreakpointSpec,
+  CommanderScriptResult,
   CrashDiagnosis,
   FlashDownloadOptions,
   GdbServerHandle,
@@ -325,7 +326,7 @@ export class JLinkAdapter implements IJLinkBackend {
       return this.#commander.download(
         this.#toCommanderContext(handle),
         binary,
-        { address, verify: opts?.verify === true },
+        { address, verify: opts?.verify === true, timeoutMs: opts?.timeoutMs },
         signal,
       );
     });
@@ -455,6 +456,20 @@ export class JLinkAdapter implements IJLinkBackend {
   }
 
   // -- diagnostics ---------------------------------------------------
+
+  async runCommanderScript(
+    probeId: string,
+    commands: string[],
+    opts?: { timeoutMs?: number },
+    signal?: AbortSignal,
+  ): Promise<CommanderScriptResult> {
+    this.#throwIfAborted(signal);
+    const handle = this.#requireProbe(probeId);
+    return this.#withProbeOperation(handle, async () => {
+      this.#throwIfAborted(signal);
+      return this.#commander.runScript(this.#toCommanderContext(handle), commands, opts, signal);
+    });
+  }
 
   async snapshotCapture(probeId: string, ranges: MemoryRange[]): Promise<SnapshotResult> {
     const handle = this.#requireProbe(probeId);

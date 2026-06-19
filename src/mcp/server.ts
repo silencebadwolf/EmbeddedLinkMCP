@@ -37,6 +37,7 @@ import {
   type ControlProfileOpenSerial,
 } from './surfaces/control-profile/tools.js';
 import { registerControlWorkflowTools } from './surfaces/control-workflow/tools.js';
+import { ControlWorkflowJobManager } from './surfaces/control-workflow/job-manager.js';
 import { createAgentRunbookInstructions } from './surfaces/agent-runbook/runbook.js';
 import { registerAgentRunbookTools } from './surfaces/agent-runbook/tools.js';
 import { registerDebugTools } from './surfaces/debug/tools.js';
@@ -68,6 +69,8 @@ export interface CreateMcpServerOptions {
   controlProfileManager?: ControlProfileManager;
   /** 测试注入用串口激活函数；生产省略时走 SessionManager + buildSession。 */
   controlProfileOpenSerial?: ControlProfileOpenSerial;
+  /** 控制工作流后台 job 管理器；测试可注入以断言 job 生命周期。 */
+  controlWorkflowJobManager?: ControlWorkflowJobManager;
   /**
    * J-Link backend（Phase 9）。注入时 server 会注册 28 个 debug 工具；
    * 缺省时使用 NullJLinkBackend，工具仍然注册并对所有调用返回 NO_BACKEND
@@ -141,7 +144,7 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
     serialDiscovery: options.serialDiscovery,
   });
 
-  // Phase 9: 始终注册 28 个 debug 工具；未注入 backend 时挂 NullJLinkBackend，
+  // Phase 9+: 始终注册 debug 工具；未注入 backend 时挂 NullJLinkBackend，
   // 让所有调用都返回结构化的 NO_BACKEND 拒绝（req §4.6）。
   const jlinkBackend = options.jlinkBackend ?? new NullJLinkBackend();
 
@@ -179,6 +182,7 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
       sessionManager: options.sessionManager,
       jlinkBackend,
       controlProfileOpenSerial: options.controlProfileOpenSerial,
+      controlWorkflowJobManager: options.controlWorkflowJobManager,
     });
   }
 

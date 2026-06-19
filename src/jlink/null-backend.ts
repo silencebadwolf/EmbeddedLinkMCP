@@ -11,6 +11,7 @@
 
 import type {
   BreakpointSpec,
+  CommanderScriptResult,
   CrashDiagnosis,
   FlashDownloadOptions,
   GdbServerHandle,
@@ -182,6 +183,15 @@ export class NullJLinkBackend implements IJLinkBackend {
   }
 
   // -- diagnostics --
+
+  async runCommanderScript(
+    _probeId: string,
+    _commands: string[],
+    _opts?: { timeoutMs?: number },
+    _signal?: AbortSignal,
+  ): Promise<CommanderScriptResult> {
+    throw new NoBackendError();
+  }
 
   async snapshotCapture(_probeId: string, _ranges: MemoryRange[]): Promise<SnapshotResult> {
     throw new NoBackendError();

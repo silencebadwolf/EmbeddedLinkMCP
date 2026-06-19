@@ -1,16 +1,18 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SessionManager } from '@/core/session/session-manager.js';
-import { ControlProfileManager } from '@/core/workspace/index.js';
+import { ControlProfileManager, type FsPrimitives } from '@/core/workspace/index.js';
 import { createAgentRunbook, sanitizeControlProfileForRunbook } from '@/mcp/surfaces/agent-runbook/runbook.js';
 import { createMcpServer } from '@/mcp/index.js';
 import { LINKTERM_MCP_SCHEMA_VERSION } from '@/mcp/versioning/version-check.js';
 import type { LinkTermMcpServer } from '@/mcp/server.js';
 import type { CapturableWindow } from '@/mcp/surfaces/ui/types.js';
 import { SerialDiscovery } from '@/transports/serial/serial-discovery.js';
+import type { IJLinkBackend } from '@/jlink/types.js';
+import { FakeJLinkBackend } from '../../fixtures/fake-jlink-backend.js';
 import { createInMemoryMcpTransportPair } from '../../fixtures/mock-mcp-transport.js';
 
 interface Harness {
@@ -25,19 +27,22 @@ interface Harness {
 interface SetupOptions {
   includeControlProfileManager?: boolean;
   getActiveWindow?: () => CapturableWindow | null;
+  controlProfileManager?: ControlProfileManager;
+  jlinkBackend?: IJLinkBackend;
 }
 
 async function setup(options: SetupOptions = {}): Promise<Harness> {
   const root = await mkdtemp(path.join(tmpdir(), 'lt-agent-runbook-mcp-'));
   const manager = new SessionManager();
   const serialDiscovery = new SerialDiscovery({ listFn: async () => [] });
-  const controlProfileManager = new ControlProfileManager();
+  const controlProfileManager = options.controlProfileManager ?? new ControlProfileManager();
   const { server: serverTransport, client: clientTransport } = createInMemoryMcpTransportPair();
   const includeControlProfileManager = options.includeControlProfileManager ?? true;
   const mcp = createMcpServer({
     sessionManager: manager,
     serialDiscovery,
     ...(includeControlProfileManager ? { controlProfileManager } : {}),
+    ...(options.jlinkBackend ? { jlinkBackend: options.jlinkBackend } : {}),
     getActiveWindow: options.getActiveWindow,
     runtimeDiagnostics: () => ({
       identity: {
@@ -94,13 +99,24 @@ describe('agent runbook builder', () => {
     expect(runbook.markdown).toContain('UI');
     expect(runbook.markdown).toContain('CONFIRMATION_REQUIRED');
     expect(runbook.markdown).toContain('MUST NOT bypass LinkTerm');
-    expect(runbook.markdown).toContain('Call LinkTerm MCP tools sequentially');
-    expect(runbook.markdown).toContain('lightweight health-check call');
-    expect(runbook.markdown).toContain('get_app_status');
-    expect(runbook.markdown).toContain('Use ui_screenshot only when visual evidence is needed');
     expect(runbook.markdown).toContain('JLink.exe');
     expect(runbook.markdown).toContain('gdb');
     expect(runbook.markdown).toContain('VS Code task');
+    expect(runbook.markdown).toContain('Call LinkTerm MCP tools sequentially');
+    expect(runbook.markdown).toContain('lightweight health-check call');
+    expect(runbook.markdown).toContain('get_app_status');
+    expect(runbook.markdown).toContain('read-only');
+    expect(runbook.markdown).toContain('core tool');
+    expect(runbook.markdown).toContain('missing core tools');
+    expect(runbook.markdown).toContain('repair or restart');
+    expect(runbook.markdown).toContain('Use ui_screenshot only when visual evidence is needed');
+    expect(runbook.markdown).toContain('Commander script orchestration');
+    expect(runbook.markdown).toContain('design reference only');
+    expect(runbook.markdown).toContain('background');
+    expect(runbook.markdown).toContain('get_control_workflow_job_status');
+    expect(runbook.markdown).toContain('read_control_workflow_job');
+    expect(runbook.markdown).toContain('cancel_control_workflow_job');
+    expect(runbook.markdown).not.toMatch(/nRF52|cmds\.jlink|reference-repos|JLinkMCP\/main\.go/);
 
     expect(runbook.workflows.map((workflow) => workflow.id)).toEqual(
       expect.arrayContaining([
@@ -114,7 +130,12 @@ describe('agent runbook builder', () => {
     expect(runbook.workflows).toContainEqual(
       expect.objectContaining({
         id: 'flash_then_observe',
-        recommendedTools: expect.arrayContaining(['run_control_workflow']),
+        recommendedTools: expect.arrayContaining([
+          'run_control_workflow',
+          'get_control_workflow_job_status',
+          'read_control_workflow_job',
+          'cancel_control_workflow_job',
+        ]),
         riskLevel: 'high',
         requiresConfirmation: true,
         expectedEvidenceKind: 'debug_output',
@@ -197,12 +218,18 @@ describe('MCP agent runbook tool', () => {
     const instructions = h.client.getInstructions();
 
     expect(instructions).toContain('LinkTerm MCP Agent Runbook');
-    expect(instructions).toContain('MUST NOT bypass LinkTerm');
+    expect(instructions).toContain('LinkTerm MCP tools are the required path');
     expect(instructions).toContain('Call LinkTerm MCP tools sequentially');
     expect(instructions).toContain('lightweight health-check call');
     expect(instructions).toContain('get_app_status');
+    expect(instructions).toContain('read-only');
+    expect(instructions).toContain('core tool-set diagnostics');
+    expect(instructions).toContain('repair or restart the LinkTerm MCP runtime');
     expect(instructions).toContain('Use ui_screenshot only when visual evidence is needed');
     expect(instructions).toContain('run_control_workflow');
+    expect(instructions).toContain('background job mode');
+    expect(instructions).toContain('get_control_workflow_job_status');
+    expect(instructions).toContain('read_control_workflow_job');
     expect(instructions).toContain('confirm=true');
     expect(instructions).toContain('get_agent_runbook');
   });
@@ -282,6 +309,10 @@ describe('MCP agent runbook tool', () => {
     expect(evidence.data.app.runtime.toolSet.hash).toMatch(/^[a-f0-9]{64}$/);
     expect(evidence.data.app.runtime.toolSet.core).toMatchObject({ complete: true, missing: [] });
     expect(evidence.data.app.runtime.toolSet.core.expected).toContain('get_app_status');
+    expect(evidence.data.app.runtime.toolSet.core.expected).toContain('get_control_workflow_job_status');
+    expect(evidence.data.app.runtime.toolSet.core.expected).toContain('read_control_workflow_job');
+    expect(evidence.data.app.runtime.toolSet.core.expected).toContain('cancel_control_workflow_job');
+    expect(evidence.data.app.runtime.toolSet.core.expected).toContain('cleanup_control_workflow_jobs');
     expect(evidence.data.sessions).toEqual({ count: 0, items: [] });
     expect(evidence.data.serial).toEqual({ portCount: 0, ports: [] });
     expect(evidence.data.controlProfile.status).toBe('profile-not-found');
@@ -299,12 +330,15 @@ describe('MCP agent runbook tool', () => {
     const data = (out.evidence as {
       data: {
         app: { runtime: { toolSet: { core: { complete: boolean; missing: string[] } } } };
+        recommendedNextActions: string[];
       };
     }).data;
     expect(data.app.runtime.toolSet.core.complete).toBe(false);
     expect(data.app.runtime.toolSet.core.missing).toEqual(
       expect.arrayContaining(['activate_control_profile', 'run_control_workflow']),
     );
+    expect(data.recommendedNextActions.join('\n')).toContain('repair or restart the LinkTerm MCP runtime');
+    expect(data.recommendedNextActions.join('\n')).not.toMatch(/JLink\.exe|gdb|flash CLI|serial CLI|VS Code task/i);
   });
 
   it('checks UI availability without capturing a screenshot', async () => {
@@ -330,6 +364,63 @@ describe('MCP agent runbook tool', () => {
     const data = (out.evidence as { data: { ui: { available: boolean; screenshotCaptured: boolean } } }).data;
     expect(data.ui).toEqual({ available: true, screenshotCaptured: false });
     expect(captureCalls).toBe(0);
+  });
+
+  it('keeps startup status read-only across sessions, UI, J-Link, and workspace profile state', async () => {
+    await teardown(h);
+    const workspaceWrites: string[] = [];
+    const fs: FsPrimitives = {
+      readFile: async () => {
+        throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+      },
+      writeFile: async () => {
+        workspaceWrites.push('writeFile');
+      },
+      mkdir: async () => {
+        workspaceWrites.push('mkdir');
+      },
+      rename: async () => {
+        workspaceWrites.push('rename');
+      },
+      unlink: async () => {
+        workspaceWrites.push('unlink');
+      },
+      stat: async () => {
+        throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+      },
+    };
+    const controlProfileManager = new ControlProfileManager({ fs });
+    const jlinkBackend = new FakeJLinkBackend();
+    let captureCalls = 0;
+    h = await setup({
+      controlProfileManager,
+      jlinkBackend,
+      getActiveWindow: () => ({
+        isDestroyed: () => false,
+        webContents: {
+          capturePage: async () => {
+            captureCalls += 1;
+            return {
+              toPNG: () => Buffer.from([]),
+              getSize: () => ({ width: 1, height: 1 }),
+            };
+          },
+        },
+      }),
+    });
+    const writeSpy = vi.spyOn(h.manager, 'write');
+    const createSpy = vi.spyOn(h.manager, 'create');
+    const createAndOpenSpy = vi.spyOn(h.manager, 'createAndOpen');
+
+    const out = await callTool(h.client, 'get_app_status', { root: h.root });
+
+    expect(out.success).toBe(true);
+    expect(writeSpy).not.toHaveBeenCalled();
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(createAndOpenSpy).not.toHaveBeenCalled();
+    expect(captureCalls).toBe(0);
+    expect(jlinkBackend.calls.map((call) => call.method)).toEqual(['probeDetect']);
+    expect(workspaceWrites).toEqual([]);
   });
 
   it('summarizes a workspace control profile without touching hardware', async () => {

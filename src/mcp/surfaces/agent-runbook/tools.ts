@@ -78,6 +78,7 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
           buildJLinkStatus(deps.jlinkBackend),
           deps.runtimeDiagnostics?.() ?? defaultRuntimeDiagnostics(),
         ]);
+        const toolSetStatus = deps.toolSetDiagnostics?.() ?? emptyToolSetDiagnostics();
         const sessionSummaries = deps.sessionManager.listSummaries();
         return {
           success: true,
@@ -90,7 +91,7 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
                 mcpRunning: true,
                 runtime: {
                   ...runtimeStatus,
-                  toolSet: deps.toolSetDiagnostics?.() ?? emptyToolSetDiagnostics(),
+                  toolSet: toolSetStatus,
                 },
               },
               sessions: {
@@ -101,7 +102,7 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
               controlProfile: profileSummary,
               jlink: jlinkStatus,
               ui: buildUiStatus(deps.getActiveWindow),
-              recommendedNextActions: buildRecommendedNextActions(profileSummary, serialStatus, jlinkStatus),
+              recommendedNextActions: buildRecommendedNextActions(profileSummary, serialStatus, jlinkStatus, toolSetStatus),
             },
             cursor: 0,
           },
@@ -235,7 +236,11 @@ function buildRecommendedNextActions(
   profileSummary: RunbookProfileSummary,
   serialStatus: { portCount: number },
   jlinkStatus: { available: boolean; probeCount: number },
+  toolSetStatus: ToolSetDiagnostics,
 ): string[] {
+  if (!toolSetStatus.core.complete) {
+    return ['Core MCP tools are missing; repair or restart the LinkTerm MCP runtime before terminal, profile, workflow, debug, UI, or hardware operations.'];
+  }
   if (profileSummary.status === 'loaded') {
     return ['Use activate_control_profile for non-destructive control activation when needed.'];
   }

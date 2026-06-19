@@ -11,7 +11,8 @@ export type ControlProfileField =
   | 'jlink.interface'
   | 'jlink.speedKHz'
   | 'flash.binary'
-  | 'flash.baseAddress';
+  | 'flash.baseAddress'
+  | 'rtt.enabled';
 
 /** 被识别但拒绝写入的字段。 */
 export interface RejectedControlProfileField {
@@ -139,6 +140,9 @@ export function inspectControlProfileCompleteness(
   if (profile?.flash?.baseAddress === undefined) {
     missingFields.push('flash.baseAddress');
   }
+  if (profile?.rtt?.enabled === undefined) {
+    missingFields.push('rtt.enabled');
+  }
 
   return { complete: missingFields.length === 0, missingFields };
 }
@@ -154,8 +158,8 @@ export function buildControlProfileQuestion(report: ControlProfileCompletenessRe
     return '当前工作区控制配置已完整，可以直接调用 activate_control_profile 拉起控制。';
   }
   return (
-    '请告诉我这些控制参数：串口号、波特率、芯片型号、SWD/JTAG、J-Link 速度、bin 路径、flash 起始地址。' +
-    '可以一句话回答，例如：COM3，115200，AT32F435RGT7，SWD，4000kHz，build/app.bin，0x08000000。' +
+    '请告诉我这些控制参数：串口号、波特率、芯片型号、SWD/JTAG、J-Link 速度、bin 路径、flash 起始地址、RTT 是否启用。' +
+    '可以一句话回答，例如：COM3，115200，AT32F435RGT7，SWD，4000kHz，build/app.bin，0x08000000，RTT 关闭。' +
     `当前缺失字段：${report.missingFields.join(', ')}`
   );
 }

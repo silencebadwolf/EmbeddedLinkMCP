@@ -88,6 +88,10 @@ describe('NullJLinkBackend', () => {
     await expect(backend.gdbServerStart('p')).rejects.toBeInstanceOf(NoBackendError);
   });
 
+  it('rejects runCommanderScript with NoBackendError', async () => {
+    await expect(backend.runCommanderScript('p', ['r'])).rejects.toBeInstanceOf(NoBackendError);
+  });
+
   it('rejects snapshotCapture with NoBackendError', async () => {
     await expect(
       backend.snapshotCapture('p', [{ address: 0, length: 4 }]),

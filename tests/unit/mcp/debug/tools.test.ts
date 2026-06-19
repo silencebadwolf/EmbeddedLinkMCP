@@ -101,9 +101,10 @@ const ALL_DEBUG_TOOLS = [
   // GDB (2)
   'gdb_server_start',
   'gdb_server_stop',
-  // diagnostics (2)
+  // diagnostics (3)
   'snapshot_capture',
   'crash_diagnose',
+  'jlink_commander_script',
 ];
 
 describe('MCP debug tools', () => {
@@ -124,7 +125,7 @@ describe('MCP debug tools', () => {
       for (const expected of ALL_DEBUG_TOOLS) {
         expect(names).toContain(expected);
       }
-      expect(ALL_DEBUG_TOOLS.length).toBe(28);
+      expect(ALL_DEBUG_TOOLS.length).toBe(29);
     });
   });
 
@@ -257,6 +258,48 @@ describe('MCP debug tools', () => {
       const data = (out.evidence as { data: { register: { name: string; value: number } } }).data;
       expect(data.register.name).toBe('r0');
       expect(data.register.value).toBe(0xdeadbeef);
+    });
+
+    it('gdb_server_start projects typed backend DTOs instead of raw SEGGER text', async () => {
+      const connect = await callTool(h.client, 'probe_connect', { target: 'STM32F4' });
+      const probe = (connect.evidence as { data: { probe: { probeId: string } } }).data.probe;
+
+      const out = await callTool(h.client, 'gdb_server_start', {
+        probeId: probe.probeId,
+        host: '127.0.0.1',
+        port: 2331,
+        confirm: true,
+      });
+
+      expect(out.success).toBe(true);
+      expect((out.evidence as { kind: string }).kind).toBe('debug_output');
+      expect((out.evidence as { data: { handle: { host: string; port: number } } }).data.handle).toEqual({
+        host: '127.0.0.1',
+        port: 2331,
+      });
+      expect(JSON.stringify(out.evidence)).not.toMatch(/SEGGER|Listening on TCP\/IP/i);
+    });
+
+    it('jlink_commander_script delegates diagnostic command lines to the backend', async () => {
+      const connect = await callTool(h.client, 'probe_connect', { target: 'STM32F4' });
+      const probe = (connect.evidence as { data: { probe: { probeId: string } } }).data.probe;
+
+      const out = await callTool(h.client, 'jlink_commander_script', {
+        probeId: probe.probeId,
+        commands: ['r', 'mem 0x08080000, 64'],
+        timeoutMs: 1234,
+        confirm: true,
+      });
+
+      expect(out.success).toBe(true);
+      expect((out.evidence as { kind: string }).kind).toBe('debug_output');
+      expect((out.evidence as { data: { exitCode: number; stdout: string } }).data).toMatchObject({
+        exitCode: 0,
+        stdout: expect.stringContaining('synthetic Commander output'),
+      });
+      const calls = h.fake!.callsOf('runCommanderScript');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.args).toEqual([probe.probeId, ['r', 'mem 0x08080000, 64'], { timeoutMs: 1234 }, undefined]);
     });
   });
 

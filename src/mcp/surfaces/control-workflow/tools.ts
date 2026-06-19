@@ -16,7 +16,22 @@ import { registerTool, ToolError, type ToolHandlerResult } from '../../registry.
 import { ConfirmationRequiredError, translateJLinkError } from '../debug/error-translate.js';
 import { defaultOpenSerial, type ControlProfileOpenSerial } from '../control-profile/tools.js';
 import { runControlWorkflow } from './workflow-runner.js';
-import { runControlWorkflowInputSchema, type RunControlWorkflowInput } from './schemas.js';
+import {
+  controlWorkflowJobCancelInputSchema,
+  controlWorkflowJobCleanupInputSchema,
+  controlWorkflowJobReadInputSchema,
+  controlWorkflowJobStatusInputSchema,
+  runControlWorkflowInputSchema,
+  type ControlWorkflowJobCancelInput,
+  type ControlWorkflowJobCleanupInput,
+  type ControlWorkflowJobReadInput,
+  type ControlWorkflowJobStatusInput,
+  type RunControlWorkflowInput,
+} from './schemas.js';
+import {
+  ControlWorkflowJobManager,
+  type ControlWorkflowJobSnapshot,
+} from './job-manager.js';
 
 /** registerControlWorkflowTools 的依赖容器。 */
 export interface ControlWorkflowToolsDeps {
@@ -24,6 +39,7 @@ export interface ControlWorkflowToolsDeps {
   sessionManager: SessionManager;
   jlinkBackend: IJLinkBackend;
   controlProfileOpenSerial?: ControlProfileOpenSerial;
+  controlWorkflowJobManager?: ControlWorkflowJobManager;
 }
 
 /**
@@ -37,6 +53,7 @@ export function registerControlWorkflowTools(
   deps: ControlWorkflowToolsDeps,
 ): void {
   const openSerial = deps.controlProfileOpenSerial ?? defaultOpenSerial(deps.sessionManager);
+  const jobManager = deps.controlWorkflowJobManager ?? new ControlWorkflowJobManager();
 
   registerTool(server, {
     name: 'run_control_workflow',
@@ -45,20 +62,38 @@ export function registerControlWorkflowTools(
       'Prefer this high-level tool over manually chaining low-level J-Link/serial tools for supported modes. ' +
       'Modes: flash-observe, debug-diagnose, flash-observe-diagnose. Firmware is read server-side from a path under root, ' +
       'so AI clients must not chunk base64 manually. High-impact modes require confirm=true. ' +
-      'Known SEGGER/J-Link failures are returned with workflow failureCode and machine-readable nextActions.',
+      'For long operations, request execution.mode=background, then poll get_control_workflow_job_status and read_control_workflow_job; cancel with cancel_control_workflow_job if needed. ' +
+      'Known SEGGER/J-Link failures are returned with workflow failureCode and machine-readable nextActions. ' +
+      'No external CLI fallback.',
     sensitivity: 'state-affecting',
     inputSchema: runControlWorkflowInputSchema,
     handler: async (input: RunControlWorkflowInput): Promise<ToolHandlerResult> => {
       try {
-        const data = await runControlWorkflow(
-          {
-            controlProfileManager: deps.controlProfileManager,
-            sessionManager: deps.sessionManager,
-            jlinkBackend: deps.jlinkBackend,
-            openSerial,
-          },
-          input,
-        );
+        const runnerDeps = {
+          controlProfileManager: deps.controlProfileManager,
+          sessionManager: deps.sessionManager,
+          jlinkBackend: deps.jlinkBackend,
+          openSerial,
+        };
+        if (input.execution?.mode === 'background' && input.dryRun !== true) {
+          if (requiresHighImpactWorkflow(input) && input.confirm !== true) {
+            throw new ConfirmationRequiredError('run_control_workflow');
+          }
+          const job = jobManager.create({ input, correlationId: input.correlationId });
+          void jobManager.start(job.jobId, ({ signal, update }) =>
+            runControlWorkflow(runnerDeps, input, { signal, onUpdate: update }),
+          );
+          return {
+            success: true,
+            evidence: {
+              kind: 'debug_output',
+              data: toJobStartedData(jobManager.getStatus(job.jobId)),
+              cursor: 0,
+            },
+          };
+        }
+
+        const data = await runControlWorkflow(runnerDeps, input);
         return {
           success: true,
           evidence: {
@@ -72,6 +107,116 @@ export function registerControlWorkflowTools(
       }
     },
   });
+
+  registerTool(server, {
+    name: 'get_control_workflow_job_status',
+    description:
+      'Read lightweight status for a LinkTerm control workflow background job. Use this to poll long flash/observe/debug workflows instead of retrying hardware operations. This tool is read-only.',
+    sensitivity: 'read-only',
+    inputSchema: controlWorkflowJobStatusInputSchema,
+    handler: (input: ControlWorkflowJobStatusInput): ToolHandlerResult => ({
+      success: true,
+      evidence: {
+        kind: 'debug_output',
+        data: toJobStatusData(jobManager.getStatus(input.jobId)),
+        cursor: 0,
+      },
+    }),
+  });
+
+  registerTool(server, {
+    name: 'read_control_workflow_job',
+    description:
+      'Read partial or final structured evidence for a LinkTerm control workflow background job, including workflow steps and transcript cursor references. This tool is read-only.',
+    sensitivity: 'read-only',
+    inputSchema: controlWorkflowJobReadInputSchema,
+    handler: (input: ControlWorkflowJobReadInput): ToolHandlerResult => ({
+      success: true,
+      evidence: {
+        kind: 'debug_output',
+        data: toJobReadData(jobManager.read(input.jobId)),
+        cursor: 0,
+      },
+    }),
+  });
+
+  registerTool(server, {
+    name: 'cancel_control_workflow_job',
+    description:
+      'Cancel an active LinkTerm control workflow background job using LinkTerm-owned AbortSignal paths. No external CLI fallback.',
+    sensitivity: 'state-affecting',
+    inputSchema: controlWorkflowJobCancelInputSchema,
+    handler: (input: ControlWorkflowJobCancelInput): ToolHandlerResult => ({
+      success: true,
+      evidence: {
+        kind: 'debug_output',
+        data: toJobStatusData(jobManager.cancel(input.jobId)),
+        cursor: 0,
+      },
+    }),
+  });
+
+  registerTool(server, {
+    name: 'cleanup_control_workflow_jobs',
+    description:
+      'Clean up completed or expired LinkTerm control workflow background jobs. Active jobs are not removed; cancel first if needed.',
+    sensitivity: 'state-affecting',
+    inputSchema: controlWorkflowJobCleanupInputSchema,
+    handler: (input: ControlWorkflowJobCleanupInput): ToolHandlerResult => ({
+      success: true,
+      evidence: {
+        kind: 'debug_output',
+        data: jobManager.cleanup({ jobId: input.jobId, expiredOnly: input.expiredOnly }),
+        cursor: 0,
+      },
+    }),
+  });
+}
+
+const JOB_TOOLS = {
+  status: 'get_control_workflow_job_status',
+  read: 'read_control_workflow_job',
+  cancel: 'cancel_control_workflow_job',
+  cleanup: 'cleanup_control_workflow_jobs',
+} as const;
+
+function toJobStartedData(job: ControlWorkflowJobSnapshot): Record<string, unknown> {
+  return { ...toJobStatusData(job), tools: JOB_TOOLS };
+}
+
+function toJobStatusData(job: ControlWorkflowJobSnapshot): Record<string, unknown> {
+  return {
+    jobId: job.jobId,
+    state: job.state,
+    mode: job.mode,
+    root: job.root,
+    createdAt: job.createdAt,
+    ...(job.startedAt !== undefined ? { startedAt: job.startedAt } : {}),
+    ...(job.completedAt !== undefined ? { completedAt: job.completedAt } : {}),
+    ...(job.expiresAt !== undefined ? { expiresAt: job.expiresAt } : {}),
+    updatedAt: job.updatedAt,
+    ...(job.currentStepId !== undefined ? { currentStepId: job.currentStepId } : {}),
+    cancelRequested: job.cancelRequested,
+    ...(job.workflow?.summary !== undefined ? { summary: job.workflow.summary } : {}),
+    ...(job.workflow?.failedStep !== undefined ? { failedStep: job.workflow.failedStep } : {}),
+    ...(job.workflow?.failureCode !== undefined ? { failureCode: job.workflow.failureCode } : {}),
+  };
+}
+
+function toJobReadData(job: ControlWorkflowJobSnapshot): Record<string, unknown> {
+  return {
+    ...toJobStatusData(job),
+    workflow: job.workflow,
+  };
+}
+
+function requiresHighImpactWorkflow(input: RunControlWorkflowInput): boolean {
+  return (
+    input.mode === 'debug-diagnose' ||
+    input.mode === 'flash-observe' ||
+    input.mode === 'flash-observe-diagnose' ||
+    input.debug?.haltOnFailure === true
+  );
 }
 
 /**

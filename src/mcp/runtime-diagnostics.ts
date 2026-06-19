@@ -31,12 +31,14 @@ export interface RuntimeDiagnosticsProviderOptions {
   transportMode: string;
   metadataPath?: string;
   now?: () => number;
+  /** Metadata older than this is reported as available but not fresh. */
+  maxMetadataAgeMs?: number;
 }
 
 /**
  * Build a lightweight runtime diagnostics provider for MCP startup status.
  *
- * @param options Transport mode and optional metadata file path.
+ * @param options Transport mode, optional metadata file path, and optional freshness threshold.
  * @returns Provider that reports identity, transport mode, and metadata validity without exposing tokens.
  */
 export function createRuntimeDiagnosticsProvider(
@@ -60,14 +62,15 @@ export function createRuntimeDiagnosticsProvider(
     }
 
     const startedMs = Date.parse(metadata.startedAt);
+    const ageMs = Number.isNaN(startedMs) ? undefined : Math.max(0, now() - startedMs);
     return {
       ...base,
       metadata: {
         available: true,
-        fresh: true,
+        fresh: ageMs === undefined || options.maxMetadataAgeMs === undefined || ageMs <= options.maxMetadataAgeMs,
         path: options.metadataPath,
         url: metadata.url,
-        ageMs: Number.isNaN(startedMs) ? undefined : Math.max(0, now() - startedMs),
+        ageMs,
       },
     };
   };

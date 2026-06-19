@@ -10,7 +10,7 @@ import {
   JLinkInvalidStateError,
   JLinkOperationError,
 } from './errors.js';
-import type { MemoryRange, RegisterValue, RttChannelInfo, RttReadResult } from './types.js';
+import type { CommanderScriptResult, MemoryRange, RegisterValue, RttChannelInfo, RttReadResult } from './types.js';
 
 /** Probe context required by SEGGER Commander commands. */
 export interface CommanderProbeContext {
@@ -83,7 +83,7 @@ export interface JLinkCommanderClient {
   download(
     probe: CommanderProbeContext,
     binary: Buffer,
-    opts: { address: number; verify?: boolean },
+    opts: { address: number; verify?: boolean; timeoutMs?: number },
     signal?: AbortSignal,
   ): Promise<{ bytesWritten: number; verified: boolean }>;
 
@@ -133,6 +133,14 @@ export interface JLinkCommanderClient {
 
   /** Clear a target breakpoint by address. */
   clearBreakpoint(probe: CommanderProbeContext, address: number, signal?: AbortSignal): Promise<void>;
+
+  /** Run a LinkTerm-controlled Commander diagnostic script and return sanitized process output. */
+  runScript(
+    probe: CommanderProbeContext,
+    commands: string[],
+    opts?: { timeoutMs?: number },
+    signal?: AbortSignal,
+  ): Promise<CommanderScriptResult>;
 }
 
 /** Options for DefaultJLinkCommanderClient. */
@@ -251,6 +259,9 @@ interface TempFlashFiles extends TempCommandFile {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const RAW_FLASH_CHUNK_BYTES = 64 * 1024;
+const LARGE_RAW_FLASH_THRESHOLD_BYTES = 512 * 1024;
+const LARGE_RAW_FLASH_TIMEOUT_MS = 180_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 const TERMINATE_GRACE_MS = 5_000;
 const OUTPUT_PREVIEW_CHARS = 4000;
@@ -263,6 +274,26 @@ function formatOutputPreview(stdout: string, stderr: string): string {
 
 function sanitizeProcessOutput(output: string): string {
   return output.replace(/S\/N:\s*\S+/gi, 'S/N: [redacted]');
+}
+
+function defaultRawFlashTimeoutMs(binaryLength: number): number {
+  return binaryLength >= LARGE_RAW_FLASH_THRESHOLD_BYTES ? LARGE_RAW_FLASH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+}
+
+function splitRawFlashChunks(binary: Buffer, baseAddress: number): Array<{ address: number; binary: Buffer }> {
+  const chunks: Array<{ address: number; binary: Buffer }> = [];
+  let offset = 0;
+  while (offset < binary.byteLength) {
+    const address = baseAddress + offset;
+    const boundaryRemaining = RAW_FLASH_CHUNK_BYTES - (address % RAW_FLASH_CHUNK_BYTES);
+    const length = Math.min(RAW_FLASH_CHUNK_BYTES, boundaryRemaining, binary.byteLength - offset);
+    chunks.push({
+      address,
+      binary: binary.subarray(offset, offset + length),
+    });
+    offset += length;
+  }
+  return chunks.length === 0 ? [{ address: baseAddress, binary }] : chunks;
 }
 
 function tail(value: string, maxChars: number): string {
@@ -670,28 +701,34 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
   async download(
     probe: CommanderProbeContext,
     binary: Buffer,
-    opts: { address: number; verify?: boolean },
+    opts: { address: number; verify?: boolean; timeoutMs?: number },
     signal?: AbortSignal,
   ): Promise<{ bytesWritten: number; verified: boolean }> {
     if (signal?.aborted) throw new JLinkAbortedError();
     assertAddress(opts.address, 'download');
     const commanderPath = this.#requireCommanderPath();
-    return this.#withTempFlashFiles(binary, async (files) => {
-      const lines = [
-        `loadbin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(opts.address)}`,
-      ];
-      if (opts.verify === true) {
-        lines.push(`verifybin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(opts.address)}`);
-      }
-      const result = await this.#runCommander(commanderPath, probe, files, lines, signal);
-      if (opts.verify === true && classifyVerifyMismatch(result)) {
-        throw new JLinkOperationError('J-Link flash verify failed after download', {
-          operation: 'flashDownload',
-        });
-      }
-      assertCommanderSuccess(result, probe, 'flashDownload');
-      return { bytesWritten: binary.byteLength, verified: opts.verify === true };
-    });
+    const timeoutMs = opts.timeoutMs ?? defaultRawFlashTimeoutMs(binary.byteLength);
+    let bytesWritten = 0;
+    for (const chunk of splitRawFlashChunks(binary, opts.address)) {
+      if (signal?.aborted) throw new JLinkAbortedError();
+      await this.#withTempFlashFiles(chunk.binary, async (files) => {
+        const lines = [
+          `loadbin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(chunk.address)}`,
+        ];
+        if (opts.verify === true) {
+          lines.push(`verifybin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(chunk.address)}`);
+        }
+        const result = await this.#runCommander(commanderPath, probe, files, lines, signal, timeoutMs);
+        if (opts.verify === true && classifyVerifyMismatch(result)) {
+          throw new JLinkOperationError('J-Link flash verify failed after download', {
+            operation: 'flashDownload',
+          });
+        }
+        assertCommanderSuccess(result, probe, 'flashDownload');
+      });
+      bytesWritten += chunk.binary.byteLength;
+    }
+    return { bytesWritten, verified: opts.verify === true };
   }
 
   /** Verify a raw binary at an explicit flash address. */
@@ -936,6 +973,22 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     });
   }
 
+  /** Run a whitelisted diagnostic Commander script after LinkTerm-controlled connect lines. */
+  async runScript(
+    probe: CommanderProbeContext,
+    commands: string[],
+    opts?: { timeoutMs?: number },
+    signal?: AbortSignal,
+  ): Promise<CommanderScriptResult> {
+    if (signal?.aborted) throw new JLinkAbortedError();
+    const commanderPath = this.#requireCommanderPath();
+    const safeCommands = normalizeDiagnosticScriptCommands(commands);
+    return this.#withTempCommandFile(async (file) => {
+      const result = await this.#runCommander(commanderPath, probe, file, safeCommands, signal, opts?.timeoutMs);
+      return sanitizeCommanderScriptResult(result, probe);
+    });
+  }
+
   /** Return the trusted Commander executable path or fail before creating temp files. */
   #requireCommanderPath(): string {
     if (this.#commanderPath === undefined) {
@@ -980,14 +1033,15 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     files: TempCommandFile,
     commandLines: string[],
     signal?: AbortSignal,
+    timeoutMs?: number,
   ): Promise<SeggerProcessResult> {
-    const script = [...buildConnectionScriptLines(probe), ...commandLines, 'q', ''].join('\n');
+    const script = [...buildConnectionScriptLines(probe, commanderPath), ...commandLines, 'q', ''].join('\n');
     await writeFile(files.scriptPath, script, 'utf-8');
     return this.#runner.run({
       command: commanderPath,
-      args: buildCommanderArgs(probe, files.scriptPath),
+      args: buildCommanderArgs(probe, files.scriptPath, commanderPath),
       signal,
-      timeoutMs: this.#defaultTimeoutMs,
+      timeoutMs: timeoutMs ?? this.#defaultTimeoutMs,
       maxOutputBytes: this.#maxOutputBytes,
     });
   }
@@ -1067,16 +1121,22 @@ function isTrustedCommanderPath(candidate: string): boolean {
 
 const DEVICE_DATABASE_SCAN_MAX_FILES = 2000;
 
-/** Check local SEGGER device XML databases for an exact target token without spawning Commander. */
+/** 在 SEGGER device XML 中精确匹配 `<ChipInfo Name="...">` 或 `<Device><ChipInfo Name="...">` 条目。 */
 function commanderSupportsTarget(commanderPath: string, target: string): boolean {
   const root = path.dirname(commanderPath);
-  const targetNeedle = target.toLowerCase();
   const databaseFiles = listJLinkDeviceDatabaseFiles(root);
+
+  // 构建两个精确匹配正则：Name="target" 和 Name="-target"
+  const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const patterns = [
+    new RegExp(`Name\\s*=\\s*"${escaped}"`, 'i'),
+    new RegExp(`Name\\s*=\\s*"-${escaped}"`, 'i'),
+  ];
+
   for (const file of databaseFiles) {
     try {
-      if (readFileSync(file, 'utf-8').toLowerCase().includes(targetNeedle)) {
-        return true;
-      }
+      const content = readFileSync(file, 'utf-8');
+      if (patterns.some((p) => p.test(content))) return true;
     } catch {
       // Ignore unreadable optional SEGGER database fragments and continue scanning others.
     }
@@ -1122,10 +1182,11 @@ function collectXmlFiles(dir: string, files: string[]): void {
 }
 
 /** Build command-line arguments for J-Link Commander. */
-export function buildCommanderArgs(probe: CommanderProbeContext, scriptPath: string): string[] {
+export function buildCommanderArgs(probe: CommanderProbeContext, scriptPath: string, commanderPath?: string): string[] {
+  const target = normalizeDeviceName(probe.target, commanderPath);
   const args = [
     '-device',
-    probe.target,
+    target,
     '-if',
     (probe.interface ?? 'swd').toUpperCase(),
     '-speed',
@@ -1172,13 +1233,36 @@ function buildEraseCommand(opts?: { address?: number; length?: number }): string
   return `erase ${formatAddress(opts.address)}, ${formatAddress(endAddress)}`;
 }
 
-function buildConnectionScriptLines(probe: CommanderProbeContext): string[] {
+function buildConnectionScriptLines(probe: CommanderProbeContext, commanderPath?: string): string[] {
+  const target = normalizeDeviceName(probe.target, commanderPath);
   return [
-    `device ${safeCommanderToken(probe.target, 'target')}`,
+    `device ${safeCommanderToken(target, 'target')}`,
+    'eoe 1',
     `si ${(probe.interface ?? 'swd').toUpperCase()}`,
     `speed ${probe.speedKHz === undefined ? 'auto' : String(probe.speedKHz)}`,
     'connect',
   ];
+}
+
+/**
+ * SEGGER 约定：厂商 AddOn 设备名以 `-` 前缀注册，会加载对应的 JLinkScript。
+ * 当用户指定了不带前缀的目标名，而 SEGGER 数据库中存在 `-` 前缀的覆盖条目时自动切换。
+ *
+ * SEGGER J-Link User Guide §Device selection 明确：`-` 前缀表示 vendor-specific add-on，
+ * 会替掉同名的内置定义并加载厂商 JLinkScript。此约定跨所有 MCU 厂商有效。
+ *
+ * 此函数只做数据库存在性检查，不做 JLinkScript 内容验证；如果 AddOn 未安装退回原始目标名，
+ * Commander 会用内置定义（如功能不全，会报 RAMCode timeout 等错误）。
+ */
+function normalizeDeviceName(target: string, commanderPath?: string): string {
+  // 已带前缀或无法查数据库时，保持原样
+  if (target.startsWith('-') || commanderPath === undefined) return target;
+
+  // SEGGER 约定：AddOn 名称 = "-" + 内置名称
+  const addOnTarget = `-${target}`;
+  if (commanderSupportsTarget(commanderPath, addOnTarget)) return addOnTarget;
+
+  return target;
 }
 
 function safeCommanderToken(value: string, field: string): string {
@@ -1188,6 +1272,93 @@ function safeCommanderToken(value: string, field: string): string {
     });
   }
   return value;
+}
+
+const DIAGNOSTIC_SCRIPT_MAX_COMMANDS = 64;
+const CONTROLLED_CONNECTION_COMMANDS = new Set(['device', 'si', 'speed', 'connect', 'eoe', 'q', 'exit']);
+const FILE_BACKED_COMMANDS = new Set(['loadbin', 'verifybin', 'loadfile', 'savebin', 'savefile']);
+
+function normalizeDiagnosticScriptCommands(commands: string[]): string[] {
+  if (commands.length > DIAGNOSTIC_SCRIPT_MAX_COMMANDS) {
+    throw new JLinkInvalidStateError('J-Link Commander diagnostic script has too many commands', {
+      expected: `at most ${DIAGNOSTIC_SCRIPT_MAX_COMMANDS} commands`,
+      actual: String(commands.length),
+    });
+  }
+
+  const result: string[] = [];
+  for (const rawCommand of commands) {
+    const command = normalizeDiagnosticScriptCommand(rawCommand);
+    if (command !== undefined) result.push(command);
+  }
+  if (result.length === 0) {
+    throw new JLinkInvalidStateError('J-Link Commander diagnostic script contains no runnable commands', {
+      expected: 'at least one non-connection command',
+      actual: 'empty script',
+    });
+  }
+  return result;
+}
+
+function normalizeDiagnosticScriptCommand(rawCommand: string): string | undefined {
+  const command = rawCommand.trim();
+  if (command === '') return undefined;
+  if (/[\r\n"'`<>|&;]/u.test(command)) {
+    throw new JLinkOperationError('Unsafe J-Link Commander diagnostic command', {
+      operation: 'buildJLinkScript',
+    });
+  }
+  const verb = command.split(/[\s,]+/u)[0]!.toLowerCase();
+  if (CONTROLLED_CONNECTION_COMMANDS.has(verb)) return undefined;
+  if (FILE_BACKED_COMMANDS.has(verb)) {
+    throw new JLinkOperationError('File-backed J-Link Commander commands are not accepted by diagnostic scripts', {
+      operation: 'buildJLinkScript',
+    });
+  }
+  if (isAllowedDiagnosticScriptCommand(command, verb)) return command;
+  throw new JLinkInvalidStateError('Unsupported J-Link Commander diagnostic command', {
+    expected: 'r/h/g/s/regs/mem/erase/w1/w2/w4/wreg/SetBP/ClrBP command',
+    actual: command,
+  });
+}
+
+function isAllowedDiagnosticScriptCommand(command: string, verb: string): boolean {
+  if (/^(r|h|g|s|regs)$/iu.test(command)) return true;
+  if (verb === 'mem') return /^mem\s+0x[0-9a-fA-F]{1,8}\s*,\s*(?:0x[0-9a-fA-F]+|\d+)$/u.test(command);
+  if (verb === 'erase') {
+    return /^erase$/iu.test(command) || /^erase\s+0x[0-9a-fA-F]{1,8}\s*,\s*0x[0-9a-fA-F]{1,8}$/u.test(command);
+  }
+  if (/^w[124]$/u.test(verb)) {
+    return /^w[124]\s+0x[0-9a-fA-F]{1,8}\s*,\s*0x[0-9a-fA-F]{1,8}$/iu.test(command);
+  }
+  if (verb === 'wreg') {
+    return /^wreg\s+[A-Za-z][A-Za-z0-9_()]*\s*,\s*0x[0-9a-fA-F]{1,8}$/u.test(command);
+  }
+  if (verb === 'setbp' || verb === 'clrbp') {
+    return /^(?:SetBP|ClrBP)\s+0x[0-9a-fA-F]{1,8}$/iu.test(command);
+  }
+  return false;
+}
+
+function sanitizeCommanderScriptResult(
+  result: SeggerProcessResult,
+  probe: CommanderProbeContext,
+): CommanderScriptResult {
+  return {
+    exitCode: result.exitCode,
+    signal: result.signal,
+    stdout: sanitizeCommanderResultOutput(result.stdout, probe),
+    stderr: sanitizeCommanderResultOutput(result.stderr, probe),
+    ...(result.truncated === true ? { truncated: true } : {}),
+  };
+}
+
+function sanitizeCommanderResultOutput(output: string, probe: CommanderProbeContext): string {
+  let sanitized = sanitizeProcessOutput(output);
+  if (probe.serialNumber !== undefined) {
+    sanitized = sanitized.split(probe.serialNumber).join('[redacted]');
+  }
+  return sanitized;
 }
 
 function quoteCommanderPath(filePath: string): string {

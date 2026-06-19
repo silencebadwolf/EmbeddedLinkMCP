@@ -65,7 +65,10 @@ describe('control profile answer parser', () => {
       'jlink.interface',
       'jlink.speedKHz',
       'flash.baseAddress',
+      'rtt.enabled',
     ]);
-    expect(buildControlProfileQuestion(report)).toContain('0x08000000');
+    const question = buildControlProfileQuestion(report);
+    expect(question).toContain('0x08000000');
+    expect(question).toContain('RTT');
   });
 });

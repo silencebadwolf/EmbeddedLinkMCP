@@ -19,6 +19,8 @@ import {
 
 class FakeProcessRunner {
   readonly requests: SeggerProcessRequest[] = [];
+  readonly observedScriptPaths: string[] = [];
+  readonly observedBinaryPaths: string[] = [];
   result: SeggerProcessResult = { exitCode: 0, signal: null, stdout: 'Verify successful', stderr: '' };
   scriptContent = '';
   binaryContent = Buffer.alloc(0);
@@ -30,16 +32,30 @@ class FakeProcessRunner {
     const scriptIndex = request.args.indexOf('-CommandFile');
     expect(scriptIndex).toBeGreaterThanOrEqual(0);
     this.scriptPath = request.args[scriptIndex + 1]!;
+    this.observedScriptPaths.push(this.scriptPath);
     this.scriptContent = await readFile(this.scriptPath, 'utf-8');
     const pathMatch = this.scriptContent.match(/(?:loadbin|verifybin)\s+"([^"]+)"/i);
     if (pathMatch?.[1] !== undefined) {
       this.binaryPath = pathMatch[1];
+      this.observedBinaryPaths.push(this.binaryPath);
       this.binaryContent = await readFile(this.binaryPath);
     } else {
       this.binaryPath = '';
       this.binaryContent = Buffer.alloc(0);
     }
     return this.result;
+  }
+}
+
+class CapturingProcessRunner extends FakeProcessRunner {
+  readonly scripts: string[] = [];
+  readonly binaries: Buffer[] = [];
+
+  override async run(request: SeggerProcessRequest): Promise<SeggerProcessResult> {
+    const result = await super.run(request);
+    this.scripts.push(this.scriptContent);
+    this.binaries.push(Buffer.from(this.binaryContent));
+    return result;
   }
 }
 
@@ -135,6 +151,28 @@ describe('NodeSeggerProcessRunner', () => {
       }),
     ).rejects.toThrow(/partial-output/);
   });
+
+  it('bounds captured stdout and stderr independently', async () => {
+    const runner = new NodeSeggerProcessRunner();
+
+    const result = await runner.run({
+      command: process.execPath,
+      args: ['-e', "process.stdout.write('abcdef'); process.stderr.write('ghijkl');"],
+      timeoutMs: 1000,
+      maxOutputBytes: 3,
+    });
+
+    expect(result.stdout).toBe('abc');
+    expect(result.stderr).toBe('ghi');
+    expect(result.truncated).toBe(true);
+  });
+
+  it('uses shell-disabled child_process spawning', async () => {
+    const source = await readFile(path.resolve('src/jlink/segger-command-runner.ts'), 'utf-8');
+
+    expect(source).toContain('shell: false');
+    expect(source).toContain("stdio: ['ignore', 'pipe', 'pipe']");
+  });
 });
 
 describe('DefaultJLinkCommanderClient', () => {
@@ -166,7 +204,7 @@ describe('DefaultJLinkCommanderClient', () => {
   });
 
   it('reports target supported when a SEGGER device database contains the target', async () => {
-    await writeFile(path.join(root, 'JLinkDevices.xml'), '<Device>AT32F435VGT7</Device>');
+    await writeFile(path.join(root, 'JLinkDevices.xml'), '<Device><ChipInfo Name="AT32F435VGT7"/></Device>');
     const client = new DefaultJLinkCommanderClient({ commanderPath, tempRoot: root });
 
     expect(client.checkAvailability('AT32F435VGT7')).toMatchObject({
@@ -215,6 +253,7 @@ describe('DefaultJLinkCommanderClient', () => {
     });
     expect(runner.requests[0]!.timeoutMs).toBeLessThanOrEqual(30_000);
     expect(runner.scriptContent).toContain('device AT32F435RGT7');
+    expect(runner.scriptContent).toContain('eoe 1');
     expect(runner.scriptContent).toContain('si SWD');
     expect(runner.scriptContent).toContain('speed 4000');
     expect(runner.scriptContent).toContain('connect');
@@ -224,6 +263,159 @@ describe('DefaultJLinkCommanderClient', () => {
     expect(runner.binaryContent).toEqual(binary);
     expect(await exists(runner.scriptPath)).toBe(false);
     expect(await exists(runner.binaryPath)).toBe(false);
+  });
+
+  it('uses SEGGER add-on device names consistently in CLI arguments and command script', async () => {
+    await writeFile(path.join(root, 'JLinkDevices.xml'), '<Device><ChipInfo Name="-AT32F435VGT7"/></Device>');
+    const runner = new FakeProcessRunner();
+    runner.result = { exitCode: 0, signal: null, stdout: 'Downloading\nVerify successful\n', stderr: '' };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    await client.download(
+      { target: 'AT32F435VGT7', interface: 'swd', speedKHz: 4000 },
+      Buffer.from([0x01, 0x02]),
+      { address: 0x08008000, verify: true },
+    );
+
+    expect(runner.requests[0]!.args).toEqual(expect.arrayContaining(['-device', '-AT32F435VGT7']));
+    expect(runner.scriptContent).toContain('device -AT32F435VGT7');
+  });
+
+  it('honors per-download timeout options when running Commander', async () => {
+    const runner = new FakeProcessRunner();
+    runner.result = { exitCode: 0, signal: null, stdout: 'Downloading\n', stderr: '' };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    await client.download(
+      { target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+      Buffer.from([0x01]),
+      { address: 0x08008000, verify: false, timeoutMs: 90_000 },
+    );
+
+    expect(runner.requests[0]!.timeoutMs).toBe(90_000);
+  });
+
+  it('scales the default download timeout for large raw binaries', async () => {
+    const runner = new FakeProcessRunner();
+    runner.result = { exitCode: 0, signal: null, stdout: 'Downloading\n', stderr: '' };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    await client.download(
+      { target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+      Buffer.alloc(1024 * 1024),
+      { address: 0x08008000, verify: false },
+    );
+
+    expect(runner.requests[0]!.timeoutMs).toBeGreaterThan(30_000);
+  });
+
+  it('splits large raw binary downloads into bounded Commander chunks', async () => {
+    const runner = new CapturingProcessRunner();
+    runner.result = { exitCode: 0, signal: null, stdout: 'Downloading\nVerify successful\n', stderr: '' };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+    const binary = Buffer.alloc(128 * 1024 + 1, 0x5a);
+
+    const result = await client.download(
+      { target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+      binary,
+      { address: 0x08008000, verify: true },
+    );
+
+    expect(result).toEqual({ bytesWritten: binary.byteLength, verified: true });
+    expect(runner.requests).toHaveLength(3);
+    expect(runner.binaries.map((chunk) => chunk.byteLength)).toEqual([32 * 1024, 64 * 1024, 32 * 1024 + 1]);
+    expect(runner.scripts[0]).toContain('loadbin');
+    expect(runner.scripts[0]).toContain('verifybin');
+    expect(runner.scripts[0]).toContain('0x08008000');
+    expect(runner.scripts[1]).toContain('0x08010000');
+    expect(runner.scripts[2]).toContain('0x08020000');
+  });
+
+  it('does not let a raw binary chunk cross an absolute 64 KiB flash boundary', async () => {
+    const runner = new CapturingProcessRunner();
+    runner.result = { exitCode: 0, signal: null, stdout: 'Downloading\nVerify successful\n', stderr: '' };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+    const binary = Buffer.alloc(64 * 1024, 0xa5);
+
+    await client.download(
+      { target: 'AT32F435VGT7', interface: 'swd', speedKHz: 4000 },
+      binary,
+      { address: 0x08078000, verify: true },
+    );
+
+    expect(runner.requests).toHaveLength(2);
+    expect(runner.binaries.map((chunk) => chunk.byteLength)).toEqual([32 * 1024, 32 * 1024]);
+    expect(runner.scripts[0]).toContain('0x08078000');
+    expect(runner.scripts[1]).toContain('0x08080000');
+  });
+
+  it('uses unique temporary command files for concurrent Commander operations and cleans them up', async () => {
+    const runner = new FakeProcessRunner();
+    runner.result = { exitCode: 0, signal: null, stdout: 'Verify successful\n', stderr: '' };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    await Promise.all([
+      client.download(
+        { target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        Buffer.from([0x01]),
+        { address: 0x08008000, verify: true },
+      ),
+      client.download(
+        { target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        Buffer.from([0x02]),
+        { address: 0x08009000, verify: true },
+      ),
+    ]);
+
+    expect(runner.observedScriptPaths).toHaveLength(2);
+    expect(new Set(runner.observedScriptPaths).size).toBe(2);
+    expect(new Set(runner.observedScriptPaths.map((p) => path.dirname(p))).size).toBe(2);
+    expect(runner.observedBinaryPaths).toHaveLength(2);
+    for (const scriptPath of runner.observedScriptPaths) {
+      expect(await exists(scriptPath)).toBe(false);
+      expect(await exists(path.dirname(scriptPath))).toBe(false);
+    }
+    for (const binaryPath of runner.observedBinaryPaths) {
+      expect(await exists(binaryPath)).toBe(false);
+    }
+  });
+
+  it('runs a JLinkMCP-style diagnostic script through LinkTerm-controlled connection lines', async () => {
+    const runner = new FakeProcessRunner();
+    runner.result = {
+      exitCode: 0,
+      signal: null,
+      stdout: 'S/N: 123456789\n08080000 = 12 34 56 78\n',
+      stderr: '',
+    };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    const result = await client.runScript(
+      { target: 'AT32F435VGT7', interface: 'swd', speedKHz: 4000, serialNumber: '123456789' },
+      ['device nRF52', 'si SWD', 'speed 4000', 'eoe', 'connect', 'r', 'mem 0x08080000, 64', 'q'],
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('08080000 = 12 34 56 78');
+    expect(result.stdout).not.toContain('123456789');
+    expect(runner.requests).toHaveLength(1);
+    expect(runner.scriptContent).toContain('device AT32F435VGT7');
+    expect(runner.scriptContent).not.toContain('device nRF52');
+    expect(runner.scriptContent).toContain('\nr\n');
+    expect(runner.scriptContent).toContain('\nmem 0x08080000, 64\n');
+    expect((runner.scriptContent.match(/^connect$/gm) ?? [])).toHaveLength(1);
+    expect((runner.scriptContent.match(/^q$/gm) ?? [])).toHaveLength(1);
+    expect(await exists(runner.scriptPath)).toBe(false);
+  });
+
+  it('rejects file-backed commands in diagnostic scripts before spawning Commander', async () => {
+    const runner = new FakeProcessRunner();
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    await expect(
+      client.runScript({ target: 'AT32F435VGT7' }, ['loadbin "C:\\secret.bin", 0x08080000']),
+    ).rejects.toBeInstanceOf(JLinkOperationError);
+    expect(runner.requests).toHaveLength(0);
   });
 
   it('resets and runs the CPU through a generated J-Link command file', async () => {
@@ -467,6 +659,14 @@ describe('DefaultJLinkGdbServerClient', () => {
       targetSupported: false,
     });
     expect(availability.reason).toBeUndefined();
+  });
+
+  it('rejects an untrusted relative GDB server path without spawning', async () => {
+    const runner = new FakeManagedProcessRunner();
+    const client = new DefaultJLinkGdbServerClient({ gdbServerPath: 'JLinkGDBServerCL.exe', runner });
+
+    await expect(client.start({ target: 'AT32F435RGT7' }, { port: 2331 })).rejects.toBeInstanceOf(JLinkOperationError);
+    expect(runner.requests).toHaveLength(0);
   });
 
   it('starts a localhost GDB server with trusted executable args and captures output tail', async () => {

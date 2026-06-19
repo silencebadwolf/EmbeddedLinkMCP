@@ -87,6 +87,22 @@ export interface FlashDownloadOptions {
   address?: number;
   /** 烧录后是否再读回校验。 */
   verify?: boolean;
+  /** 覆盖单次 Commander 烧录进程超时，单位毫秒；缺省使用 backend 默认值。 */
+  timeoutMs?: number;
+}
+
+/** 受控 J-Link Commander 脚本执行结果；输出已在 backend 边界做序列号脱敏。 */
+export interface CommanderScriptResult {
+  /** Commander 进程退出码；被信号终止时为 null。 */
+  exitCode: number | null;
+  /** 终止信号；正常退出时为 null。 */
+  signal: NodeJS.Signals | null;
+  /** 脱敏后的 stdout。 */
+  stdout: string;
+  /** 脱敏后的 stderr。 */
+  stderr: string;
+  /** stdout/stderr 超过保留上限时为 true。 */
+  truncated?: boolean;
 }
 
 /** GDB server 启动后的连接信息。 */
@@ -269,6 +285,17 @@ export interface IJLinkBackend {
   gdbServerStop(probeId: string): Promise<void>;
 
   // -- diagnostics --
+
+  /**
+   * 运行受控 J-Link Commander 诊断脚本。连接参数由 LinkTerm 根据 probe handle 生成，
+   * `commands` 只承载连接之后的白名单命令。
+   */
+  runCommanderScript(
+    probeId: string,
+    commands: string[],
+    opts?: { timeoutMs?: number },
+    signal?: AbortSignal,
+  ): Promise<CommanderScriptResult>;
 
   /** 抓取 CPU 寄存器 + 给定地址范围的内存快照（用于事后分析）。 */
   snapshotCapture(probeId: string, ranges: MemoryRange[]): Promise<SnapshotResult>;

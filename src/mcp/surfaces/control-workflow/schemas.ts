@@ -25,6 +25,12 @@ export const controlWorkflowModeSchema = z.enum([
   'flash-observe-diagnose',
 ]);
 
+const backgroundExecutionSchema = z
+  .object({
+    mode: z.enum(['sync', 'background']),
+  })
+  .strict();
+
 /** run_control_workflow 入参。 */
 export const runControlWorkflowInputSchema = z
   .object({
@@ -36,6 +42,7 @@ export const runControlWorkflowInputSchema = z
         filePath: z.string().min(1).max(1024).optional(),
         baseAddress: hexAddressSchema.optional(),
         verify: z.boolean().optional(),
+        timeoutMs: z.number().int().positive().max(600_000).optional(),
       })
       .strict()
       .optional(),
@@ -69,7 +76,44 @@ export const runControlWorkflowInputSchema = z
       .optional(),
     confirm: z.boolean().optional(),
     dryRun: z.boolean().optional(),
+    execution: backgroundExecutionSchema.optional(),
   })
   .strict();
 
 export type RunControlWorkflowInput = z.infer<typeof runControlWorkflowInputSchema>;
+
+const jobIdSchema = z.string().min(1).max(128);
+
+export const controlWorkflowJobStatusInputSchema = z
+  .object({
+    ...commonSchema,
+    jobId: jobIdSchema,
+  })
+  .strict();
+
+export const controlWorkflowJobReadInputSchema = z
+  .object({
+    ...commonSchema,
+    jobId: jobIdSchema,
+  })
+  .strict();
+
+export const controlWorkflowJobCancelInputSchema = z
+  .object({
+    ...commonSchema,
+    jobId: jobIdSchema,
+  })
+  .strict();
+
+export const controlWorkflowJobCleanupInputSchema = z
+  .object({
+    ...commonSchema,
+    jobId: jobIdSchema.optional(),
+    expiredOnly: z.boolean().optional(),
+  })
+  .strict();
+
+export type ControlWorkflowJobStatusInput = z.infer<typeof controlWorkflowJobStatusInputSchema>;
+export type ControlWorkflowJobReadInput = z.infer<typeof controlWorkflowJobReadInputSchema>;
+export type ControlWorkflowJobCancelInput = z.infer<typeof controlWorkflowJobCancelInputSchema>;
+export type ControlWorkflowJobCleanupInput = z.infer<typeof controlWorkflowJobCleanupInputSchema>;

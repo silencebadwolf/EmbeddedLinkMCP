@@ -17,6 +17,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
   BreakpointSpec,
+  CommanderScriptResult,
   CrashDiagnosis,
   FlashDownloadOptions,
   GdbServerHandle,
@@ -327,6 +328,23 @@ export class FakeJLinkBackend implements IJLinkBackend {
   }
 
   // -- diagnostics --
+
+  async runCommanderScript(
+    probeId: string,
+    commands: string[],
+    opts?: { timeoutMs?: number },
+    signal?: AbortSignal,
+  ): Promise<CommanderScriptResult> {
+    this.#record('runCommanderScript', probeId, commands, opts, signal);
+    this.#requireProbe(probeId);
+    await this.#abortableDelay(this.delayMs, signal);
+    return {
+      exitCode: 0,
+      signal: null,
+      stdout: 'synthetic Commander output',
+      stderr: '',
+    };
+  }
 
   async snapshotCapture(probeId: string, ranges: MemoryRange[]): Promise<SnapshotResult> {
     this.#record('snapshotCapture', probeId, ranges);

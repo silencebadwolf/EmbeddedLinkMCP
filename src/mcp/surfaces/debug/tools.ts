@@ -1,8 +1,8 @@
 /**
- * MCP debug surface 工具实现 —— 非二进制部分（20 个）。
+ * MCP debug surface 工具实现 —— 非二进制部分（21 个）。
  *
  * 二进制载荷工具（memory / flash / rtt_read / rtt_search / snapshot）见
- * `./tools-binary.ts`。两文件共同覆盖 28 个 J-Link MCP 工具。
+ * `./tools-binary.ts`。两文件共同覆盖 29 个 J-Link MCP 工具。
  *
  * 每个 handler：
  * 1. 走 {@link runJLink} wrapper —— 集中翻译 JLinkError 子类；
@@ -22,6 +22,7 @@ import {
   breakpointClearInputSchema,
   breakpointListInputSchema,
   breakpointSetInputSchema,
+  commanderScriptInputSchema,
   cpuHaltInputSchema,
   cpuResetInputSchema,
   cpuRunInputSchema,
@@ -42,6 +43,7 @@ import {
   type BreakpointClearInput,
   type BreakpointListInput,
   type BreakpointSetInput,
+  type CommanderScriptInput,
   type CpuHaltInput,
   type CpuResetInput,
   type CpuRunInput,
@@ -169,7 +171,8 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
     name: 'cpu_reset',
     description:
       'Reset the CPU. halt=true holds at the first instruction after reset. ' +
-      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned.',
+      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned. ' +
+      'No external CLI fallback.',
     sensitivity: 'state-affecting',
     inputSchema: cpuResetInputSchema,
     handler: async (input: CpuResetInput): Promise<ToolHandlerResult> => {
@@ -321,7 +324,8 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
     name: 'flash_erase',
     description:
       'Erase flash; with no address/length, erases the whole chip. ' +
-      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned.',
+      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned. ' +
+      'No external CLI fallback.',
     sensitivity: 'state-affecting',
     inputSchema: flashEraseInputSchema,
     handler: async (input: FlashEraseInput): Promise<ToolHandlerResult> => {
@@ -385,7 +389,8 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
     description:
       'Start a GDB server bound to the given host/port. timeoutMs aborts the operation if the ' +
       'server fails to bind in time. ' +
-      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned.',
+      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned. ' +
+      'No external CLI fallback.',
     sensitivity: 'state-affecting',
     inputSchema: gdbServerStartInputSchema,
     handler: async (input: GdbServerStartInput): Promise<ToolHandlerResult> => {
@@ -431,6 +436,31 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
     handler: async (input: CrashDiagnoseInput): Promise<ToolHandlerResult> => {
       const diagnosis = await runJLink(() => jlinkBackend.crashDiagnose(input.probeId));
       return ok({ evidence: { kind: 'debug_output', data: { diagnosis }, cursor: 0 } });
+    },
+  });
+
+  registerTool(server, {
+    name: 'jlink_commander_script',
+    description:
+      'Run a LinkTerm-controlled J-Link Commander diagnostic script. Connection lines are generated ' +
+      'from the probe handle; commands are restricted to a safe whitelist. ' +
+      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned. ' +
+      'No external CLI fallback.',
+    sensitivity: 'state-affecting',
+    inputSchema: commanderScriptInputSchema,
+    handler: async (input: CommanderScriptInput): Promise<ToolHandlerResult> => {
+      return runJLink(async () => {
+        if (input.confirm !== true) throw new ConfirmationRequiredError('jlink_commander_script');
+        const opts = input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : undefined;
+        const result = await jlinkBackend.runCommanderScript(input.probeId, input.commands, opts);
+        return ok({
+          evidence: {
+            kind: 'debug_output',
+            data: result,
+            cursor: 0,
+          },
+        });
+      });
     },
   });
 }

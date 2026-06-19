@@ -13,6 +13,7 @@ export type ControlWorkflowStepStatus = 'passed' | 'failed' | 'skipped';
 /** 工作流内部用于减少 AI 文本推理的稳定失败分类。 */
 export type ControlWorkflowFailureCode =
   | 'flash_ram_preserve_failed'
+  | 'flash_sector_erase_timeout'
   | 'flash_verify_failed'
   | 'probe_not_found'
   | 'target_rejected'

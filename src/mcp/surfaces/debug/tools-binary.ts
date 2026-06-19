@@ -110,7 +110,8 @@ export function registerDebugBinaryTools(server: McpServer, deps: DebugToolsDeps
     description:
       'Download a binary image to flash. binaryBase64 is decoded server-side and capped at 16 MiB. ' +
       'timeoutMs aborts long downloads. ' +
-      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned (no decode, no backend call).',
+      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned (no decode, no backend call). ' +
+      'No external CLI fallback.',
     sensitivity: 'state-affecting',
     inputSchema: flashDownloadInputSchema,
     handler: async (input: FlashDownloadInput): Promise<ToolHandlerResult> => {
@@ -146,7 +147,8 @@ export function registerDebugBinaryTools(server: McpServer, deps: DebugToolsDeps
     name: 'flash_write',
     description:
       'Write bytes to a flash address (no erase). ' +
-      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned.',
+      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned. ' +
+      'No external CLI fallback.',
     sensitivity: 'state-affecting',
     inputSchema: flashWriteInputSchema,
     handler: async (input: FlashWriteInput): Promise<ToolHandlerResult> => {

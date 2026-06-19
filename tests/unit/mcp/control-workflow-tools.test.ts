@@ -10,6 +10,7 @@ import { JLinkNotImplementedError, JLinkOperationError } from '@/jlink/errors.js
 import type { FlashDownloadOptions, IJLinkBackend } from '@/jlink/types.js';
 import { createMcpServer } from '@/mcp/index.js';
 import type { LinkTermMcpServer } from '@/mcp/server.js';
+import { ControlWorkflowJobManager } from '@/mcp/surfaces/control-workflow/job-manager.js';
 import type { SerialSessionConfig, SessionState } from '@/shared/types.js';
 import { SerialDiscovery } from '@/transports/serial/serial-discovery.js';
 import { FakeJLinkBackend } from '../../fixtures/fake-jlink-backend.js';
@@ -23,6 +24,7 @@ interface Harness {
   serialDiscovery: SerialDiscovery;
   controlProfileManager: ControlProfileManager;
   fake: FakeJLinkBackend;
+  jobManager: ControlWorkflowJobManager;
   mcp: LinkTermMcpServer;
   client: Client;
   root: string;
@@ -33,6 +35,7 @@ interface Harness {
 interface SetupOptions {
   jlinkBackend?: IJLinkBackend;
   openSerial?: (config: SerialSessionConfig) => Promise<{ sessionId: string; state: SessionState }>;
+  jobManager?: ControlWorkflowJobManager;
 }
 
 async function setup(options: SetupOptions = {}): Promise<Harness> {
@@ -41,6 +44,7 @@ async function setup(options: SetupOptions = {}): Promise<Harness> {
   const serialDiscovery = new SerialDiscovery({ listFn: async () => [] });
   const controlProfileManager = new ControlProfileManager();
   const fake = new FakeJLinkBackend();
+  const jobManager = options.jobManager ?? new ControlWorkflowJobManager();
   const transport = new MockTransport();
   const openSerialCalls: SerialSessionConfig[] = [];
   const { server: serverTransport, client: clientTransport } = createInMemoryMcpTransportPair();
@@ -49,6 +53,7 @@ async function setup(options: SetupOptions = {}): Promise<Harness> {
     serialDiscovery,
     controlProfileManager,
     jlinkBackend: options.jlinkBackend ?? fake,
+    controlWorkflowJobManager: jobManager,
     controlProfileOpenSerial: options.openSerial ?? (async (config) => {
       openSerialCalls.push(config);
       const session = await manager.createAndOpen(
@@ -67,7 +72,7 @@ async function setup(options: SetupOptions = {}): Promise<Harness> {
   await mcp.start();
   const client = new Client({ name: 'lt-control-workflow-test', version: '0.0.0' });
   await client.connect(clientTransport);
-  return { manager, serialDiscovery, controlProfileManager, fake, mcp, client, root, transport, openSerialCalls };
+  return { manager, serialDiscovery, controlProfileManager, fake, jobManager, mcp, client, root, transport, openSerialCalls };
 }
 
 async function teardown(h: Harness): Promise<void> {
@@ -104,6 +109,32 @@ async function initProfile(h: Harness, opts: { speedKHz?: number | 'auto' } = {}
   });
 }
 
+async function waitForJobState(
+  client: Client,
+  jobId: string,
+  terminalStates: string[],
+): Promise<Record<string, unknown>> {
+  const started = Date.now();
+  for (;;) {
+    const out = await callTool(client, 'get_control_workflow_job_status', { jobId });
+    const data = (out.evidence as { data: Record<string, unknown> }).data;
+    if (terminalStates.includes(String(data.state))) return data;
+    if (Date.now() - started > 2000) throw new Error(`Timed out waiting for job ${jobId}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+async function waitForJobStep(client: Client, jobId: string, stepId: string): Promise<void> {
+  const started = Date.now();
+  for (;;) {
+    const out = await callTool(client, 'read_control_workflow_job', { jobId });
+    const data = (out.evidence as { data: { workflow?: { steps: Array<{ id: string }> } } }).data;
+    if (data.workflow?.steps.some((step) => step.id === stepId) === true) return;
+    if (Date.now() - started > 2000) throw new Error(`Timed out waiting for job ${jobId} step ${stepId}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 describe('MCP control workflow tool', () => {
   let h: Harness;
 
@@ -113,6 +144,155 @@ describe('MCP control workflow tool', () => {
 
   afterEach(async () => {
     await teardown(h);
+  });
+
+  it('starts a background workflow job quickly and preserves synchronous workflow compatibility', async () => {
+    await initProfile(h);
+    h.fake.delayMs = 50;
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'debug-diagnose',
+      execution: { mode: 'background' },
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    const started = (out.evidence as {
+      data: {
+        jobId: string;
+        state: string;
+        tools: Record<string, string>;
+      };
+    }).data;
+    expect(started.jobId).toMatch(/^cwjob-/);
+    expect(['queued', 'running']).toContain(started.state);
+    expect(started.tools).toMatchObject({
+      status: 'get_control_workflow_job_status',
+      read: 'read_control_workflow_job',
+      cancel: 'cancel_control_workflow_job',
+      cleanup: 'cleanup_control_workflow_jobs',
+    });
+
+    const finalStatus = await waitForJobState(h.client, started.jobId, ['succeeded', 'failed', 'cancelled']);
+    expect(finalStatus).toMatchObject({ state: 'succeeded', currentStepId: 'debug_diagnose' });
+
+    const sync = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'debug-diagnose',
+      confirm: true,
+    });
+    expect(sync.success).toBe(true);
+    const syncData = (sync.evidence as { data: { steps: Array<{ id: string }> } }).data;
+    expect(syncData.steps.map((step) => step.id)).toContain('debug_diagnose');
+    expect(syncData).not.toHaveProperty('jobId');
+  });
+
+  it('does not create a background job when high-impact confirmation is missing', async () => {
+    await initProfile(h);
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe-diagnose',
+      execution: { mode: 'background' },
+      confirm: false,
+    });
+
+    expect(out.success).toBe(false);
+    expect((out.error as { code: string }).code).toBe('CONFIRMATION_REQUIRED');
+    expect(h.jobManager.listJobs()).toHaveLength(0);
+    expect(h.openSerialCalls).toHaveLength(0);
+    expect(h.fake.callsOf('probeConnect')).toHaveLength(0);
+    expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
+    expect(h.fake.callsOf('cpuReset')).toHaveLength(0);
+  });
+
+  it('reads background job status and evidence and reports unknown jobs structurally', async () => {
+    await initProfile(h);
+    h.fake.delayMs = 20;
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'debug-diagnose',
+      execution: { mode: 'background' },
+      confirm: true,
+    });
+    const jobId = (out.evidence as { data: { jobId: string } }).data.jobId;
+
+    const active = await callTool(h.client, 'get_control_workflow_job_status', { jobId });
+    expect(active.success).toBe(true);
+    expect((active.evidence as { data: { jobId: string; state: string; workflow?: unknown } }).data).toMatchObject({
+      jobId,
+      state: expect.stringMatching(/queued|running|succeeded/),
+    });
+    expect((active.evidence as { data: { workflow?: unknown } }).data.workflow).toBeUndefined();
+
+    await waitForJobState(h.client, jobId, ['succeeded']);
+    const evidence = await callTool(h.client, 'read_control_workflow_job', { jobId });
+    const data = (evidence.evidence as { data: { workflow: { steps: Array<{ id: string }> } } }).data;
+    expect(data.workflow.steps.map((step) => step.id)).toEqual([
+      'load_profile',
+      'preflight',
+      'connect_probe',
+      'gdb_server_start',
+      'debug_diagnose',
+    ]);
+
+    const missing = await callTool(h.client, 'get_control_workflow_job_status', { jobId: 'missing-job' });
+    expect(missing.success).toBe(false);
+    expect((missing.error as { code: string }).code).toBe('NOT_FOUND');
+  });
+
+  it('cancels an active background job and keeps completed partial evidence', async () => {
+    await initProfile(h);
+    h.fake.delayMs = 10_000;
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'debug-diagnose',
+      execution: { mode: 'background' },
+      confirm: true,
+    });
+    const jobId = (out.evidence as { data: { jobId: string } }).data.jobId;
+    await waitForJobStep(h.client, jobId, 'connect_probe');
+
+    const cancelled = await callTool(h.client, 'cancel_control_workflow_job', { jobId });
+    expect(cancelled.success).toBe(true);
+    expect((cancelled.evidence as { data: { cancelRequested: boolean } }).data.cancelRequested).toBe(true);
+
+    const finalStatus = await waitForJobState(h.client, jobId, ['cancelled']);
+    expect(finalStatus.state).toBe('cancelled');
+    const evidence = await callTool(h.client, 'read_control_workflow_job', { jobId });
+    const steps = (evidence.evidence as { data: { workflow: { steps: Array<{ id: string; error?: { code: string } }> } } }).data.workflow.steps;
+    expect(steps.map((step) => step.id)).toContain('connect_probe');
+    expect(steps.at(-1)).toMatchObject({ id: 'job_cancelled', error: { code: 'ABORTED' } });
+  });
+
+  it('applies schema version policy to background job tools by sensitivity', async () => {
+    await initProfile(h);
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'debug-diagnose',
+      execution: { mode: 'background' },
+      confirm: true,
+    });
+    const jobId = (out.evidence as { data: { jobId: string } }).data.jobId;
+    await waitForJobState(h.client, jobId, ['succeeded']);
+
+    const status = await callTool(h.client, 'get_control_workflow_job_status', {
+      jobId,
+      clientSchemaVersion: 'linkterm-mcp/0.0.0',
+    });
+    expect(status.success).toBe(true);
+    expect((status.evidence as { meta?: { warning?: string } }).meta?.warning).toMatch(/schema version mismatch/i);
+
+    const cleanup = await callTool(h.client, 'cleanup_control_workflow_jobs', {
+      jobId,
+      clientSchemaVersion: 'linkterm-mcp/0.0.0',
+    });
+    expect(cleanup.success).toBe(false);
+    expect((cleanup.error as { code: string }).code).toBe('VERSION_MISMATCH');
   });
 
   it('requires confirm=true before debug-diagnose starts a managed GDB server', async () => {
@@ -232,6 +412,77 @@ describe('MCP control workflow tool', () => {
     expect(h.fake.callsOf('cpuReset')).toHaveLength(1);
   });
 
+  it('reports profile and request parameter sources for J-Link and firmware inputs', async () => {
+    await initProfile(h);
+    await writeFile(path.join(h.root, 'override.bin'), Buffer.from([0x05, 0x06]));
+
+    const pending = callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      firmware: { filePath: 'override.bin', baseAddress: '0x08009000', verify: false },
+      observe: { markers: ['msh'], timeoutMs: 1000 },
+      confirm: true,
+    });
+    const timer = setInterval(() => {
+      h.transport.pushIncoming(Buffer.from('msh />'));
+    }, 20);
+
+    const out = await pending.finally(() => clearInterval(timer));
+
+    expect(out.success).toBe(true);
+    expect(h.fake.callsOf('probeConnect')[0]!.args[0]).toMatchObject({
+      target: 'AT32F435RGT7',
+      interface: 'swd',
+      speedKHz: 4000,
+    });
+    expect(h.fake.callsOf('flashDownload')[0]!.args).toMatchObject([
+      expect.any(String),
+      2,
+      { address: 0x08009000, verify: false },
+    ]);
+    const data = (out.evidence as {
+      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+    }).data;
+    expect(data.steps.find((step) => step.id === 'connect_probe')?.evidence).toMatchObject({
+      parameterSources: { target: 'profile', interface: 'profile', speedKHz: 'profile' },
+    });
+    expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
+      parameterSources: { filePath: 'request', baseAddress: 'request', verify: 'request' },
+    });
+    expect(JSON.stringify(data)).not.toMatch(/nRF52|JLinkMCP/);
+  });
+
+  it('passes firmware timeout to flash backend and reports the request source', async () => {
+    await initProfile(h);
+
+    const pending = callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      firmware: { timeoutMs: 90_000 },
+      observe: { markers: ['msh'], timeoutMs: 1000 },
+      confirm: true,
+    });
+    const timer = setInterval(() => {
+      h.transport.pushIncoming(Buffer.from('msh />'));
+    }, 20);
+
+    const out = await pending.finally(() => clearInterval(timer));
+
+    expect(out.success).toBe(true);
+    expect(h.fake.callsOf('flashDownload')[0]!.args).toMatchObject([
+      expect.any(String),
+      4,
+      { address: 0x08008000, verify: true, timeoutMs: 90_000 },
+    ]);
+    const data = (out.evidence as {
+      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+    }).data;
+    expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
+      timeoutMs: 90_000,
+      parameterSources: { timeoutMs: 'request' },
+    });
+  });
+
   it('uses safe 4000 kHz speed for raw flash workflows when profile speed is auto', async () => {
     await initProfile(h, { speedKHz: 'auto' });
 
@@ -279,7 +530,7 @@ describe('MCP control workflow tool', () => {
     await teardown(h);
     const backend = new RamPreserveFailureBackend();
     h = await setup({ jlinkBackend: backend });
-    await initProfile(h);
+    await initProfile(h, { speedKHz: 'auto' });
 
     const out = await callTool(h.client, 'run_control_workflow', {
       root: h.root,
@@ -312,18 +563,139 @@ describe('MCP control workflow tool', () => {
     );
   });
 
-  it('requires confirm=true before high-impact workflow operations', async () => {
-    await initProfile(h);
+  it('does not suggest the same 4000 kHz retry when RAM preserve already failed at safe speed', async () => {
+    class RamPreserveAtSafeSpeedBackend extends FakeJLinkBackend {
+      async flashDownload(
+        probeId: string,
+        binary: Buffer,
+        opts?: FlashDownloadOptions,
+        signal?: AbortSignal,
+      ): Promise<{ bytesWritten: number; verified: boolean }> {
+        await super.flashDownload(probeId, binary, opts, signal);
+        throw new JLinkOperationError(
+          'J-Link flashDownload failed: Failed to preserve target RAM @ 0x20000000-0x2000FFFF\nFailed to prepare for programming',
+          { operation: 'flashDownload' },
+        );
+      }
+    }
+    await teardown(h);
+    const backend = new RamPreserveAtSafeSpeedBackend();
+    h = await setup({ jlinkBackend: backend });
+    await initProfile(h, { speedKHz: 4000 });
 
     const out = await callTool(h.client, 'run_control_workflow', {
       root: h.root,
       mode: 'flash-observe',
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    const data = (out.evidence as {
+      data: {
+        failureCode?: string;
+        nextActions: Array<{ kind: string; message: string; argsPatch?: Record<string, unknown> }>;
+      };
+    }).data;
+    expect(data.failureCode).toBe('flash_ram_preserve_failed');
+    expect(data.nextActions).toContainEqual(
+      expect.objectContaining({
+        kind: 'user_action',
+        message: expect.stringContaining('4000 kHz'),
+      }),
+    );
+    expect(data.nextActions).not.toContainEqual(
+      expect.objectContaining({ argsPatch: expect.objectContaining({ jlink: expect.objectContaining({ speedKHz: 4000 }) }) }),
+    );
+  });
+
+  it('classifies flash sector erase RAMCode timeouts without suggesting the already-used safe speed', async () => {
+    class SectorEraseTimeoutBackend extends FakeJLinkBackend {
+      async flashDownload(
+        probeId: string,
+        binary: Buffer,
+        opts?: FlashDownloadOptions,
+        signal?: AbortSignal,
+      ): Promise<{ bytesWritten: number; verified: boolean }> {
+        await super.flashDownload(probeId, binary, opts, signal);
+        throw new JLinkOperationError(
+          'J-Link flashDownload failed: Timeout while erasing sectors, RAMCode did not respond in time!\nFailed to erase sectors.',
+          { operation: 'flashDownload' },
+        );
+      }
+    }
+    await teardown(h);
+    const backend = new SectorEraseTimeoutBackend();
+    h = await setup({ jlinkBackend: backend });
+    await initProfile(h, { speedKHz: 4000 });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    const data = (out.evidence as {
+      data: {
+        failedStep?: string;
+        failureCode?: string;
+        steps: Array<{ id: string; status: string; error?: { failureCode?: string } }>;
+        nextActions: Array<{ kind: string; tool?: string; message: string; argsPatch?: Record<string, unknown> }>;
+      };
+    }).data;
+    expect(data.failedStep).toBe('flash');
+    expect(data.failureCode).toBe('flash_sector_erase_timeout');
+    expect(data.steps.find((step) => step.id === 'flash')).toMatchObject({
+      status: 'failed',
+      error: { failureCode: 'flash_sector_erase_timeout' },
+    });
+    expect(data.nextActions).toContainEqual(
+      expect.objectContaining({
+        kind: 'user_action',
+        message: expect.stringContaining('SEGGER'),
+      }),
+    );
+    expect(data.nextActions).not.toContainEqual(
+      expect.objectContaining({ argsPatch: expect.objectContaining({ jlink: expect.objectContaining({ speedKHz: 4000 }) }) }),
+    );
+  });
+
+  it('requires confirm=true before complete high-impact flash and reset workflow operations', async () => {
+    await initProfile(h);
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe-diagnose',
       confirm: false,
     });
 
     expect(out.success).toBe(false);
     expect((out.error as { code: string }).code).toBe('CONFIRMATION_REQUIRED');
     expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
+    expect(h.fake.callsOf('cpuReset')).toHaveLength(0);
+  });
+
+  it.each([
+    ['target', { enabled: true, interface: 'swd' as const, speedKHz: 4000 }, 'jlink.target'],
+    ['interface', { enabled: true, target: 'AT32F435RGT7', speedKHz: 4000 }, 'jlink.interface'],
+    ['speed', { enabled: true, target: 'AT32F435RGT7', interface: 'swd' as const }, 'jlink.speedKHz'],
+  ])('rejects missing J-Link %s without applying reference defaults', async (_name, jlink, expectedField) => {
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: { jlink },
+    });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'debug-diagnose',
+      confirm: true,
+    });
+
+    expect(out.success).toBe(false);
+    expect((out.error as { code: string; message: string }).code).toBe('INVALID_ARGUMENT');
+    expect((out.error as { message: string }).message).toContain(expectedField);
+    expect(h.fake.callsOf('probeConnect')).toHaveLength(0);
+    expect(h.fake.callsOf('gdbServerStart')).toHaveLength(0);
   });
 
   it('reports missing J-Link Commander as a preflight block without opening serial or touching the probe', async () => {

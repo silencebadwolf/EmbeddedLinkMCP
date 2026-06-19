@@ -15,6 +15,7 @@ import { createMcpServer, type LinkTermMcpServer } from '../../mcp/index.js';
 import { startMcpHttpRuntimeServer, type McpHttpRuntimeServer } from '../../mcp/http-runtime-server.js';
 import { createRuntimeDiagnosticsProvider } from '../../mcp/runtime-diagnostics.js';
 import { runtimeMetadataPath } from '../../mcp/runtime-metadata.js';
+import { ControlWorkflowJobManager } from '../../mcp/surfaces/control-workflow/job-manager.js';
 import type { CapturableWindow } from '../../mcp/surfaces/ui/types.js';
 import { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
 import { registerSerialIpc } from './serial-ipc.js';
@@ -49,6 +50,8 @@ export interface MainProcessContext {
    * /detect），其余方法抛 NOT_IMPLEMENTED；Phase 13+ 替换为真实 SEGGER 适配器。
    */
   jlinkBackend: IJLinkBackend;
+  /** 控制工作流后台 job 管理器，必须在 HTTP 短生命周期 MCP server 间共享。 */
+  controlWorkflowJobManager: ControlWorkflowJobManager;
   mcpServer: LinkTermMcpServer;
   /** 本地 HTTP MCP endpoint，供后启动的 stdio proxy 连接到同一 runtime。 */
   mcpHttpServer: McpHttpRuntimeServer;
@@ -107,6 +110,7 @@ export async function registerIpcHandlers(
     launchConfig: buildLinkTermMcpLaunchConfig(),
   });
   const jlinkBackend: IJLinkBackend = new JLinkAdapter();
+  const controlWorkflowJobManager = new ControlWorkflowJobManager();
 
   const uiBridge = createUiBridge(() =>
     BrowserWindow.getAllWindows().map((w) => w.webContents),
@@ -138,6 +142,7 @@ export async function registerIpcHandlers(
       serialPorts: await serialDiscovery.listPorts(),
     }),
     controlProfileManager,
+    controlWorkflowJobManager,
     jlinkBackend,
     uiBridge,
     getActiveWindow,
@@ -152,6 +157,7 @@ export async function registerIpcHandlers(
       serialPorts: await serialDiscovery.listPorts(),
     }),
     controlProfileManager,
+    controlWorkflowJobManager,
     jlinkBackend,
     uiBridge,
     getActiveWindow,
@@ -212,6 +218,7 @@ export async function registerIpcHandlers(
     connectionProfileManager,
     agentIntegrationManager,
     jlinkBackend,
+    controlWorkflowJobManager,
     mcpServer,
     mcpHttpServer,
     dispose,
