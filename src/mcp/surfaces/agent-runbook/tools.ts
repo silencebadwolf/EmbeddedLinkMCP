@@ -35,6 +35,41 @@ export interface AgentRunbookToolsDeps {
   toolSetDiagnostics?: () => ToolSetDiagnostics;
 }
 
+const TERMINAL_COMMAND_TOOLS = {
+  listSessions: 'list_sessions',
+  openSession: 'open_session',
+  status: 'get_session_status',
+  write: 'write_to_session',
+  sendAndWait: 'send_and_wait',
+  readTranscript: 'read_from_session',
+} as const;
+
+const TERMINAL_COMMAND_TOOL_NAMES = [
+  TERMINAL_COMMAND_TOOLS.listSessions,
+  TERMINAL_COMMAND_TOOLS.openSession,
+  TERMINAL_COMMAND_TOOLS.status,
+  TERMINAL_COMMAND_TOOLS.write,
+  TERMINAL_COMMAND_TOOLS.sendAndWait,
+  TERMINAL_COMMAND_TOOLS.readTranscript,
+] as const;
+
+const TERMINAL_COMMAND_PATH =
+  'write_to_session/send_and_wait -> SessionManager.write -> WriteQueue -> transport; read_from_session returns transcript evidence.';
+
+type TerminalCommandToolName = (typeof TERMINAL_COMMAND_TOOL_NAMES)[number];
+
+export interface TerminalCommandToolsStatus {
+  available: boolean;
+  listSessions: typeof TERMINAL_COMMAND_TOOLS.listSessions;
+  openSession: typeof TERMINAL_COMMAND_TOOLS.openSession;
+  status: typeof TERMINAL_COMMAND_TOOLS.status;
+  write: typeof TERMINAL_COMMAND_TOOLS.write;
+  sendAndWait: typeof TERMINAL_COMMAND_TOOLS.sendAndWait;
+  readTranscript: typeof TERMINAL_COMMAND_TOOLS.readTranscript;
+  commandPath: typeof TERMINAL_COMMAND_PATH;
+  missing: TerminalCommandToolName[];
+}
+
 interface RecommendedWorkflow {
   id: 'profile_flash_observe';
   ready: boolean;
@@ -117,6 +152,7 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
               controlProfile: profileSummary,
               jlink: jlinkStatus,
               ui: buildUiStatus(deps.getActiveWindow),
+              terminalCommandTools: buildTerminalCommandToolsStatus(toolSetStatus),
               recommendedNextActions: buildRecommendedNextActions(profileSummary, serialStatus, jlinkStatus, toolSetStatus),
               recommendedWorkflows: buildRecommendedWorkflows(profileSummary, input.root, toolSetStatus),
             },
@@ -246,6 +282,17 @@ function buildUiStatus(getActiveWindow: (() => CapturableWindow | null) | undefi
       error: { code: 'UI_STATUS_FAILED', message: err instanceof Error ? err.message : String(err) },
     };
   }
+}
+
+export function buildTerminalCommandToolsStatus(toolSetStatus: ToolSetDiagnostics): TerminalCommandToolsStatus {
+  const missingCoreTools = new Set<string>(toolSetStatus.core.missing);
+  const missing = TERMINAL_COMMAND_TOOL_NAMES.filter((toolName) => missingCoreTools.has(toolName));
+  return {
+    available: missing.length === 0,
+    ...TERMINAL_COMMAND_TOOLS,
+    commandPath: TERMINAL_COMMAND_PATH,
+    missing,
+  };
 }
 
 function buildRecommendedNextActions(

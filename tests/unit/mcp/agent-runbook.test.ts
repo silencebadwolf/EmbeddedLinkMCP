@@ -6,7 +6,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SessionManager } from '@/core/session/session-manager.js';
 import { ControlProfileManager, type FsPrimitives } from '@/core/workspace/index.js';
 import { createAgentRunbook, sanitizeControlProfileForRunbook } from '@/mcp/surfaces/agent-runbook/runbook.js';
+import { buildTerminalCommandToolsStatus } from '@/mcp/surfaces/agent-runbook/tools.js';
 import { createMcpServer } from '@/mcp/index.js';
+import type { ToolSetDiagnostics } from '@/mcp/tool-set.js';
 import { LINKTERM_MCP_SCHEMA_VERSION } from '@/mcp/versioning/version-check.js';
 import type { LinkTermMcpServer } from '@/mcp/server.js';
 import type { CapturableWindow } from '@/mcp/surfaces/ui/types.js';
@@ -107,6 +109,9 @@ describe('agent runbook builder', () => {
     expect(runbook.markdown).toContain('get_app_status');
     expect(runbook.markdown).toContain('recommendedWorkflows');
     expect(runbook.markdown).toContain('profile_flash_observe');
+    expect(runbook.markdown).toContain('write_to_session');
+    expect(runbook.markdown).toContain('send_and_wait');
+    expect(runbook.markdown).toContain('read_from_session');
     expect(runbook.markdown).toContain('read-only');
     expect(runbook.markdown).toContain('core tool');
     expect(runbook.markdown).toContain('missing core tools');
@@ -226,6 +231,9 @@ describe('MCP agent runbook tool', () => {
     expect(instructions).toContain('get_app_status');
     expect(instructions).toContain('recommendedWorkflows');
     expect(instructions).toContain('profile_flash_observe');
+    expect(instructions).toContain('write_to_session');
+    expect(instructions).toContain('send_and_wait');
+    expect(instructions).toContain('read_from_session');
     expect(instructions).toContain('read-only');
     expect(instructions).toContain('core tool-set diagnostics');
     expect(instructions).toContain('repair or restart the LinkTerm MCP runtime');
@@ -297,6 +305,17 @@ describe('MCP agent runbook tool', () => {
         controlProfile: { status: string };
         jlink: { available: boolean; probeCount: number };
         ui: { available: boolean; screenshotCaptured: boolean };
+        terminalCommandTools: {
+          available: boolean;
+          listSessions: string;
+          openSession: string;
+          status: string;
+          write: string;
+          sendAndWait: string;
+          readTranscript: string;
+          commandPath: string;
+          missing: string[];
+        };
       };
     };
     expect(evidence.kind).toBe('app_status');
@@ -325,6 +344,41 @@ describe('MCP agent runbook tool', () => {
     expect(evidence.data.jlink.available).toBe(false);
     expect(evidence.data.jlink.probeCount).toBe(0);
     expect(evidence.data.ui).toEqual({ available: false, screenshotCaptured: false });
+    expect(evidence.data.terminalCommandTools).toEqual({
+      available: true,
+      listSessions: 'list_sessions',
+      openSession: 'open_session',
+      status: 'get_session_status',
+      write: 'write_to_session',
+      sendAndWait: 'send_and_wait',
+      readTranscript: 'read_from_session',
+      commandPath: 'write_to_session/send_and_wait -> SessionManager.write -> WriteQueue -> transport; read_from_session returns transcript evidence.',
+      missing: [],
+    });
+  });
+
+  it('reports missing terminal command tools in app status', () => {
+    const diagnostics: ToolSetDiagnostics = {
+      count: 3,
+      hash: 'test-hash',
+      core: {
+        expected: [],
+        complete: false,
+        missing: ['write_to_session', 'send_and_wait'],
+      },
+    };
+
+    expect(buildTerminalCommandToolsStatus(diagnostics)).toEqual({
+      available: false,
+      listSessions: 'list_sessions',
+      openSession: 'open_session',
+      status: 'get_session_status',
+      write: 'write_to_session',
+      sendAndWait: 'send_and_wait',
+      readTranscript: 'read_from_session',
+      commandPath: 'write_to_session/send_and_wait -> SessionManager.write -> WriteQueue -> transport; read_from_session returns transcript evidence.',
+      missing: ['write_to_session', 'send_and_wait'],
+    });
   });
 
   it('reports missing core tools when a runtime entry has an incomplete dependency set', async () => {
