@@ -864,6 +864,73 @@ describe('MCP control workflow tool', () => {
     expect(h.openSerialCalls).toHaveLength(0);
   });
 
+  it('allows an absolute firmware path saved in the control profile', async () => {
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lt-control-workflow-profile-bin-'));
+    try {
+      const absoluteFirmware = path.join(outsideRoot, 'rtthread.bin');
+      await writeFile(absoluteFirmware, Buffer.from([0x0a, 0x0b, 0x0c]));
+      await callTool(h.client, 'init_control_profile', {
+        root: h.root,
+        profile: {
+          serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
+          jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+          flash: { binary: absoluteFirmware, baseAddress: '0x08008000', verify: true },
+        },
+      });
+
+      const pending = callTool(h.client, 'run_control_workflow', {
+        root: h.root,
+        mode: 'flash-observe',
+        observe: { markers: ['msh'], timeoutMs: 1000 },
+        confirm: true,
+      });
+      const timer = setInterval(() => {
+        h.transport.pushIncoming(Buffer.from('msh />'));
+      }, 20);
+
+      const out = await pending.finally(() => clearInterval(timer));
+
+      expect(out.success).toBe(true);
+      expect(h.fake.callsOf('flashDownload')[0]!.args).toMatchObject([
+        expect.any(String),
+        3,
+        { address: 0x08008000, verify: true },
+      ]);
+      const data = (out.evidence as {
+        data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+      }).data;
+      expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
+        firmwarePath: absoluteFirmware,
+        parameterSources: { filePath: 'profile' },
+      });
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects request firmware paths outside the workspace root', async () => {
+    await initProfile(h);
+
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lt-control-workflow-request-bin-'));
+    try {
+      const absoluteFirmware = path.join(outsideRoot, 'outside.bin');
+      await writeFile(absoluteFirmware, Buffer.from([0xaa]));
+
+      const out = await callTool(h.client, 'run_control_workflow', {
+        root: h.root,
+        mode: 'flash-observe',
+        firmware: { filePath: absoluteFirmware },
+        confirm: true,
+      });
+
+      expect(out.success).toBe(false);
+      expect((out.error as { code: string }).code).toBe('INVALID_ARGUMENT');
+      expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
   it('rejects firmware paths outside the workspace root', async () => {
     await initProfile(h);
 

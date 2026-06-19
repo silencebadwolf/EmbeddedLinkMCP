@@ -105,6 +105,8 @@ describe('agent runbook builder', () => {
     expect(runbook.markdown).toContain('Call LinkTerm MCP tools sequentially');
     expect(runbook.markdown).toContain('lightweight health-check call');
     expect(runbook.markdown).toContain('get_app_status');
+    expect(runbook.markdown).toContain('recommendedWorkflows');
+    expect(runbook.markdown).toContain('profile_flash_observe');
     expect(runbook.markdown).toContain('read-only');
     expect(runbook.markdown).toContain('core tool');
     expect(runbook.markdown).toContain('missing core tools');
@@ -222,11 +224,15 @@ describe('MCP agent runbook tool', () => {
     expect(instructions).toContain('Call LinkTerm MCP tools sequentially');
     expect(instructions).toContain('lightweight health-check call');
     expect(instructions).toContain('get_app_status');
+    expect(instructions).toContain('recommendedWorkflows');
+    expect(instructions).toContain('profile_flash_observe');
     expect(instructions).toContain('read-only');
     expect(instructions).toContain('core tool-set diagnostics');
     expect(instructions).toContain('repair or restart the LinkTerm MCP runtime');
     expect(instructions).toContain('Use ui_screenshot only when visual evidence is needed');
     expect(instructions).toContain('run_control_workflow');
+    expect(instructions).toContain('current workspace control profile');
+    expect(instructions).toContain('omit firmware.filePath');
     expect(instructions).toContain('background job mode');
     expect(instructions).toContain('get_control_workflow_job_status');
     expect(instructions).toContain('read_control_workflow_job');
@@ -449,6 +455,51 @@ describe('MCP agent runbook tool', () => {
     expect(data.profileSummary.jlink).toMatchObject({ target: 'AT32F435RGT7', speedKHz: 'auto' });
     expect(data.profileSummary.flash).toEqual({ binaryConfigured: true, baseAddress: '0x08008000', verify: true });
     expect(JSON.stringify(data.profileSummary)).not.toContain('build/app.bin');
+  });
+
+  it('returns a profile-first executable workflow recommendation in app status', async () => {
+    await h.controlProfileManager.init(h.root, {
+      serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
+      jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+      flash: { binary: 'build/app.bin', baseAddress: '0x08008000', verify: true },
+      rtt: { enabled: false, channels: [0] },
+    });
+
+    const out = await callTool(h.client, 'get_app_status', { root: h.root });
+
+    expect(out.success).toBe(true);
+    const data = (out.evidence as {
+      data: {
+        recommendedNextActions: string[];
+        recommendedWorkflows: Array<{
+          id: string;
+          ready: boolean;
+          tool: string;
+          arguments: Record<string, unknown>;
+          requiresConfirmation: boolean;
+          followUpTools: string[];
+          reason: string;
+        }>;
+      };
+    }).data;
+    expect(data.recommendedNextActions.join('\n')).toContain('run_control_workflow');
+    expect(data.recommendedWorkflows).toContainEqual(
+      expect.objectContaining({
+        id: 'profile_flash_observe',
+        ready: true,
+        tool: 'run_control_workflow',
+        requiresConfirmation: true,
+        followUpTools: ['get_control_workflow_job_status', 'read_control_workflow_job'],
+        reason: expect.stringContaining('profile.flash.binary'),
+        arguments: {
+          root: h.root,
+          mode: 'flash-observe',
+          execution: { mode: 'background' },
+          observe: { serial: true, clearBeforeObserve: true },
+        },
+      }),
+    );
+    expect(data.recommendedWorkflows[0]?.arguments).not.toHaveProperty('firmware');
   });
 
   it('allows read-only schema mismatch and attaches warning metadata', async () => {

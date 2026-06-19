@@ -58,10 +58,10 @@ export function registerControlWorkflowTools(
   registerTool(server, {
     name: 'run_control_workflow',
     description:
-      'Run a deterministic high-level hardware control workflow from <root>/.linkterm/control-profile.json. ' +
+      'Run a deterministic high-level hardware control workflow from the current workspace control profile at <root>/.linkterm/control-profile.json. ' +
       'Prefer this high-level tool over manually chaining low-level J-Link/serial tools for supported modes. ' +
-      'Modes: flash-observe, debug-diagnose, flash-observe-diagnose. Firmware is read server-side from a path under root, ' +
-      'so AI clients must not chunk base64 manually. High-impact modes require confirm=true. ' +
+      'Modes: flash-observe, debug-diagnose, flash-observe-diagnose. Prefer profile flash.binary and omit firmware.filePath unless intentionally overriding it; request firmware overrides are sandboxed under root. ' +
+      'Firmware is read server-side, so AI clients must not chunk base64 manually. High-impact modes require confirm=true. ' +
       'For long operations, request execution.mode=background, then poll get_control_workflow_job_status and read_control_workflow_job; cancel with cancel_control_workflow_job if needed. ' +
       'Known SEGGER/J-Link failures are returned with workflow failureCode and machine-readable nextActions. ' +
       'No external CLI fallback.',

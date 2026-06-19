@@ -724,9 +724,8 @@ async function resolveFirmware(
     );
   }
 
-  const lexicalPath = resolvePathInsideRoot(root, filePath);
-  const realRoot = await realpathOrInvalid(root, 'root');
-  const firmware = await readFirmwareCapped(lexicalPath, realRoot);
+  const pathResolution = await resolveFirmwarePath(root, filePath, filePathSource);
+  const firmware = await readFirmwareCapped(pathResolution.path, pathResolution.realRoot);
   return {
     absolutePath: firmware.absolutePath,
     baseAddress: parseHexAddress(baseAddressHex),
@@ -742,22 +741,56 @@ async function resolveFirmware(
   };
 }
 
+/** 固件路径解析结果；realRoot 存在时读取阶段必须做 root containment。 */
+interface FirmwarePathResolution {
+  path: string;
+  realRoot?: string;
+}
+
+/**
+ * 按来源解析固件路径。
+ *
+ * request 覆盖值仍被限制在 root 内，避免 AI 临时参数读取任意主机文件；profile 中的绝对路径
+ * 来自用户/App 持久化控制配置，按显式配置使用，但仍会在读取阶段检查常规文件和大小上限。
+ *
+ * @param root 工作区根目录
+ * @param filePath profile 或 request 中的固件路径
+ * @param source 路径来源
+ * @returns 已规范化路径，以及需要 root containment 时的真实 root
+ */
+async function resolveFirmwarePath(
+  root: string,
+  filePath: string,
+  source: 'profile' | 'request',
+): Promise<FirmwarePathResolution> {
+  if (source === 'profile' && path.isAbsolute(filePath)) {
+    return { path: path.normalize(filePath) };
+  }
+  return {
+    path: resolvePathInsideRoot(root, filePath),
+    realRoot: await realpathOrInvalid(root, 'root'),
+  };
+}
+
 /**
  * 读取固件并限制大小，避免高层 workflow 绕过二进制上限。
  *
  * @param filePath 固件绝对路径
+ * @param realRoot 存在时要求固件 realpath 仍位于该 root 内
  * @returns 固件 Buffer
  */
 async function readFirmwareCapped(
   filePath: string,
-  realRoot: string,
+  realRoot?: string,
 ): Promise<{ absolutePath: string; binary: Buffer }> {
   const handle = await openFileOrInvalid(filePath);
   const chunks: Buffer[] = [];
   let total = 0;
   try {
     const realFirmwarePath = await realpathOrInvalid(filePath, 'firmware.filePath');
-    assertPathInsideRoot(realRoot, realFirmwarePath);
+    if (realRoot !== undefined) {
+      assertPathInsideRoot(realRoot, realFirmwarePath);
+    }
     const info = await handle.stat();
     if (!info.isFile()) {
       throw new ToolError(ERROR_CODES.INVALID_ARGUMENT, 'Firmware path must point to a regular file', {
@@ -1070,7 +1103,7 @@ function addNextActionForFailure(ctx: WorkflowContext, failureCode: ControlWorkf
     ctx.nextActions.push({
       kind: 'user_action',
       message:
-        'J-Link 在擦除 flash sector 时 RAMCode 超时；请优先检查 SEGGER 是否安装支持 AT32F435VGT7 的 device add-on/flash algorithm，并确认目标板供电、BOOT/NRST、写保护和高地址 flash sector 状态后再重试。',
+        'J-Link 在擦除 flash sector 时 RAMCode 超时；请优先检查 SEGGER 是否安装匹配目标芯片的 vendor device add-on/flash algorithm，并确认目标板供电、BOOT/NRST、写保护和高地址 flash sector 状态后再重试。',
     });
   }
 }

@@ -35,6 +35,21 @@ export interface AgentRunbookToolsDeps {
   toolSetDiagnostics?: () => ToolSetDiagnostics;
 }
 
+interface RecommendedWorkflow {
+  id: 'profile_flash_observe';
+  ready: boolean;
+  tool: 'run_control_workflow';
+  arguments: {
+    root: string;
+    mode: 'flash-observe';
+    execution: { mode: 'background' };
+    observe: { serial: true; clearBeforeObserve: true };
+  };
+  requiresConfirmation: true;
+  followUpTools: ['get_control_workflow_job_status', 'read_control_workflow_job'];
+  reason: string;
+}
+
 export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookToolsDeps): void {
   registerTool(server, {
     name: 'get_agent_runbook',
@@ -103,6 +118,7 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
               jlink: jlinkStatus,
               ui: buildUiStatus(deps.getActiveWindow),
               recommendedNextActions: buildRecommendedNextActions(profileSummary, serialStatus, jlinkStatus, toolSetStatus),
+              recommendedWorkflows: buildRecommendedWorkflows(profileSummary, input.root, toolSetStatus),
             },
             cursor: 0,
           },
@@ -241,6 +257,12 @@ function buildRecommendedNextActions(
   if (!toolSetStatus.core.complete) {
     return ['Core MCP tools are missing; repair or restart the LinkTerm MCP runtime before terminal, profile, workflow, debug, UI, or hardware operations.'];
   }
+  if (isProfileFlashObserveReady(profileSummary)) {
+    return [
+      'For user-requested flash/observe, call run_control_workflow with the recommendedWorkflows profile_flash_observe arguments, add confirm=true, then read the background job evidence.',
+      'Use activate_control_profile for non-destructive control activation when needed.',
+    ];
+  }
   if (profileSummary.status === 'loaded') {
     return ['Use activate_control_profile for non-destructive control activation when needed.'];
   }
@@ -251,4 +273,40 @@ function buildRecommendedNextActions(
     return ['Use LinkTerm MCP read-only tools for more targeted evidence before state-affecting operations.'];
   }
   return ['Ask the user for the workspace root or connection target before operating hardware.'];
+}
+
+function buildRecommendedWorkflows(
+  profileSummary: RunbookProfileSummary,
+  root: string | undefined,
+  toolSetStatus: ToolSetDiagnostics,
+): RecommendedWorkflow[] {
+  if (root === undefined || !toolSetStatus.core.complete || !isProfileFlashObserveReady(profileSummary)) {
+    return [];
+  }
+  return [
+    {
+      id: 'profile_flash_observe',
+      ready: true,
+      tool: 'run_control_workflow',
+      arguments: {
+        root,
+        mode: 'flash-observe',
+        execution: { mode: 'background' },
+        observe: { serial: true, clearBeforeObserve: true },
+      },
+      requiresConfirmation: true,
+      followUpTools: ['get_control_workflow_job_status', 'read_control_workflow_job'],
+      reason:
+        'control profile has serial, J-Link, and flash facts; use profile.flash.binary by omitting firmware.filePath unless intentionally overriding it.',
+    },
+  ];
+}
+
+function isProfileFlashObserveReady(profileSummary: RunbookProfileSummary): boolean {
+  return (
+    profileSummary.status === 'loaded' &&
+    profileSummary.sections.serial &&
+    profileSummary.sections.jlink &&
+    profileSummary.sections.flash
+  );
 }
