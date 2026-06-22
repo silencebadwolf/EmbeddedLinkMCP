@@ -8,7 +8,9 @@
         "tooltip": "准备环境，按需编译并启动 LinkTerm Electron 应用",
         "color": "#f59e0b",
         "command": "workbench.action.tasks.runTask",
-        "args": ["启动 LinkTerm"],
+        "args": [
+          "启动 LinkTerm"
+        ],
         "useVsCodeApi": true,
         "saveAll": true
       },
@@ -17,10 +19,15 @@
         "tooltip": "编译并生成 LinkTerm Windows 安装包/便携包到 release 目录",
         "color": "#22c55e",
         "command": "workbench.action.tasks.runTask",
-        "args": ["打包 LinkTerm"],
+        "args": [
+          "打包 LinkTerm"
+        ],
         "useVsCodeApi": true,
         "saveAll": true
       }
     ]
-  }
+  },
+  "jlinkMcp.jlink.device": "AT32F435VGT7",
+  "jlinkMcp.jlink.interface": "swd",
+  "jlinkMcp.jlink.speed": 4000
 }
