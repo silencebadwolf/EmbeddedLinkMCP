@@ -97,4 +97,35 @@ describe('ControlProfilePanel', () => {
     expect(screen.getByLabelText('工作区目录')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '保存到工作区' })).toBeInTheDocument();
   });
+
+  it('opens an RTT log terminal session without saving a connection profile', async () => {
+    mock.spies.rttLog.open.mockResolvedValueOnce({
+      success: true,
+      data: { sessionId: 'sess_rtt_ui', state: 'open', reused: false },
+    });
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
+
+    fireEvent.change(screen.getByLabelText('Probe id'), { target: { value: 'probe-1' } });
+    fireEvent.change(screen.getByLabelText('RTT channel'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Open RTT log' }));
+
+    await waitFor(() =>
+      expect(mock.spies.rttLog.open).toHaveBeenCalledWith({
+        probeId: 'probe-1',
+        channelIndex: 2,
+        label: 'RTT ch2',
+      }),
+    );
+
+    expect(useAppStore.getState().sessions.get('sess_rtt_ui')).toEqual({
+      id: 'sess_rtt_ui',
+      label: 'RTT ch2',
+      connectionType: 'rtt-log',
+      state: 'open',
+      rttLog: { probeId: 'probe-1', channelIndex: 2 },
+    });
+    expect(useAppStore.getState().activeSessionId).toBe('sess_rtt_ui');
+    expect(mock.spies.controlProfile.save).not.toHaveBeenCalled();
+  });
 });

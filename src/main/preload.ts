@@ -27,6 +27,7 @@ import type {
   AgentIntegrationStatus,
   AgentIntegrationInstallResult,
   ControlProfileFilePayload,
+  RttLogOpenSuccess,
 } from '../shared/preload-api.js';
 import type { SessionId, SessionLifecycleEvent, SessionState, SessionSummary, SerialPortInfo } from '../shared/types.js';
 import type { TranscriptEventEnvelope } from '../shared/transcript-ipc-types.js';
@@ -73,6 +74,10 @@ const api: PreloadAPI = {
       subscribe<SessionLifecycleEvent>(IPC_CHANNELS.SESSION_LIFECYCLE, handler),
     subscribe: (req) =>
       invoke<TranscriptSubscribeSuccess>(IPC_CHANNELS.TRANSCRIPT_SUBSCRIBE, req),
+  },
+  rttLog: {
+    open: (req) =>
+      invoke<RttLogOpenSuccess>(IPC_CHANNELS.RTT_LOG_OPEN, req),
   },
   serial: {
     listPorts: () =>

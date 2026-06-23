@@ -9,7 +9,7 @@
 export type SessionId = string;
 
 /** 支持的连接类型。 */
-export type ConnectionType = 'serial' | 'ssh' | 'local-shell';
+export type ConnectionType = 'serial' | 'ssh' | 'local-shell' | 'rtt-log';
 
 /**
  * 串口工作模式。
@@ -178,6 +178,13 @@ export interface SessionMetadata {
     /** 串口工作模式。 */
     mode: SerialMode;
   };
+  /** RTT 日志会话的非敏感匹配键，用于复用同一 probe/channel 的日志 tab。 */
+  rttLog?: {
+    /** J-Link backend 分配的 probe handle；不是 probe 序列号。 */
+    probeId: string;
+    /** RTT up-channel index。 */
+    channelIndex: number;
+  };
 }
 
 /** 后台 runtime 暴露给 UI/MCP 的会话摘要。 */
@@ -191,6 +198,10 @@ export interface SessionSummary {
     port: string;
     baudRate: number;
     mode: SerialMode;
+  };
+  rttLog?: {
+    probeId: string;
+    channelIndex: number;
   };
 }
 

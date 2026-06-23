@@ -38,6 +38,73 @@ describe('ConnectionDialog', () => {
     expect(screen.getByText('New Connection')).toBeInTheDocument();
   });
 
+  it('describes RTT Log as a supported connection type', () => {
+    render(<ConnectionDialog />);
+
+    expect(
+      screen.getByText('Configure a serial, SSH, local shell, or RTT log session.'),
+    ).toBeInTheDocument();
+  });
+
+  it('offers RTT Log as a new connection type', async () => {
+    render(<ConnectionDialog />);
+
+    fireEvent.click(screen.getByTestId('conn-type-trigger'));
+
+    expect(await screen.findByRole('option', { name: 'RTT Log' })).toBeInTheDocument();
+  });
+
+  it('opens an RTT log session from the new connection dialog', async () => {
+    mock.spies.rttLog.open.mockResolvedValueOnce({
+      success: true,
+      data: { sessionId: 'sess_rtt_dialog', state: 'open', reused: false },
+    });
+    render(<ConnectionDialog />);
+
+    fireEvent.click(screen.getByTestId('conn-type-trigger'));
+    fireEvent.click(await screen.findByRole('option', { name: 'RTT Log' }));
+    fireEvent.change(screen.getByLabelText('Probe id'), { target: { value: 'probe-1' } });
+    fireEvent.change(screen.getByLabelText('RTT channel'), { target: { value: '2' } });
+    fireEvent.click(screen.getByText('Create'));
+
+    await waitFor(() =>
+      expect(mock.spies.rttLog.open).toHaveBeenCalledWith({
+        probeId: 'probe-1',
+        channelIndex: 2,
+        label: 'RTT ch2',
+      }),
+    );
+
+    expect(useAppStore.getState().sessions.get('sess_rtt_dialog')).toEqual({
+      id: 'sess_rtt_dialog',
+      label: 'RTT ch2',
+      connectionType: 'rtt-log',
+      state: 'open',
+      rttLog: { probeId: 'probe-1', channelIndex: 2 },
+    });
+    expect(useAppStore.getState().activeSessionId).toBe('sess_rtt_dialog');
+    expect(mock.spies.session.create).not.toHaveBeenCalled();
+    expect(mock.spies.connections.saveAndOpen).not.toHaveBeenCalled();
+  });
+
+  it('validates RTT log probe and channel before opening', async () => {
+    render(<ConnectionDialog />);
+
+    fireEvent.click(screen.getByTestId('conn-type-trigger'));
+    fireEvent.click(await screen.findByRole('option', { name: 'RTT Log' }));
+    fireEvent.click(screen.getByText('Create'));
+
+    expect(await screen.findByText('Probe id is required.')).toBeInTheDocument();
+    expect(mock.spies.rttLog.open).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('Probe id'), { target: { value: 'probe-1' } });
+    fireEvent.change(screen.getByLabelText('RTT channel'), { target: { value: '-1' } });
+    fireEvent.click(screen.getByText('Create'));
+
+    expect(await screen.findByText('RTT channel must be a non-negative integer.')).toBeInTheDocument();
+    expect(mock.spies.rttLog.open).not.toHaveBeenCalled();
+  });
+
   it('submits serial config with terminal defaults and common wire parameters', async () => {
     mock.spies.session.create.mockResolvedValueOnce({
       success: true,

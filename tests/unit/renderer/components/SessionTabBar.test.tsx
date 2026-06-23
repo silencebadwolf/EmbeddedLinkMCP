@@ -52,6 +52,20 @@ describe('SessionTabBar', () => {
     expect(screen.getByTestId('tabs-new')).toBeInTheDocument();
   });
 
+  it('renders RTT log sessions with an RTT icon', () => {
+    useAppStore.getState().addSession({
+      id: 'sess_rtt',
+      label: 'RTT channel 0',
+      connectionType: 'rtt-log',
+      state: 'open',
+    });
+
+    render(<SessionTabBar />);
+
+    expect(screen.getByTestId('tab-sess_rtt')).toHaveTextContent('R');
+    expect(screen.getByTestId('tab-sess_rtt')).toHaveTextContent('RTT channel 0');
+  });
+
   it('clicking new button opens dialog in store', () => {
     render(<SessionTabBar />);
     fireEvent.click(screen.getByTestId('tabs-new'));

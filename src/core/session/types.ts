@@ -99,6 +99,23 @@ export class SessionNotOpenError extends Error {
 }
 
 /**
+ * 会话处于 open 状态但语义上不可写时抛出的具名错误。
+ *
+ * RTT 日志终端当前是只读观察流；使用独立错误能让 IPC/MCP 把“不可写”和“未打开”
+ * 区分开，避免客户端误导用户去重开会话。
+ */
+export class SessionNotWritableError extends Error {
+  readonly code = 'NOT_WRITABLE' as const;
+  readonly sessionId: SessionId;
+
+  constructor(sessionId: SessionId) {
+    super(`Session ${sessionId} is read-only and does not accept writes`);
+    this.name = 'SessionNotWritableError';
+    this.sessionId = sessionId;
+  }
+}
+
+/**
  * 会话不存在（已 destroy 或从未注册）时 SessionManager 抛出的具名错误。
  *
  * Phase 6 评审 M3：原 SessionManager 抛 `Error('Session not found: ...')`，

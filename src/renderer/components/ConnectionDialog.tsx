@@ -79,6 +79,9 @@ interface FormState {
   // local-shell
   localShell: string;
   localCwd: string;
+  // rtt-log
+  rttProbeId: string;
+  rttChannel: string;
 }
 
 const INITIAL_FORM: FormState = {
@@ -103,6 +106,8 @@ const INITIAL_FORM: FormState = {
   sshPassphrase: '',
   localShell: '',
   localCwd: '',
+  rttProbeId: '',
+  rttChannel: '0',
 };
 
 function parseBaudRate(value: string): number | null {
@@ -117,6 +122,12 @@ function parseDataBits(value: FormDataBits): SerialDataBits {
 
 function parseStopBits(value: FormStopBits): SerialStopBits {
   return Number(value) as SerialStopBits;
+}
+
+function parseRttChannel(value: string): number | null {
+  if (!/^\d+$/.test(value.trim())) return null;
+  const channelIndex = Number(value.trim());
+  return Number.isSafeInteger(channelIndex) ? channelIndex : null;
 }
 
 /**
@@ -178,6 +189,8 @@ function buildConfig(form: FormState): SessionCreateRequestConfig | null {
         label,
       };
     }
+    case 'rtt-log':
+      return null;
   }
 }
 
@@ -323,9 +336,52 @@ export function ConnectionDialog(): React.ReactElement {
     await loadSavedProfiles();
   };
 
+  const openRttLog = async (): Promise<boolean> => {
+    const probeId = form.rttProbeId.trim();
+    const channelIndex = parseRttChannel(form.rttChannel);
+    if (!probeId) {
+      setError(t('controlProfile.rttLog.error.probeRequired'));
+      return false;
+    }
+    if (channelIndex === null) {
+      setError(t('controlProfile.rttLog.error.channelInvalid'));
+      return false;
+    }
+    const api = getLinkterm();
+    if (!api) {
+      setError(t('error.create.failed'));
+      return false;
+    }
+    const label = form.label.trim() || `RTT ch${channelIndex}`;
+    const result = await api.rttLog.open({ probeId, channelIndex, label });
+    if (!result.success) {
+      setError(result.error.message || t('error.create.failed'));
+      return false;
+    }
+    useAppStore.getState().addSession({
+      id: result.data.sessionId,
+      label,
+      connectionType: 'rtt-log',
+      state: result.data.state,
+      rttLog: { probeId, channelIndex },
+    });
+    useAppStore.getState().setActive(result.data.sessionId);
+    closeDialog();
+    return true;
+  };
+
   const onSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError(null);
+    if (form.type === 'rtt-log') {
+      setSubmitting(true);
+      try {
+        await openRttLog();
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
     const config = buildConfig(form);
     if (!config) {
       setError(t('error.create.failed'));
@@ -440,6 +496,7 @@ export function ConnectionDialog(): React.ReactElement {
                 <SelectItem value="serial">{t('dialog.type.serial')}</SelectItem>
                 <SelectItem value="ssh">{t('dialog.type.ssh')}</SelectItem>
                 <SelectItem value="local-shell">{t('dialog.type.local-shell')}</SelectItem>
+                <SelectItem value="rtt-log">{t('dialog.type.rtt-log')}</SelectItem>
               </SelectContent>
             </Select>
           </FormField>
@@ -669,14 +726,38 @@ export function ConnectionDialog(): React.ReactElement {
             </>
           )}
 
-          <label className="flex items-center gap-2 text-sm text-gray-300">
-            <input
-              type="checkbox"
-              checked={form.saveProfile}
-              onChange={(e) => update('saveProfile', e.target.checked)}
-            />
-            {t('dialog.saveProfile')}
-          </label>
+          {/* RTT Log 字段 */}
+          {form.type === 'rtt-log' && (
+            <div className="grid grid-cols-2 gap-2">
+              <FormField id="conn-rtt-probe" label={t('dialog.rtt.probeId')} className="col-span-2">
+                <Input
+                  id="conn-rtt-probe"
+                  value={form.rttProbeId}
+                  onChange={(e) => update('rttProbeId', e.target.value)}
+                  placeholder={t('dialog.rtt.probeId.placeholder')}
+                />
+              </FormField>
+              <FormField id="conn-rtt-channel" label={t('dialog.rtt.channel')}>
+                <Input
+                  id="conn-rtt-channel"
+                  value={form.rttChannel}
+                  onChange={(e) => update('rttChannel', e.target.value)}
+                  inputMode="numeric"
+                />
+              </FormField>
+            </div>
+          )}
+
+          {form.type !== 'rtt-log' && (
+            <label className="flex items-center gap-2 text-sm text-gray-300">
+              <input
+                type="checkbox"
+                checked={form.saveProfile}
+                onChange={(e) => update('saveProfile', e.target.checked)}
+              />
+              {t('dialog.saveProfile')}
+            </label>
+          )}
 
           {error && <p className="text-sm text-red-400">{error}</p>}
 

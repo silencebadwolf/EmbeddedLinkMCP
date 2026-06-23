@@ -48,6 +48,9 @@ export interface MockPreloadAPI {
       destroy: ReturnType<typeof vi.fn>;
       subscribe: ReturnType<typeof vi.fn>;
     };
+    rttLog: {
+      open: ReturnType<typeof vi.fn>;
+    };
     serial: {
       listPorts: ReturnType<typeof vi.fn>;
     };
@@ -114,6 +117,10 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       }),
     ),
   };
+
+  const rttLogOpen = vi.fn(async () =>
+    okEmpty({ sessionId: 'sess_rtt', state: 'open' as const, reused: false }),
+  );
 
   const serialListPorts = vi.fn(
     async (): Promise<PreloadResult<ReadonlyArray<SerialPortInfo>>> => okEmpty([]),
@@ -190,6 +197,9 @@ export function createMockPreloadAPI(): MockPreloadAPI {
 
   const api: PreloadAPI = {
     session,
+    rttLog: {
+      open: rttLogOpen,
+    },
     serial: {
       listPorts: serialListPorts,
       onPortChanged: (handler): Unsubscribe => {
@@ -243,6 +253,9 @@ export function createMockPreloadAPI(): MockPreloadAPI {
     },
     spies: {
       session,
+      rttLog: {
+        open: rttLogOpen,
+      },
       serial: {
         listPorts: serialListPorts,
       },

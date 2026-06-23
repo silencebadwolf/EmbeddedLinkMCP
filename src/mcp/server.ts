@@ -42,6 +42,7 @@ import { createAgentRunbookInstructions } from './surfaces/agent-runbook/runbook
 import { registerAgentRunbookTools } from './surfaces/agent-runbook/tools.js';
 import { registerDebugTools } from './surfaces/debug/tools.js';
 import { registerDebugBinaryTools } from './surfaces/debug/tools-binary.js';
+import { registerRttLogSessionTools } from './surfaces/rtt-log-session/tools.js';
 import { registerUiTools } from './surfaces/ui/tools.js';
 import type { CapturableWindow, UiStoreBridge } from './surfaces/ui/types.js';
 import { getRegisteredToolNames } from './registry.js';
@@ -188,6 +189,10 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
 
   registerDebugTools(server, { jlinkBackend });
   registerDebugBinaryTools(server, { jlinkBackend });
+  registerRttLogSessionTools(server, {
+    sessionManager: options.sessionManager,
+    jlinkBackend,
+  });
 
   // Phase 10：始终注册 ui_configure / ui_screenshot；未注入 uiBridge / getActiveWindow 时
   // 一律返回 UI_NOT_AVAILABLE 结构化拒绝（与 NullJLinkBackend 同思路 —— AI 客户端始终

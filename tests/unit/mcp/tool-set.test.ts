@@ -28,6 +28,10 @@ describe('tool-set diagnostics', () => {
     expect(diagnostics.hash).toBe(expectedHash([...expected]));
   });
 
+  it('includes the RTT log session opener in the core diagnostics contract', () => {
+    expect(expectedCoreToolNames()).toContain('open_rtt_log_session');
+  });
+
   it('reports missing core tools by stable name', () => {
     const partial = expectedCoreToolNames().filter(
       (name) => name !== 'run_control_workflow' && name !== 'get_app_status',

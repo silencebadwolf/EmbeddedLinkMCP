@@ -462,6 +462,7 @@ export class SessionManager extends EventEmitter {
       label: meta.label ?? defaultSessionLabel(id, meta.connectionType),
       ...(meta.createdBy ? { createdBy: meta.createdBy } : {}),
       ...(meta.serial ? { serial: meta.serial } : {}),
+      ...(meta.rttLog ? { rttLog: meta.rttLog } : {}),
     };
   }
 }
@@ -480,11 +481,18 @@ function sanitizeSessionMetadata(metadata: SessionMetadata | undefined): Session
         mode: metadata.serial.mode,
       }
     : undefined;
+  const rttLog = metadata?.connectionType === 'rtt-log' && metadata.rttLog !== undefined
+    ? {
+        probeId: metadata.rttLog.probeId,
+        channelIndex: metadata.rttLog.channelIndex,
+      }
+    : undefined;
   return {
     connectionType: metadata?.connectionType ?? DEFAULT_SESSION_METADATA.connectionType,
     ...(metadata?.label ? { label: metadata.label } : {}),
     ...(metadata?.createdBy ? { createdBy: metadata.createdBy } : {}),
     ...(serial ? { serial } : {}),
+    ...(rttLog ? { rttLog } : {}),
   };
 }
 

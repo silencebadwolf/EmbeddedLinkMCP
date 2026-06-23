@@ -3,7 +3,7 @@ import type { SessionManager } from '../../core/session/session-manager.js';
 import type { TranscriptEvent } from '../../core/transcript/types.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import { WriteQueueFullError } from '../../core/write-queue/types.js';
-import { SessionNotOpenError, SessionNotFoundError } from '../../core/session/types.js';
+import { SessionNotOpenError, SessionNotFoundError, SessionNotWritableError } from '../../core/session/types.js';
 import type { SessionId, SessionLifecycleEvent, SessionState, SessionSummary } from '../../shared/types.js';
 import {
   serializeTranscriptEvent,
@@ -151,6 +151,9 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
           }
           if (err instanceof SessionNotOpenError) {
             throw new IpcError(ERROR_CODES.NOT_OPEN, err.message);
+          }
+          if (err instanceof SessionNotWritableError) {
+            throw new IpcError(ERROR_CODES.NOT_WRITABLE, err.message);
           }
           throw err;
         }

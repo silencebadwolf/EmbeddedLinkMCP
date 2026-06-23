@@ -111,6 +111,22 @@ export interface SessionReadSuccess {
 /** transcript.subscribe 的成功负载（与 read 同构）。 */
 export type TranscriptSubscribeSuccess = SessionReadSuccess;
 
+/** rttLog.open 入参。 */
+export interface RttLogOpenRequestPayload {
+  probeId: string;
+  channelIndex?: number;
+  pollIntervalMs?: number;
+  maxBytesPerRead?: number;
+  label?: string;
+}
+
+/** rttLog.open 成功负载。 */
+export interface RttLogOpenSuccess {
+  sessionId: SessionId;
+  state: SessionState;
+  reused: boolean;
+}
+
 /** session 命名空间下的方法。 */
 export interface SessionNamespace {
   /** 创建并尝试 open；open 失败时仍返回 success=true 但 state='errored'，由 UI 决定后续动作。 */
@@ -133,6 +149,12 @@ export interface SessionNamespace {
   onLifecycle(handler: (event: SessionLifecycleEvent) => void): Unsubscribe;
   /** 订阅 session 的 transcript 增量；返回 mount-时刻的快照（events + cursor）。 */
   subscribe(req: { sessionId: SessionId }): Promise<PreloadResult<TranscriptSubscribeSuccess>>;
+}
+
+/** RTT 日志命名空间。 */
+export interface RttLogNamespace {
+  /** 打开或复用只读 RTT 日志会话。 */
+  open(req: RttLogOpenRequestPayload): Promise<PreloadResult<RttLogOpenSuccess>>;
 }
 
 /** serial 命名空间。 */
@@ -311,6 +333,7 @@ export interface ControlProfileNamespace {
  */
 export interface PreloadAPI {
   session: SessionNamespace;
+  rttLog: RttLogNamespace;
   serial: SerialNamespace;
   transcript: TranscriptNamespace;
   ui: UiNamespace;

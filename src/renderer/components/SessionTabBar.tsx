@@ -28,6 +28,7 @@ const TYPE_ICON: Record<SessionMeta['connectionType'], string> = {
   serial: 'S',
   ssh: 'H',
   'local-shell': 'L',
+  'rtt-log': 'R',
 };
 
 /**

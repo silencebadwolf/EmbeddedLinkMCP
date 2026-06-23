@@ -27,6 +27,7 @@ export function useSessionHydration(): void {
         label: summary.label,
         connectionType: summary.connectionType,
         state: summary.state,
+        ...(summary.rttLog ? { rttLog: summary.rttLog } : {}),
       });
     };
 

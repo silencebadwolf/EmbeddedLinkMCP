@@ -49,6 +49,7 @@ const CORE_TOOL_NAMES = [
   'flash_verify',
   'rtt_read',
   'rtt_search',
+  'open_rtt_log_session',
   'snapshot_capture',
   'ui_configure',
   'ui_screenshot',

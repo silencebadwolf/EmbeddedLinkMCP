@@ -13,7 +13,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
 import type { ISession } from '../../../core/session/types.js';
-import { SessionNotOpenError, SessionNotFoundError } from '../../../core/session/types.js';
+import { SessionNotOpenError, SessionNotFoundError, SessionNotWritableError } from '../../../core/session/types.js';
 import type { TranscriptEvent } from '../../../core/transcript/types.js';
 import {
   parseMarkerSpec,
@@ -168,6 +168,11 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
           throw new ToolError(ERROR_CODES.NOT_OPEN, err.message, {
             sessionId: input.sessionId,
             state: err.sessionState,
+          });
+        }
+        if (err instanceof SessionNotWritableError) {
+          throw new ToolError(ERROR_CODES.NOT_WRITABLE, err.message, {
+            sessionId: input.sessionId,
           });
         }
         if (err instanceof SessionNotFoundError) {

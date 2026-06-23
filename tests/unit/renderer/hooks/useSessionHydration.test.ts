@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * useSessionHydration hook 单测。
+ * useSessionHydration hook 单测.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -145,5 +145,40 @@ describe('useSessionHydration', () => {
 
     expect(useAppStore.getState().sessions.get('sess_inactive')?.state).toBe('closed');
     expect(useAppStore.getState().activeSessionId).toBe('sess_active');
+  });
+
+  it('hydrates RTT log session metadata into the renderer store', async () => {
+    mock.spies.session.list.mockResolvedValueOnce({
+      success: true,
+      data: {
+        sessions: [
+          {
+            sessionId: 'sess_rtt_hydrated',
+            label: 'RTT ch0',
+            connectionType: 'rtt-log',
+            state: 'open',
+            rttLog: { probeId: 'probe-1', channelIndex: 0 },
+          },
+        ],
+      },
+    } as never);
+
+    const { useSessionHydration } = await import(
+      '../../../../src/renderer/hooks/useSessionHydration.js'
+    );
+
+    renderHook(() => useSessionHydration());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(useAppStore.getState().sessions.get('sess_rtt_hydrated')).toEqual({
+      id: 'sess_rtt_hydrated',
+      label: 'RTT ch0',
+      connectionType: 'rtt-log',
+      state: 'open',
+      rttLog: { probeId: 'probe-1', channelIndex: 0 },
+    });
   });
 });

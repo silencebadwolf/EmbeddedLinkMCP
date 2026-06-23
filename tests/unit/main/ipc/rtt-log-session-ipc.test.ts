@@ -1,0 +1,118 @@
+/** RTT log session IPC handler tests. */
+
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+
+const { handlers, ipcMainMock } = vi.hoisted(() => {
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
+  return {
+    handlers,
+    ipcMainMock: {
+      handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
+        handlers.set(channel, handler);
+      }),
+      removeHandler: vi.fn((channel: string) => {
+        handlers.delete(channel);
+      }),
+    },
+  };
+});
+
+vi.mock('electron', () => ({ ipcMain: ipcMainMock }));
+
+import { SessionManager } from '../../../../src/core/session/session-manager.js';
+import { registerRttLogSessionIpc } from '../../../../src/main/ipc/rtt-log-session-ipc.js';
+import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
+import { FakeJLinkBackend } from '../../../fixtures/fake-jlink-backend.js';
+
+describe('registerRttLogSessionIpc', () => {
+  beforeEach(() => {
+    handlers.clear();
+    ipcMainMock.handle.mockClear();
+    ipcMainMock.removeHandler.mockClear();
+  });
+
+  it('registers rttLog:open channel', () => {
+    registerRttLogSessionIpc(new SessionManager(), new FakeJLinkBackend());
+    expect(ipcMainMock.handle).toHaveBeenCalledWith(
+      IPC_CHANNELS.RTT_LOG_OPEN,
+      expect.any(Function),
+    );
+  });
+
+  it('opens an RTT log session and exposes it through session summaries', async () => {
+    const sessionManager = new SessionManager();
+    const backend = new FakeJLinkBackend();
+    const probe = await backend.probeConnect({ target: 'AT32F435VGT7' });
+    registerRttLogSessionIpc(sessionManager, backend);
+    const handler = handlers.get(IPC_CHANNELS.RTT_LOG_OPEN)!;
+
+    const result = await handler(undefined, {
+      probeId: probe.probeId,
+      channelIndex: 0,
+      pollIntervalMs: 50,
+      maxBytesPerRead: 32,
+      label: 'RTT channel 0',
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        state: 'open',
+        reused: false,
+      },
+    });
+    expect(sessionManager.listSummaries()).toEqual([
+      expect.objectContaining({
+        connectionType: 'rtt-log',
+        label: 'RTT channel 0',
+        rttLog: { probeId: probe.probeId, channelIndex: 0 },
+      }),
+    ]);
+  });
+
+  it('returns a structured failure for invalid RTT log open input', async () => {
+    const sessionManager = new SessionManager();
+    const backend = new FakeJLinkBackend();
+    registerRttLogSessionIpc(sessionManager, backend);
+    const handler = handlers.get(IPC_CHANNELS.RTT_LOG_OPEN)!;
+
+    const result = await handler(undefined, {
+      probeId: '',
+      channelIndex: -1,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      error: {
+        code: 'INVALID_ARGUMENT',
+      },
+    });
+    expect(sessionManager.listSummaries()).toEqual([]);
+  });
+
+  it('returns a structured failure when backend RTT readiness is missing', async () => {
+    const sessionManager = new SessionManager();
+    const backend = new FakeJLinkBackend();
+    registerRttLogSessionIpc(sessionManager, backend);
+    const handler = handlers.get(IPC_CHANNELS.RTT_LOG_OPEN)!;
+
+    const result = await handler(undefined, {
+      probeId: 'missing-probe',
+      channelIndex: 0,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      error: {
+        code: 'PROBE_NOT_FOUND',
+      },
+    });
+    expect(sessionManager.listSummaries()).toEqual([]);
+  });
+
+  it('unregisters rttLog:open channel', () => {
+    const dispose = registerRttLogSessionIpc(new SessionManager(), new FakeJLinkBackend());
+    dispose();
+    expect(ipcMainMock.removeHandler).toHaveBeenCalledWith(IPC_CHANNELS.RTT_LOG_OPEN);
+  });
+});

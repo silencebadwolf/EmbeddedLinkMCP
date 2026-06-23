@@ -1058,6 +1058,10 @@ OpenSpec change `complete-jlink-debug-backend` 补齐生产 `JLinkAdapter` 已�
 - `openspec validate --all` ✅ 4 items
 - 实机硬件验证：本会话未暴露 LinkTerm MCP J-Link 工具；按硬件纪律未使用 SEGGER/J-Link/GDB CLI 兜底。
 
+### RTT 日志终端追记（2026-06-23）
+
+OpenSpec change `add-rtt-log-terminal-session` 在现有 backend-owned RTT client 之上新增显式 `rtt-log` 只读会话：RTT up-channel 字节通过 `RttLogSession` 轮询 `IJLinkBackend.rttRead` 后进入普通 `SessionManager` / `TranscriptBuffer` / xterm 渲染路径，AI 可继续用 `read_from_session` 按 cursor 读取同一份日志证据。新增 `open_rtt_log_session` MCP tool、`rttLog:open` IPC/preload 入口和控制配置面板的临时 UI 打开区块；保留 `rtt_read/search/clear` 作为一次性 debug evidence 工具。安全边界保持不变：renderer/MCP 不直接接触 SEGGER/GDB/socket，RTT 日志 tab 不接受键盘写入，通用写入会返回 `NOT_WRITABLE`。
+
 ### 给 Phase 13+ 的 backlog
 
 - 通过 LinkTerm MCP/HTTP runtime bridge 做分阶段实机验证：connect → CPU/register → memory → breakpoint → RTT → snapshot/crash → flash erase/write。

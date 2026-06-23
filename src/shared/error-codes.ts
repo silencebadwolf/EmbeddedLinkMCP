@@ -20,6 +20,8 @@ export const ERROR_CODES = {
   SESSION_NOT_FOUND: 'SESSION_NOT_FOUND',
   /** 目标 session 不在 open 状态，无法写入。 */
   NOT_OPEN: 'NOT_OPEN',
+  /** 目标 session 为只读观察流，无法写入。 */
+  NOT_WRITABLE: 'NOT_WRITABLE',
   /** WriteQueue normal 通道已满，调用方应退避后重试。 */
   QUEUE_FULL: 'QUEUE_FULL',
   /** 等待响应超时（sendAndWait）。 */

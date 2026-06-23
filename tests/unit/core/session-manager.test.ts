@@ -334,30 +334,27 @@ describe('SessionManager', () => {
 });
 
 describe('SessionManager summaries', () => {
-  it('exposes UI hydration metadata for manager-owned sessions', () => {
+  it('exposes RTT log metadata without serial fields', () => {
     const mgr = new SessionManager();
     const session = mgr.create((id) => new TestSession(id, new MockTransport()), {
-      connectionType: 'serial',
-      label: 'COM6',
+      connectionType: 'rtt-log',
+      label: 'RTT channel 0',
+      rttLog: {
+        probeId: 'probe-1',
+        channelIndex: 0,
+      },
     });
 
-    const summaries = (
-      mgr as unknown as {
-        listSummaries(): ReadonlyArray<{
-          sessionId: SessionId;
-          state: string;
-          connectionType: string;
-          label: string;
-        }>;
-      }
-    ).listSummaries();
-
-    expect(summaries).toEqual([
+    expect(mgr.listSummaries()).toEqual([
       {
         sessionId: session.id,
         state: 'idle',
-        connectionType: 'serial',
-        label: 'COM6',
+        connectionType: 'rtt-log',
+        label: 'RTT channel 0',
+        rttLog: {
+          probeId: 'probe-1',
+          channelIndex: 0,
+        },
       },
     ]);
   });

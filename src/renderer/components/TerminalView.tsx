@@ -11,7 +11,7 @@ import * as React from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import type { SessionId } from '../../shared/types.js';
+import type { ConnectionType, SessionId } from '../../shared/types.js';
 import { useTranscript } from '../hooks/useTranscript.js';
 import { useAppStore } from '../store/app-store.js';
 import { getLinkterm } from '../lib/linkterm-bridge.js';
@@ -24,6 +24,11 @@ export interface TerminalViewProps {
 
 /** Ctrl-C 字节序列。`\x03` 是 SIGINT 的标准 ASCII。 */
 const CTRL_C = '\x03';
+
+/** 判断当前会话类型是否接受终端键盘写入。 */
+export function isWritableConnectionType(connectionType: ConnectionType): boolean {
+  return connectionType !== 'rtt-log';
+}
 
 /**
  * 把字符串编码到 base64（renderer 端不可用 Buffer）。
@@ -50,6 +55,7 @@ export function TerminalView({ sessionId }: TerminalViewProps): React.ReactEleme
   } | null>(null);
   const [terminal, setTerminal] = React.useState<Terminal | null>(null);
   const markOriginActivity = useAppStore((s) => s.markOriginActivity);
+  const connectionType = useAppStore((s) => (sessionId ? s.sessions.get(sessionId)?.connectionType : undefined));
 
   React.useEffect(() => {
     const container = containerRef.current;
@@ -128,6 +134,7 @@ export function TerminalView({ sessionId }: TerminalViewProps): React.ReactEleme
     if (state.onDataDispose) state.onDataDispose();
 
     const sub = state.term.onData((data: string) => {
+      if (connectionType !== undefined && !isWritableConnectionType(connectionType)) return;
       const api = getLinkterm();
       if (!api) return;
       const isCtrlC = data === CTRL_C;
@@ -150,7 +157,7 @@ export function TerminalView({ sessionId }: TerminalViewProps): React.ReactEleme
       if (state.onDataDispose) state.onDataDispose();
       state.onDataDispose = undefined;
     };
-  }, [sessionId, markOriginActivity]);
+  }, [sessionId, markOriginActivity, connectionType]);
 
   // transcript 订阅：把后端事件渲染进 xterm
   useTranscript(sessionId, terminal);

@@ -15,6 +15,17 @@
         "saveAll": true
       },
       {
+        "name": "$(browser) 预览 Renderer",
+        "tooltip": "通过 Vite 在浏览器/VS Code 中预览 LinkTerm Renderer UI",
+        "color": "#38bdf8",
+        "command": "workbench.action.tasks.runTask",
+        "args": [
+          "预览 LinkTerm Renderer"
+        ],
+        "useVsCodeApi": true,
+        "saveAll": true
+      },
+      {
         "name": "$(package) 打包 LinkTerm",
         "tooltip": "编译并生成 LinkTerm Windows 安装包/便携包到 release 目录",
         "color": "#22c55e",

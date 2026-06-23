@@ -4,6 +4,7 @@ import { SessionManager } from '@/core/session/session-manager.js';
 import { SessionBase } from '@/core/session/session-base.js';
 import { SerialDiscovery } from '@/transports/serial/serial-discovery.js';
 import { createMcpServer, LINKTERM_MCP_SCHEMA_VERSION } from '@/mcp/index.js';
+import { SessionNotWritableError } from '@/core/session/types.js';
 import type { LinkTermMcpServer } from '@/mcp/server.js';
 import type { SessionId } from '@/shared/types.js';
 import { MockTransport } from '../../fixtures/mock-transport.js';
@@ -195,6 +196,29 @@ describe('MCP terminal tools', () => {
 
     expect(out.success).toBe(false);
     expect((out.error as { code: string }).code).toBe('NOT_OPEN');
+  });
+
+  it('write_to_session returns NOT_WRITABLE for read-only sessions', async () => {
+    class ReadOnlySession extends TestSession {
+      override async write(): Promise<void> {
+        throw new SessionNotWritableError(this.id);
+      }
+    }
+
+    const session = harness.manager.create((id) => new ReadOnlySession(id, new MockTransport()), {
+      connectionType: 'rtt-log',
+      label: 'RTT channel 0',
+      rttLog: { probeId: 'probe-1', channelIndex: 0 },
+    });
+    await session.open();
+
+    const out = await callTool(harness.client, 'write_to_session', {
+      sessionId: session.id,
+      payload: { encoding: 'utf-8', data: 'x' },
+    });
+
+    expect(out.success).toBe(false);
+    expect((out.error as { code: string }).code).toBe('NOT_WRITABLE');
   });
 
   it('read_from_session returns events with base64-encoded data and the latest cursor', async () => {

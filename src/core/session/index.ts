@@ -13,4 +13,8 @@ export type {
   SessionStateMeta,
   SessionWriteOptions,
 } from './types.js';
-export { SessionNotOpenError, SessionNotFoundError } from './types.js';
+export { SessionNotOpenError, SessionNotFoundError, SessionNotWritableError } from './types.js';
+export { RttLogSession } from './rtt-log-session.js';
+export type { RttLogSessionOptions } from './rtt-log-session.js';
+export { openRttLogSession } from './rtt-log-session-open.js';
+export type { OpenRttLogSessionOptions, OpenRttLogSessionResult } from './rtt-log-session-open.js';

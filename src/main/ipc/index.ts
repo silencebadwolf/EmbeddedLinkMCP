@@ -21,6 +21,7 @@ import { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
 import { registerSerialIpc } from './serial-ipc.js';
 import { registerSessionIpc } from './session-ipc.js';
 import { registerSessionCreate } from './session-create-handler.js';
+import { registerRttLogSessionIpc } from './rtt-log-session-ipc.js';
 import { registerConnectionProfilesIpc } from './connection-profiles-ipc.js';
 import { registerAgentIntegrationsIpc } from './agent-integrations-ipc.js';
 import { registerControlProfileIpc } from './control-profile-ipc.js';
@@ -168,6 +169,7 @@ export async function registerIpcHandlers(
   const unregisterSerial = registerSerialIpc(serialDiscovery);
   const unregisterSession = registerSessionIpc(sessionManager);
   const unregisterSessionCreate = registerSessionCreate(sessionManager);
+  const unregisterRttLogSession = registerRttLogSessionIpc(sessionManager, jlinkBackend);
   const unregisterConnectionProfiles = registerConnectionProfilesIpc(
     sessionManager,
     connectionProfileManager,
@@ -187,6 +189,7 @@ export async function registerIpcHandlers(
       unregisterSerial();
       unregisterSession();
       unregisterSessionCreate();
+      unregisterRttLogSession();
       unregisterConnectionProfiles();
       unregisterAgentIntegrations();
       unregisterControlProfile();
@@ -200,6 +203,7 @@ export async function registerIpcHandlers(
     unregisterSerial();
     unregisterSession();
     unregisterSessionCreate();
+    unregisterRttLogSession();
     unregisterConnectionProfiles();
     unregisterAgentIntegrations();
     unregisterControlProfile();

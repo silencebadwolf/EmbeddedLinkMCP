@@ -19,6 +19,7 @@ export const IPC_CHANNELS = {
   SESSION_CLEAR: 'session:clear',
   SESSION_RESIZE: 'session:resize',
   SESSION_LIFECYCLE: 'session:lifecycle',
+  RTT_LOG_OPEN: 'rttLog:open',
   SERIAL_LIST_PORTS: 'serial:listPorts',
   SERIAL_PORT_CHANGED: 'serial:portChanged',
   /**

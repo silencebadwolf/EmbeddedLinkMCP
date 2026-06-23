@@ -33,6 +33,7 @@ export type ToolErrorCode =
   | 'NOT_FOUND'
   | 'SESSION_NOT_FOUND'
   | 'NOT_OPEN'
+  | 'NOT_WRITABLE'
   | 'NOT_IMPLEMENTED'
   | 'INVALID_ARGUMENT'
   | 'TIMEOUT'

@@ -14,6 +14,7 @@ import { SerialPortPicker } from './SerialPortPicker.js';
 import { BaudRateInput } from './BaudRateInput.js';
 import { getLinkterm } from '../lib/linkterm-bridge.js';
 import { useT } from '../i18n/index.js';
+import { useAppStore } from '../store/app-store.js';
 import type { ControlProfilePayload } from '../../shared/preload-api.js';
 
 interface ControlProfilePanelProps {
@@ -40,7 +41,10 @@ export function ControlProfilePanel({
   const [speedKHz, setSpeedKHz] = React.useState<(typeof JLINK_SPEED_OPTIONS)[number]>('auto');
   const [binary, setBinary] = React.useState('build/app.bin');
   const [baseAddress, setBaseAddress] = React.useState('0x08000000');
+  const [rttProbeId, setRttProbeId] = React.useState('');
+  const [rttChannel, setRttChannel] = React.useState('0');
   const [saving, setSaving] = React.useState(false);
+  const [openingRtt, setOpeningRtt] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -118,6 +122,47 @@ export function ControlProfilePanel({
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openRttLog = async (): Promise<void> => {
+    const api = getLinkterm();
+    if (!api) {
+      setError(t('controlProfile.error.preloadUnavailable'));
+      return;
+    }
+    const probeId = rttProbeId.trim();
+    const channelIndex = Number(rttChannel.trim());
+    if (!probeId) {
+      setError(t('controlProfile.rttLog.error.probeRequired'));
+      return;
+    }
+    if (!Number.isInteger(channelIndex) || channelIndex < 0) {
+      setError(t('controlProfile.rttLog.error.channelInvalid'));
+      return;
+    }
+
+    setOpeningRtt(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const label = `RTT ch${channelIndex}`;
+      const result = await api.rttLog.open({ probeId, channelIndex, label });
+      if (result.success) {
+        useAppStore.getState().addSession({
+          id: result.data.sessionId,
+          label,
+          connectionType: 'rtt-log',
+          state: result.data.state,
+          rttLog: { probeId, channelIndex },
+        });
+        useAppStore.getState().setActive(result.data.sessionId);
+        setMessage(`${result.data.reused ? t('controlProfile.rttLog.reused') : t('controlProfile.rttLog.opened')} ${label}`);
+      } else {
+        setError(result.error.message);
+      }
+    } finally {
+      setOpeningRtt(false);
     }
   };
 
@@ -234,6 +279,36 @@ export function ControlProfilePanel({
               placeholder="0x08000000"
             />
           </div>
+
+          <section className="space-y-3 rounded-md border border-gray-800 bg-gray-900/60 p-3 sm:col-span-2">
+            <div>
+              <h3 className="text-sm font-medium text-gray-200">{t('controlProfile.rttLog.title')}</h3>
+              <p className="mt-1 text-xs text-gray-500">{t('controlProfile.rttLog.description')}</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="control-rtt-probe">{t('controlProfile.rttLog.probeId')}</Label>
+                <Input
+                  id="control-rtt-probe"
+                  value={rttProbeId}
+                  onChange={(e) => setRttProbeId(e.target.value)}
+                  placeholder={t('controlProfile.rttLog.probeId.placeholder')}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="control-rtt-channel">{t('controlProfile.rttLog.channel')}</Label>
+                <Input
+                  id="control-rtt-channel"
+                  value={rttChannel}
+                  onChange={(e) => setRttChannel(e.target.value)}
+                  inputMode="numeric"
+                />
+              </div>
+            </div>
+            <Button type="button" variant="secondary" onClick={() => void openRttLog()} disabled={openingRtt}>
+              {openingRtt ? t('controlProfile.rttLog.opening') : t('controlProfile.rttLog.open')}
+            </Button>
+          </section>
         </div>
 
         {error ? <p className="rounded border border-red-900 bg-red-950 px-3 py-2 text-sm text-red-100">{error}</p> : null}

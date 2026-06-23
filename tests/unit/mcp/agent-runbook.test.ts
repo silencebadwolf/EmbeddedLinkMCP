@@ -112,6 +112,9 @@ describe('agent runbook builder', () => {
     expect(runbook.markdown).toContain('write_to_session');
     expect(runbook.markdown).toContain('send_and_wait');
     expect(runbook.markdown).toContain('read_from_session');
+    expect(runbook.markdown).toContain('open_rtt_log_session');
+    expect(runbook.markdown).toContain('continuous RTT log');
+    expect(runbook.markdown).toContain('rtt_read');
     expect(runbook.markdown).toContain('read-only');
     expect(runbook.markdown).toContain('core tool');
     expect(runbook.markdown).toContain('missing core tools');

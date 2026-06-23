@@ -8,7 +8,7 @@
  */
 
 import { create } from 'zustand';
-import type { SessionId, SessionState } from '../../shared/types.js';
+import type { ConnectionType, SessionId, SessionState } from '../../shared/types.js';
 import type { Origin, SerialPortInfo } from '../../shared/types.js';
 import type { Locale } from '../i18n/index.js';
 import type { NonSensitivePrefill } from '../../shared/preload-api.js';
@@ -76,7 +76,12 @@ export interface SessionMeta {
   /** UI 显示名；若未设则按 id 末尾 4 字符自动派生。 */
   label: string;
   /** 连接类型，方便侧边栏图标/语义。 */
-  connectionType: 'serial' | 'ssh' | 'local-shell';
+  connectionType: ConnectionType;
+  /** RTT 日志会话的非敏感匹配键。 */
+  rttLog?: {
+    probeId: string;
+    channelIndex: number;
+  };
   /** 主进程权威 state 镜像（来自 status / state 事件 / create 返回值）。 */
   state: SessionState;
   /** 此会话最近一次写入/读取来源（用于 OriginIndicator 呼吸灯）。 */

@@ -36,6 +36,21 @@
       }
     },
     {
+      "label": "预览 LinkTerm Renderer",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "dev", "--", "--host", "127.0.0.1", "--configLoader", "native"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
       "label": "打包 LinkTerm",
       "type": "process",
       "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
