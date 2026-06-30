@@ -18,10 +18,16 @@
  * **注册入口**：{@link registerDebugBinaryTools}。
  */
 
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { registerTool, type ToolHandlerResult } from '../../registry.js';
+import { ZodError } from 'zod';
+import { ERROR_CODES } from '../../../shared/error-codes.js';
+import { controlProfileSchema } from '../../../core/workspace/control-profile-schema.js';
+import { registerTool, ToolError, type ToolHandlerResult } from '../../registry.js';
 import { decodeBase64Capped } from './binary-codec.js';
 import { ok, runJLink, withAbortableTimeout, ConfirmationRequiredError } from './error-translate.js';
+import { validateFirmwareVectorTable } from './firmware-sanity.js';
 import type { DebugToolsDeps } from './tools.js';
 import {
   flashDownloadInputSchema,
@@ -41,6 +47,72 @@ import {
   type RttSearchInput,
   type SnapshotCaptureInput,
 } from './schemas.js';
+
+interface FlashProfileGuardInput {
+  probeId: string;
+  address?: number;
+  profileRoot?: string;
+}
+
+async function assertFlashProfileMatchesProbe(
+  input: FlashProfileGuardInput,
+  deps: DebugToolsDeps,
+): Promise<void> {
+  if (input.profileRoot === undefined) return;
+
+  const profilePath = path.join(input.profileRoot, '.linkterm', 'control-profile.json');
+  const profile = await readControlProfileForFlashGuard(profilePath);
+  const expectedTarget = profile.jlink?.target;
+  if (expectedTarget !== undefined) {
+    const probe = await deps.jlinkBackend.probeStatus(input.probeId);
+    if (probe.target !== expectedTarget) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENT,
+        `Direct flash refused: probe target ${probe.target ?? '<unknown>'} does not match LinkTerm control profile target ${expectedTarget}`,
+      );
+    }
+  }
+
+  const expectedBaseAddress = profile.flash?.baseAddress;
+  if (input.address !== undefined && expectedBaseAddress !== undefined) {
+    const profileBaseAddress = Number.parseInt(expectedBaseAddress, 16);
+    if (!Number.isFinite(profileBaseAddress) || input.address !== profileBaseAddress) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENT,
+        `Direct flash refused: requested address ${formatHexAddress(input.address)} does not match profile flash base ${expectedBaseAddress}`,
+      );
+    }
+  }
+}
+
+async function readControlProfileForFlashGuard(
+  profilePath: string,
+): Promise<ReturnType<typeof controlProfileSchema.parse>> {
+  let raw: string;
+  try {
+    raw = await readFile(profilePath, 'utf-8');
+  } catch {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENT,
+      'Direct flash profile guard requires a readable LinkTerm control profile',
+    );
+  }
+  try {
+    return controlProfileSchema.parse(JSON.parse(raw));
+  } catch (err) {
+    if (err instanceof SyntaxError || err instanceof ZodError) {
+      throw new ToolError(
+        ERROR_CODES.INVALID_ARGUMENT,
+        'Direct flash profile guard received an invalid LinkTerm control profile',
+      );
+    }
+    throw err;
+  }
+}
+
+function formatHexAddress(address: number): string {
+  return `0x${address.toString(16).padStart(8, '0')}`;
+}
 
 /**
  * 注册二进制 debug 工具到 McpServer（8 个）。
@@ -118,14 +190,17 @@ export function registerDebugBinaryTools(server: McpServer, deps: DebugToolsDeps
       return runJLink(async () => {
         if (input.confirm !== true) throw new ConfirmationRequiredError('flash_download');
         const binary = decodeBase64Capped(input.binaryBase64, 'binaryBase64');
-        const opts: { address?: number; verify?: boolean } = {};
-        if (input.address !== undefined) opts.address = input.address;
-        if (input.verify !== undefined) opts.verify = input.verify;
+        const opts: { address?: number; verify?: boolean } = { verify: input.verify ?? true };
+        if (input.address !== undefined) {
+          validateFirmwareVectorTable(binary, input.address);
+          opts.address = input.address;
+        }
+        await assertFlashProfileMatchesProbe(input, deps);
         const result = await withAbortableTimeout(input.timeoutMs, (signal) =>
           jlinkBackend.flashDownload(
             input.probeId,
             binary,
-            Object.keys(opts).length > 0 ? opts : undefined,
+            opts,
             signal,
           ),
         );
@@ -135,6 +210,13 @@ export function registerDebugBinaryTools(server: McpServer, deps: DebugToolsDeps
             data: {
               bytesWritten: result.bytesWritten,
               verified: result.verified,
+              verification: {
+                requested: opts.verify === true,
+                method: opts.verify === true
+                  ? 'commander-verifybin-plus-savebin-readback'
+                  : 'not-requested',
+                postDownloadReadbackRequired: opts.verify === true,
+              },
             },
             cursor: 0,
           },
@@ -178,7 +260,11 @@ export function registerDebugBinaryTools(server: McpServer, deps: DebugToolsDeps
       return runJLink(async () => {
         const binary = decodeBase64Capped(input.binaryBase64, 'binaryBase64');
         const opts: { address?: number } = {};
-        if (input.address !== undefined) opts.address = input.address;
+        if (input.address !== undefined) {
+          validateFirmwareVectorTable(binary, input.address);
+          opts.address = input.address;
+        }
+        await assertFlashProfileMatchesProbe(input, deps);
         const result = await withAbortableTimeout(input.timeoutMs, (signal) =>
           jlinkBackend.flashVerify(
             input.probeId,
@@ -190,7 +276,15 @@ export function registerDebugBinaryTools(server: McpServer, deps: DebugToolsDeps
         return ok({
           evidence: {
             kind: 'debug_output',
-            data: result,
+            data: {
+              ...result,
+              verification: {
+                method: 'commander-verifybin-plus-savebin-readback',
+                ...(input.address !== undefined ? { address: input.address } : {}),
+                bytesCompared: binary.byteLength,
+                readbackRequired: true,
+              },
+            },
             cursor: 0,
           },
         });

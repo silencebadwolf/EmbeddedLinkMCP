@@ -1,5 +1,8 @@
 export type {
   AgentIntegrationConfigKind,
+  AgentIntegrationDiagnosticCheck,
+  AgentIntegrationDiagnosticCheckStatus,
+  AgentIntegrationDiagnosticResult,
   AgentIntegrationInstallResult,
   AgentIntegrationStatus,
   AgentIntegrationStatusKind,

@@ -1,20 +1,27 @@
+import { readdirSync } from 'node:fs';
+import type { Dirent } from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow } from 'electron';
+import type { BrowserWindow } from 'electron';
+import { electron } from '../electron-runtime.js';
 import { SessionManager } from '../../core/session/session-manager.js';
 import { ControlProfileManager, WorkspaceConfigManager } from '../../core/workspace/index.js';
 import { ConnectionProfileManager } from '../../core/connections/index.js';
 import {
   AgentIntegrationManager,
   buildElectronMcpLaunchConfig,
-  type AgentIntegrationTarget,
   type LinkTermMcpLaunchConfig,
 } from '../../core/agent-integrations/index.js';
+import { createWslAgentConfigFileBridge } from './wsl-agent-config-file-bridge.js';
 import { JLinkAdapter } from '../../jlink/index.js';
 import type { IJLinkBackend } from '../../jlink/index.js';
 import { createMcpServer, type LinkTermMcpServer } from '../../mcp/index.js';
 import { startMcpHttpRuntimeServer, type McpHttpRuntimeServer } from '../../mcp/http-runtime-server.js';
 import { createRuntimeDiagnosticsProvider } from '../../mcp/runtime-diagnostics.js';
-import { runtimeMetadataPath } from '../../mcp/runtime-metadata.js';
+import {
+  readOrCreateRuntimeHttpSettings,
+  runtimeHttpSettingsPath,
+  runtimeMetadataPath,
+} from '../../mcp/runtime-metadata.js';
 import { ControlWorkflowJobManager } from '../../mcp/surfaces/control-workflow/job-manager.js';
 import type { CapturableWindow } from '../../mcp/surfaces/ui/types.js';
 import { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
@@ -24,10 +31,14 @@ import { registerSessionCreate } from './session-create-handler.js';
 import { registerRttLogSessionIpc } from './rtt-log-session-ipc.js';
 import { registerConnectionProfilesIpc } from './connection-profiles-ipc.js';
 import { registerAgentIntegrationsIpc } from './agent-integrations-ipc.js';
+import { buildDefaultAgentIntegrationTargets } from './agent-integration-targets.js';
+import { createCodexTokenEnvWriter } from './codex-token-env.js';
 import { registerControlProfileIpc } from './control-profile-ipc.js';
 import { SafeStorageSecretCodec } from '../connections/safe-storage-secret-codec.js';
 import { createUiBridge } from './ui-bridge.js';
 export { createUiBridge, type UiPatchTarget } from './ui-bridge.js';
+
+const { app, BrowserWindow: ElectronBrowserWindow } = electron;
 
 /**
  * 主进程持有的全局依赖容器：随 IPC handler 一起初始化、随退出统一清理。
@@ -106,15 +117,31 @@ export async function registerIpcHandlers(
     filePath: path.join(app.getPath('userData'), 'connections.json'),
     secretCodec: new SafeStorageSecretCodec(),
   });
+  const linkTermMcpLaunchConfig = buildLinkTermMcpLaunchConfig();
+  const httpSettings = await readOrCreateRuntimeHttpSettings(
+    runtimeHttpSettingsPath(app.getPath('userData')),
+  );
+  process.env.LINKTERM_MCP_TOKEN = httpSettings.token;
   const agentIntegrationManager = new AgentIntegrationManager({
-    targets: buildDefaultAgentIntegrationTargets(),
-    launchConfig: buildLinkTermMcpLaunchConfig(),
+    targets: await buildDefaultAgentIntegrationTargets({
+      appData: app.getPath('appData'),
+      appRoot: app.getAppPath(),
+      home: app.getPath('home'),
+      launchConfig: linkTermMcpLaunchConfig,
+      httpTransport: {
+        url: `http://localhost:${httpSettings.port}/mcp`,
+        bearerTokenEnvVar: 'LINKTERM_MCP_TOKEN',
+      },
+    }),
+    launchConfig: linkTermMcpLaunchConfig,
+    wslFiles: createWslAgentConfigFileBridge(),
+    tokenEnvWriter: createCodexTokenEnvWriter(),
   });
   const jlinkBackend: IJLinkBackend = new JLinkAdapter();
   const controlWorkflowJobManager = new ControlWorkflowJobManager();
 
   const uiBridge = createUiBridge(() =>
-    BrowserWindow.getAllWindows().map((w) => w.webContents),
+    ElectronBrowserWindow.getAllWindows().map((w) => w.webContents),
   );
 
   const getMainWindow = options.getMainWindow;
@@ -129,10 +156,12 @@ export async function registerIpcHandlers(
   const ownerRuntimeDiagnostics = createRuntimeDiagnosticsProvider({
     transportMode: 'http-owner',
     metadataPath,
+    artifactPaths: runtimeFreshnessArtifactPaths(),
   });
   const directStdioRuntimeDiagnostics = createRuntimeDiagnosticsProvider({
     transportMode: 'direct-stdio',
     metadataPath,
+    artifactPaths: runtimeFreshnessArtifactPaths(),
   });
 
   const mcpServer = createMcpServer({
@@ -164,12 +193,18 @@ export async function registerIpcHandlers(
     getActiveWindow,
     runtimeDiagnostics: ownerRuntimeDiagnostics,
     metadataPath,
+    port: httpSettings.port,
+    token: httpSettings.token,
   });
 
   const unregisterSerial = registerSerialIpc(serialDiscovery);
   const unregisterSession = registerSessionIpc(sessionManager);
   const unregisterSessionCreate = registerSessionCreate(sessionManager);
-  const unregisterRttLogSession = registerRttLogSessionIpc(sessionManager, jlinkBackend);
+  const unregisterRttLogSession = registerRttLogSessionIpc(
+    sessionManager,
+    jlinkBackend,
+    controlProfileManager,
+  );
   const unregisterConnectionProfiles = registerConnectionProfilesIpc(
     sessionManager,
     connectionProfileManager,
@@ -230,36 +265,6 @@ export async function registerIpcHandlers(
 }
 
 /**
- * Build the default local Agent configuration targets that LinkTerm can install into.
- *
- * @returns Supported Agent config file targets for the current OS user.
- */
-function buildDefaultAgentIntegrationTargets(): AgentIntegrationTarget[] {
-  const appData = app.getPath('appData');
-  const home = app.getPath('home');
-  return [
-    {
-      id: 'vscode',
-      label: 'VS Code Copilot',
-      configPath: path.join(appData, 'Code', 'User', 'mcp.json'),
-      configKind: 'vscode-mcp-json',
-    },
-    {
-      id: 'claude-desktop',
-      label: 'Claude Desktop',
-      configPath: path.join(appData, 'Claude', 'claude_desktop_config.json'),
-      configKind: 'mcp-servers',
-    },
-    {
-      id: 'cursor',
-      label: 'Cursor',
-      configPath: path.join(home, '.cursor', 'mcp.json'),
-      configKind: 'mcp-servers',
-    },
-  ];
-}
-
-/**
  * Build the stdio launch command external Agents should use to start LinkTerm MCP.
  *
  * @returns Launch configuration with MCP stdio enabled.
@@ -285,3 +290,43 @@ function electronRuntimeLauncherPath(): string {
     : path.join(app.getAppPath(), relativeLauncherPath);
 }
 
+function runtimeFreshnessArtifactPaths(): string[] {
+  return runtimeFreshnessArtifactPathsForApp({
+    appPath: app.getAppPath(),
+    isPackaged: app.isPackaged,
+  });
+}
+
+export function runtimeFreshnessArtifactPathsForApp(input: {
+  appPath: string;
+  isPackaged: boolean;
+  relativeFiles?: readonly string[];
+}): string[] {
+  if (input.isPackaged) return [];
+  const relativeFiles = input.relativeFiles ?? listRuntimeArtifactFiles(path.join(input.appPath, 'dist', 'main'));
+  return relativeFiles
+    .filter((filePath) => filePath.startsWith('dist/main/') && filePath.endsWith('.js'))
+    .map((filePath) => path.join(input.appPath, ...filePath.split('/')));
+}
+
+function listRuntimeArtifactFiles(root: string): string[] {
+  const files: string[] = [];
+  const visit = (dir: string): void => {
+    let entries: Dirent<string>[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        visit(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith('.js')) {
+        files.push(path.relative(path.dirname(path.dirname(root)), fullPath).replace(/\\/g, '/'));
+      }
+    }
+  };
+  visit(root);
+  return files;
+}

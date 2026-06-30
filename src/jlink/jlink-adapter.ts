@@ -35,6 +35,7 @@ import type {
 import {
   JLinkAbortedError,
   JLinkInvalidStateError,
+  JLinkOperationError,
   ProbeBusyError,
   ProbeNotFoundError,
 } from './errors.js';
@@ -51,6 +52,7 @@ import {
   type JLinkRttClient,
   type JLinkRttSession,
 } from './segger-command-runner.js';
+import { normalizeJLinkTargetName } from '../shared/jlink-target-name.js';
 
 /** JLinkAdapter 的可注入依赖；生产默认使用 SEGGER Commander/GDB server，测试注入 fake。 */
 export interface JLinkAdapterOptions {
@@ -134,11 +136,24 @@ export class JLinkAdapter implements IJLinkBackend {
   // -- probe lifecycle --
 
   /**
-   * 当前阶段不主动连接真实硬件枚举，仅返回当前 adapter 已连接的 handle 投影。
-   * 后续接入物理 probe discovery 时仍需在 MCP 边界剥离 serialNumber。
+   * 枚举 Commander 可见的物理 probe，并与当前 adapter 已连接的 handle 合并。
+   * 已连接 handle 优先保留其 UUID probeId；物理未连接 probe 只作为只读可见性证据返回。
    */
   async probeDetect(): Promise<ProbeInfo[]> {
-    return Array.from(this.#probes.values()).map((handle) => this.#toProbeInfo(handle));
+    const connected = Array.from(this.#probes.values()).map((handle) => this.#toProbeInfo(handle));
+    const physical = await this.#commander.detectProbes?.();
+    if (physical === undefined || physical.length === 0) return connected;
+    const connectedSerials = new Set(
+      connected
+        .map((probe) => probe.serialNumber)
+        .filter((serialNumber): serialNumber is string => serialNumber !== undefined && serialNumber !== ''),
+    );
+    return [
+      ...connected,
+      ...physical.filter(
+        (probe) => probe.serialNumber === undefined || !connectedSerials.has(probe.serialNumber),
+      ),
+    ];
   }
 
   /**
@@ -158,6 +173,7 @@ export class JLinkAdapter implements IJLinkBackend {
     if (existing !== undefined) {
       return this.#toProbeInfo(existing);
     }
+    this.#retireStaleProbeHandlesForSelection(normalizedOpts);
     const probeId = randomUUID();
     const handle: ProbeHandle = {
       probeId,
@@ -323,12 +339,30 @@ export class JLinkAdapter implements IJLinkBackend {
     }
     return this.#withProbeOperation(handle, async () => {
       this.#throwIfAborted(signal);
-      return this.#commander.download(
+      const result = await this.#commander.download(
         this.#toCommanderContext(handle),
         binary,
         { address, verify: opts?.verify === true, timeoutMs: opts?.timeoutMs },
         signal,
       );
+      if (opts?.verify === true) {
+        this.#throwIfAborted(signal);
+        const verifyResult = await this.#commander.verify(
+          this.#toCommanderContext(handle),
+          binary,
+          { address },
+          signal,
+        );
+        if (!verifyResult.ok) {
+          const mismatch = verifyResult.mismatchAt === undefined
+            ? 'unknown'
+            : `0x${verifyResult.mismatchAt.toString(16).padStart(8, '0')}`;
+          throw new JLinkOperationError(`J-Link flashDownload independent verify failed at ${mismatch}`, {
+            operation: 'flashDownload',
+          });
+        }
+      }
+      return result;
     });
   }
 
@@ -554,7 +588,7 @@ export class JLinkAdapter implements IJLinkBackend {
 
   /** 标准化连接选项，避免空白差异制造重复 handle。 */
   #normalizeProbeConnectOptions(opts: ProbeConnectOptions): ProbeConnectOptions {
-    const target = opts.target.trim();
+    const target = normalizeJLinkTargetName(opts.target);
     const serialNumber = opts.serialNumber?.trim();
     return {
       target,
@@ -575,6 +609,26 @@ export class JLinkAdapter implements IJLinkBackend {
         handle.speedKHz === opts.speedKHz &&
         handle.serialNumber === opts.serialNumber,
     );
+  }
+
+  #retireStaleProbeHandlesForSelection(opts: ProbeConnectOptions): void {
+    const probeKey = this.#probeOperationKey(opts);
+    const staleHandles = Array.from(this.#probes.values()).filter(
+      (handle) => handle.probeKey === probeKey,
+    );
+    for (const handle of staleHandles) {
+      if (
+        handle.busy ||
+        this.#isProbeSelectionBusy(handle.probeKey) ||
+        handle.gdbServer !== undefined ||
+        handle.rttSession !== undefined
+      ) {
+        throw new ProbeBusyError(handle.probeId, 'Probe selection is already connected with different options');
+      }
+    }
+    for (const handle of staleHandles) {
+      this.#probes.delete(handle.probeId);
+    }
   }
 
   /** 生成物理 probe 级操作锁 key；未指定序列号时保守串行化所有默认选择操作。 */

@@ -13,7 +13,8 @@
  * 与 Node 警告输出，进而污染 MCP JSON-RPC 帧。需要启用时设置 `LINKTERM_MCP_STDIO=1`。
  */
 import { setTimeout as delay } from 'node:timers/promises';
-import { app, BrowserWindow } from 'electron';
+import type { BrowserWindow } from 'electron';
+import { electron } from './electron-runtime.js';
 import { createMainWindow, handleWindowClose } from './app-lifecycle.js';
 import { registerIpcHandlers, type MainProcessContext } from './ipc/index.js';
 import {
@@ -24,6 +25,8 @@ import {
 import { runtimeMetadataPath } from '../mcp/runtime-metadata.js';
 import { startMcpStdioProxy, type McpStdioProxy } from '../mcp/stdio-proxy.js';
 import { waitForHealthyRuntimeMetadata } from '../mcp/electron-runtime-launcher-core.js';
+
+const { app } = electron;
 
 let mainWindow: BrowserWindow | null = null;
 let context: MainProcessContext | null = null;
@@ -133,7 +136,8 @@ if (!singleInstanceLock && mcpStdioMode) {
 
 /** Create the main window if needed, otherwise focus the existing one. */
 function focusOrCreateMainWindow(): void {
-  if (!mainWindow) {
+  const currentWindow = mainWindow;
+  if (!currentWindow) {
     mainWindow = createMainWindow();
     mainWindow.on('closed', () => {
       mainWindow = null;
@@ -141,8 +145,8 @@ function focusOrCreateMainWindow(): void {
     handleWindowClose(mainWindow);
     return;
   }
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.focus();
+  if (currentWindow.isMinimized()) currentWindow.restore();
+  currentWindow.focus();
 }
 
 /** Start stdio proxy mode and attach to the runtime metadata written by the lock owner. */

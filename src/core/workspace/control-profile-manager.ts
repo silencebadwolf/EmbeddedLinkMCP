@@ -7,6 +7,7 @@ import {
   type ControlProfileBody,
 } from './control-profile-schema.js';
 import { CONTROL_PROFILE_SCHEMA_VERSION, type ControlProfile } from './control-profile-types.js';
+import { normalizeJLinkTargetName } from '../../shared/jlink-target-name.js';
 import { defaultFsPrimitives, type FsPrimitives } from './fs-primitives.js';
 import { assertValidRoot } from './workspace-config-manager.js';
 
@@ -132,7 +133,7 @@ export class ControlProfileManager {
       }
     }
 
-    const validatedBody = controlProfileBodySchema.parse(body);
+    const validatedBody = normalizeControlProfileBody(controlProfileBodySchema.parse(body));
     const profile = controlProfileSchema.parse({
       schemaVersion: CONTROL_PROFILE_SCHEMA_VERSION,
       ...validatedBody,
@@ -219,4 +220,17 @@ export class ControlProfileManager {
       throw err;
     }
   }
+}
+
+function normalizeControlProfileBody(body: ControlProfileBody): ControlProfileBody {
+  const jlink = body.jlink;
+  const target = jlink?.target;
+  if (jlink === undefined || target === undefined) return body;
+  return {
+    ...body,
+    jlink: {
+      ...jlink,
+      target: normalizeJLinkTargetName(target),
+    },
+  };
 }

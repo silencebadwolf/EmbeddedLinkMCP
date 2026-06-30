@@ -129,6 +129,94 @@ describe('MCP tool registry wrapper', () => {
     });
   });
 
+  it('refuses state-affecting calls when runtime code is stale before invoking the handler', async () => {
+    const { server, tools } = fakeServer();
+    let handlerCalls = 0;
+
+    registerTool(server, {
+      name: 'state_tool',
+      description: 'state description',
+      sensitivity: 'state-affecting',
+      inputSchema: schema,
+      runtimeDiagnostics: () => ({
+        identity: { runtimeId: 'old-runtime', pid: 1234, startedAt: '2026-06-29T12:49:36.000Z' },
+        transport: { mode: 'http-owner' },
+        metadata: { available: true, fresh: true },
+        code: {
+          fresh: false,
+          staleArtifacts: [
+            {
+              path: 'dist/main/jlink/segger-command-runner.js',
+              modifiedAt: '2026-06-30T00:00:20.000Z',
+            },
+          ],
+        },
+      }),
+      handler: () => {
+        handlerCalls += 1;
+        return { success: true, evidence: { kind: 'app_status', data: {}, cursor: 0 } };
+      },
+    });
+
+    const result = await tools[0]!.callback({});
+    const out = structured(result);
+
+    expect(handlerCalls).toBe(0);
+    expect(result.isError).toBe(true);
+    expect(out).toMatchObject({
+      success: false,
+      origin: 'ai',
+      schemaVersion: LINKTERM_MCP_SCHEMA_VERSION,
+      error: {
+        code: 'INVALID_STATE',
+        details: {
+          staleArtifacts: [
+            {
+              path: 'dist/main/jlink/segger-command-runner.js',
+              modifiedAt: '2026-06-30T00:00:20.000Z',
+            },
+          ],
+        },
+      },
+    });
+    expect(out.error?.message).toMatch(/Restart the LinkTerm MCP runtime/i);
+  });
+
+  it('allows read-only calls when runtime code is stale so clients can inspect status', async () => {
+    const { server, tools } = fakeServer();
+
+    registerTool(server, {
+      name: 'read_tool',
+      description: 'read description',
+      sensitivity: 'read-only',
+      inputSchema: schema,
+      runtimeDiagnostics: () => ({
+        identity: { runtimeId: 'old-runtime', pid: 1234, startedAt: '2026-06-29T12:49:36.000Z' },
+        transport: { mode: 'http-owner' },
+        metadata: { available: true, fresh: true },
+        code: {
+          fresh: false,
+          staleArtifacts: [
+            {
+              path: 'dist/main/jlink/segger-command-runner.js',
+              modifiedAt: '2026-06-30T00:00:20.000Z',
+            },
+          ],
+        },
+      }),
+      handler: () => ({ success: true, evidence: { kind: 'app_status', data: { ok: true }, cursor: 0 } }),
+    });
+
+    const result = await tools[0]!.callback({});
+    const out = structured(result);
+
+    expect(result.isError).toBe(false);
+    expect(out).toMatchObject({
+      success: true,
+      evidence: { kind: 'app_status', data: { ok: true }, cursor: 0 },
+    });
+  });
+
   it('normalizes ToolError and unexpected exceptions into structured failures', async () => {
     const { server, tools } = fakeServer();
 

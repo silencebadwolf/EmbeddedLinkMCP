@@ -11,7 +11,8 @@
  *   renderer 端的 `window.linkterm` 类型断言变成静默失败。
  */
 
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import type { IpcRendererEvent } from 'electron';
+import { electron } from './electron-runtime.js';
 import { IPC_CHANNELS } from '../shared/ipc-protocol.js';
 import type {
   PreloadAPI,
@@ -26,11 +27,14 @@ import type {
   SavedConnectionSummary,
   AgentIntegrationStatus,
   AgentIntegrationInstallResult,
+  AgentIntegrationDiagnosticResult,
   ControlProfileFilePayload,
   RttLogOpenSuccess,
 } from '../shared/preload-api.js';
 import type { SessionId, SessionLifecycleEvent, SessionState, SessionSummary, SerialPortInfo } from '../shared/types.js';
 import type { TranscriptEventEnvelope } from '../shared/transcript-ipc-types.js';
+
+const { contextBridge, ipcRenderer } = electron;
 
 /** 包一层 invoke：把 channel 字符串集中在 preload，而非散落到 hooks。 */
 const invoke = <T>(channel: string, payload?: unknown): Promise<PreloadResult<T>> =>
@@ -115,6 +119,8 @@ const api: PreloadAPI = {
       invoke<ReadonlyArray<AgentIntegrationStatus>>(IPC_CHANNELS.AGENT_INTEGRATIONS_LIST),
     install: (req) =>
       invoke<AgentIntegrationInstallResult>(IPC_CHANNELS.AGENT_INTEGRATIONS_INSTALL, req),
+    diagnose: (req) =>
+      invoke<AgentIntegrationDiagnosticResult>(IPC_CHANNELS.AGENT_INTEGRATIONS_DIAGNOSE, req),
   },
   controlProfile: {
     save: (req) =>

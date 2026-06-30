@@ -28,6 +28,9 @@ const abortableMixin = {
 /** probeId 必须是 UUID v4 字符串。 */
 const probeIdField = z.string().uuid();
 
+/** Optional workspace root whose .linkterm/control-profile.json constrains direct flash tools. */
+const profileRootField = z.string().min(1).max(4096).optional();
+
 /**
  * 高影响操作（flash_* / cpu_reset / gdb_server_start）的 confirm 闸门字段。
  *
@@ -225,6 +228,7 @@ export const flashDownloadInputSchema = z
     /** 烧录 binary 的 base64；确认后由 decodeBase64Capped 执行严格校验和 16 MiB 上限。 */
     binaryBase64: highImpactBase64Field,
     address: addressField.optional(),
+    profileRoot: profileRootField,
     verify: z.boolean().optional(),
     confirm: confirmField,
   })
@@ -257,6 +261,7 @@ export const flashVerifyInputSchema = z
     probeId: probeIdField,
     binaryBase64: base64Field,
     address: addressField.optional(),
+    profileRoot: profileRootField,
   })
   .strict();
 

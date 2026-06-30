@@ -2,9 +2,13 @@
  * MCP debug binary tools — base64 ↔ Buffer 翻译 + AbortSignal + 上限。
  */
 
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SessionManager } from '@/core/session/session-manager.js';
+import { CONTROL_PROFILE_SCHEMA_VERSION } from '@/core/workspace/control-profile-types.js';
 import { SerialDiscovery } from '@/transports/serial/serial-discovery.js';
 import { createMcpServer } from '@/mcp/index.js';
 import type { LinkTermMcpServer } from '@/mcp/server.js';
@@ -21,7 +25,9 @@ interface Harness {
   probeId: string;
 }
 
-async function setup(): Promise<Harness> {
+async function setup(options: {
+  runtimeCodeFresh?: boolean;
+} = {}): Promise<Harness> {
   const manager = new SessionManager();
   const serialDiscovery = new SerialDiscovery({ listFn: async () => [] });
   const fake = new FakeJLinkBackend();
@@ -30,20 +36,36 @@ async function setup(): Promise<Harness> {
     sessionManager: manager,
     serialDiscovery,
     jlinkBackend: fake,
+    runtimeDiagnostics: () => ({
+      identity: { runtimeId: 'test-runtime', pid: 1234, startedAt: '2026-06-29T12:49:36.000Z' },
+      transport: { mode: 'in-memory' },
+      metadata: { available: true, fresh: true },
+      code: options.runtimeCodeFresh === false
+        ? {
+            fresh: false,
+            staleArtifacts: [
+              {
+                path: 'dist/main/jlink/segger-command-runner.js',
+                modifiedAt: '2026-06-30T00:00:20.000Z',
+              },
+            ],
+          }
+        : { fresh: true, staleArtifacts: [] },
+    }),
     transportFactory: () => serverTransport,
   });
   await mcp.start();
   const client = new Client({ name: 'lt-test-client', version: '0.0.0' });
   await client.connect(clientTransport);
 
-  const connect = await client.callTool({
-    name: 'probe_connect',
-    arguments: { target: 'STM32F4' },
-  });
-  const probe = (
-    (connect.structuredContent as { evidence: { data: { probe: { probeId: string } } } }).evidence
-      .data.probe
-  );
+  const probe = options.runtimeCodeFresh === false
+    ? await fake.probeConnect({ target: 'STM32F4' })
+    : (
+        (await client.callTool({
+          name: 'probe_connect',
+          arguments: { target: 'STM32F4' },
+        })).structuredContent as { evidence: { data: { probe: { probeId: string } } } }
+      ).evidence.data.probe;
   return { manager, serialDiscovery, fake, mcp, client, probeId: probe.probeId };
 }
 
@@ -66,6 +88,28 @@ async function callTool(
   const res = await client.callTool({ name, arguments: args });
   expect(res.structuredContent).toBeDefined();
   return res.structuredContent as Record<string, unknown>;
+}
+
+async function writeProfileGuardRoot(input: {
+  target: string;
+  baseAddress: string;
+}): Promise<string> {
+  const profileRoot = path.join(tmpdir(), `lt-profile-guard-${Date.now()}-${Math.random()}`);
+  await mkdir(path.join(profileRoot, '.linkterm'), { recursive: true });
+  await writeFile(
+    path.join(profileRoot, '.linkterm', 'control-profile.json'),
+    JSON.stringify({
+      schemaVersion: CONTROL_PROFILE_SCHEMA_VERSION,
+      jlink: { enabled: true, target: input.target, interface: 'swd', speedKHz: 4000 },
+      flash: {
+        binary: 'build/gcc-arm-debug/rtthread.bin',
+        baseAddress: input.baseAddress,
+        verify: true,
+      },
+    }),
+    'utf-8',
+  );
+  return profileRoot;
 }
 
 describe('MCP debug binary tools', () => {
@@ -127,6 +171,23 @@ describe('MCP debug binary tools', () => {
   });
 
   describe('flash_download', () => {
+    it('defaults verification on when verify is omitted', async () => {
+      const binary = Buffer.from([0x01, 0x02, 0x03, 0x04]);
+      const out = await callTool(h.client, 'flash_download', {
+        probeId: h.probeId,
+        binaryBase64: binary.toString('base64'),
+        confirm: true,
+      });
+
+      expect(out.success).toBe(true);
+      expect(h.fake.callsOf('flashDownload').at(-1)?.args).toMatchObject([
+        h.probeId,
+        binary.byteLength,
+        { verify: true },
+      ]);
+      expect((out.evidence as { data: { verified: boolean } }).data.verified).toBe(true);
+    });
+
     it('honors verify=true and reports verified', async () => {
       const binary = Buffer.from([0x01, 0x02, 0x03, 0x04]);
       const out = await callTool(h.client, 'flash_download', {
@@ -141,6 +202,130 @@ describe('MCP debug binary tools', () => {
       }).data;
       expect(data.bytesWritten).toBe(4);
       expect(data.verified).toBe(true);
+    });
+
+    it('reports the independent readback verification contract for verified downloads', async () => {
+      const out = await callTool(h.client, 'flash_download', {
+        probeId: h.probeId,
+        binaryBase64: Buffer.from([0x01, 0x02, 0x03, 0x04]).toString('base64'),
+        verify: true,
+        confirm: true,
+      });
+
+      expect(out.success).toBe(true);
+      expect((out.evidence as {
+        data: {
+          verification: {
+            requested: boolean;
+            method: string;
+            postDownloadReadbackRequired: boolean;
+          };
+        };
+      }).data.verification).toEqual({
+        requested: true,
+        method: 'commander-verifybin-plus-savebin-readback',
+        postDownloadReadbackRequired: true,
+      });
+    });
+
+    it('refuses confirmed flash when the running MCP runtime code is stale', async () => {
+      await teardown(h);
+      h = await setup({ runtimeCodeFresh: false });
+      const callsBefore = h.fake.callsOf('flashDownload').length;
+
+      const out = await callTool(h.client, 'flash_download', {
+        probeId: h.probeId,
+        binaryBase64: Buffer.from([0x01, 0x02, 0x03, 0x04]).toString('base64'),
+        verify: true,
+        confirm: true,
+      });
+
+      expect(out.success).toBe(false);
+      expect((out.error as { code: string; message: string }).code).toBe('INVALID_STATE');
+      expect((out.error as { message: string }).message).toMatch(/Restart the LinkTerm MCP runtime/i);
+      expect(h.fake.callsOf('flashDownload')).toHaveLength(callsBefore);
+    });
+
+    it('rejects direct flash when the probe target disagrees with the LinkTerm profile target', async () => {
+      const profileRoot = await writeProfileGuardRoot({
+        target: 'STM32H743II',
+        baseAddress: '0x08000000',
+      });
+      const staleProbe = await h.fake.probeConnect({ target: 'STM32H743IIT6' });
+      const callsBefore = h.fake.callsOf('flashDownload').length;
+
+      const out = await callTool(h.client, 'flash_download', {
+        probeId: staleProbe.probeId,
+        binaryBase64: Buffer.from([0x01, 0x02, 0x03, 0x04]).toString('base64'),
+        address: 0x08000000,
+        profileRoot,
+        confirm: true,
+      });
+
+      expect(out.success).toBe(false);
+      expect((out.error as { code: string; message: string }).code).toBe('INVALID_ARGUMENT');
+      expect((out.error as { message: string }).message).toContain('probe target');
+      expect(h.fake.callsOf('flashDownload')).toHaveLength(callsBefore);
+    });
+
+    it('rejects direct flash when the requested address disagrees with the LinkTerm profile flash base', async () => {
+      const profileRoot = await writeProfileGuardRoot({
+        target: 'STM32F4',
+        baseAddress: '0x08000000',
+      });
+      const callsBefore = h.fake.callsOf('flashDownload').length;
+
+      const out = await callTool(h.client, 'flash_download', {
+        probeId: h.probeId,
+        binaryBase64: Buffer.from([0x01, 0x02, 0x03, 0x04]).toString('base64'),
+        address: 0x08008000,
+        profileRoot,
+        confirm: true,
+      });
+
+      expect(out.success).toBe(false);
+      expect((out.error as { code: string; message: string }).code).toBe('INVALID_ARGUMENT');
+      expect((out.error as { message: string }).message).toContain('profile flash base');
+      expect(h.fake.callsOf('flashDownload')).toHaveLength(callsBefore);
+    });
+
+    it('reports invalid argument when profileRoot does not contain a control profile', async () => {
+      const profileRoot = path.join(tmpdir(), `lt-profile-missing-${Date.now()}-${Math.random()}`);
+      const callsBefore = h.fake.callsOf('flashDownload').length;
+
+      const out = await callTool(h.client, 'flash_download', {
+        probeId: h.probeId,
+        binaryBase64: Buffer.from([0x01, 0x02, 0x03, 0x04]).toString('base64'),
+        address: 0x08000000,
+        profileRoot,
+        confirm: true,
+      });
+
+      expect(out.success).toBe(false);
+      expect((out.error as { code: string; message: string }).code).toBe('INVALID_ARGUMENT');
+      expect((out.error as { message: string }).message).toContain('control profile');
+      expect((out.error as { details?: Record<string, unknown> }).details).toBeUndefined();
+      expect(h.fake.callsOf('flashDownload')).toHaveLength(callsBefore);
+    });
+
+    it('rejects a Cortex-M vector table whose reset address is outside the requested image range', async () => {
+      const firmware = Buffer.alloc(64, 0xff);
+      firmware.writeUInt32LE(0x24000d20, 0);
+      firmware.writeUInt32LE(0x080a8141, 4);
+      const callsBefore = h.fake.callsOf('flashDownload').length;
+
+      const out = await callTool(h.client, 'flash_download', {
+        probeId: h.probeId,
+        binaryBase64: firmware.toString('base64'),
+        address: 0x08008000,
+        verify: true,
+        confirm: true,
+      });
+
+      expect(out.success).toBe(false);
+      expect((out.error as { code: string; message: string }).code).toBe('INVALID_ARGUMENT');
+      expect((out.error as { message: string }).message).toContain('reset vector');
+      expect(h.fake.callsOf('flashDownload')).toHaveLength(callsBefore);
     });
 
     it('aborts when timeoutMs < delayMs (FakeJLinkBackend)', async () => {
@@ -205,6 +390,70 @@ describe('MCP debug binary tools', () => {
       });
       expect(out.success).toBe(true);
       expect((out.evidence as { data: { ok: boolean } }).data.ok).toBe(true);
+    });
+
+    it('reports the independent readback verification contract', async () => {
+      const out = await callTool(h.client, 'flash_verify', {
+        probeId: h.probeId,
+        binaryBase64: Buffer.from([0x01, 0x02, 0x03, 0x04]).toString('base64'),
+        address: 0x08000000,
+      });
+
+      expect(out.success).toBe(true);
+      expect((out.evidence as {
+        data: {
+          verification: {
+            method: string;
+            address: number;
+            bytesCompared: number;
+            readbackRequired: boolean;
+          };
+        };
+      }).data.verification).toEqual({
+        method: 'commander-verifybin-plus-savebin-readback',
+        address: 0x08000000,
+        bytesCompared: 4,
+        readbackRequired: true,
+      });
+    });
+
+    it('rejects direct verify when the probe target disagrees with the LinkTerm profile target', async () => {
+      const profileRoot = await writeProfileGuardRoot({
+        target: 'STM32H743II',
+        baseAddress: '0x08000000',
+      });
+      const staleProbe = await h.fake.probeConnect({ target: 'STM32H743IIT6' });
+      const callsBefore = h.fake.callsOf('flashVerify').length;
+
+      const out = await callTool(h.client, 'flash_verify', {
+        probeId: staleProbe.probeId,
+        binaryBase64: Buffer.from([0x01, 0x02, 0x03, 0x04]).toString('base64'),
+        address: 0x08000000,
+        profileRoot,
+      });
+
+      expect(out.success).toBe(false);
+      expect((out.error as { code: string; message: string }).code).toBe('INVALID_ARGUMENT');
+      expect((out.error as { message: string }).message).toContain('probe target');
+      expect(h.fake.callsOf('flashVerify')).toHaveLength(callsBefore);
+    });
+
+    it('rejects a Cortex-M vector table whose reset address is outside the verified image range', async () => {
+      const firmware = Buffer.alloc(64, 0xff);
+      firmware.writeUInt32LE(0x24000d20, 0);
+      firmware.writeUInt32LE(0x080a8141, 4);
+      const callsBefore = h.fake.callsOf('flashVerify').length;
+
+      const out = await callTool(h.client, 'flash_verify', {
+        probeId: h.probeId,
+        binaryBase64: firmware.toString('base64'),
+        address: 0x08008000,
+      });
+
+      expect(out.success).toBe(false);
+      expect((out.error as { code: string; message: string }).code).toBe('INVALID_ARGUMENT');
+      expect((out.error as { message: string }).message).toContain('reset vector');
+      expect(h.fake.callsOf('flashVerify')).toHaveLength(callsBefore);
     });
   });
 

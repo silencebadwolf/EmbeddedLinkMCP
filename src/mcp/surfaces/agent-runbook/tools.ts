@@ -153,8 +153,14 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
               jlink: jlinkStatus,
               ui: buildUiStatus(deps.getActiveWindow),
               terminalCommandTools: buildTerminalCommandToolsStatus(toolSetStatus),
-              recommendedNextActions: buildRecommendedNextActions(profileSummary, serialStatus, jlinkStatus, toolSetStatus),
-              recommendedWorkflows: buildRecommendedWorkflows(profileSummary, input.root, toolSetStatus),
+              recommendedNextActions: buildRecommendedNextActions(
+                profileSummary,
+                serialStatus,
+                jlinkStatus,
+                toolSetStatus,
+                runtimeStatus,
+              ),
+              recommendedWorkflows: buildRecommendedWorkflows(profileSummary, input.root, toolSetStatus, jlinkStatus),
             },
             cursor: 0,
           },
@@ -300,9 +306,21 @@ function buildRecommendedNextActions(
   serialStatus: { portCount: number },
   jlinkStatus: { available: boolean; probeCount: number },
   toolSetStatus: ToolSetDiagnostics,
+  runtimeStatus: RuntimeDiagnostics,
 ): string[] {
+  if (runtimeStatus.code?.fresh === false) {
+    const staleArtifacts = runtimeStatus.code.staleArtifacts.map((artifact) => artifact.path).join(', ');
+    return [
+      `Restart the LinkTerm MCP runtime before hardware operations; compiled artifacts changed after this process started: ${staleArtifacts}.`,
+    ];
+  }
   if (!toolSetStatus.core.complete) {
     return ['Core MCP tools are missing; repair or restart the LinkTerm MCP runtime before terminal, profile, workflow, debug, UI, or hardware operations.'];
+  }
+  if (isProfileFlashObserveReady(profileSummary) && jlinkStatus.available && jlinkStatus.probeCount === 0) {
+    return [
+      'Check J-Link probe visibility before flash workflows: confirm USB connection, target power, Windows driver access, and J-Link toolchain installation, then call get_app_status again.',
+    ];
   }
   if (isProfileFlashObserveReady(profileSummary)) {
     return [
@@ -326,8 +344,14 @@ function buildRecommendedWorkflows(
   profileSummary: RunbookProfileSummary,
   root: string | undefined,
   toolSetStatus: ToolSetDiagnostics,
+  jlinkStatus: { available: boolean; probeCount: number },
 ): RecommendedWorkflow[] {
-  if (root === undefined || !toolSetStatus.core.complete || !isProfileFlashObserveReady(profileSummary)) {
+  if (
+    root === undefined ||
+    !toolSetStatus.core.complete ||
+    !isProfileFlashObserveReady(profileSummary) ||
+    (jlinkStatus.available && jlinkStatus.probeCount === 0)
+  ) {
     return [];
   }
   return [

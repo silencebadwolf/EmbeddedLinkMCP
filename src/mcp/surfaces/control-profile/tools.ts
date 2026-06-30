@@ -1,6 +1,8 @@
 /** MCP control-profile surface: create/read/activate workspace-local control profile. */
 
 import { ZodError } from 'zod';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   ControlProfileAlreadyInitializedError,
@@ -20,6 +22,7 @@ import type { IJLinkBackend, ProbeConnectOptions, ProbeInfo } from '../../../jli
 import { JLinkOperationError } from '../../../jlink/errors.js';
 import type { SerialSessionConfig, SessionState } from '../../../shared/types.js';
 import type { SessionCreateRequestConfig } from '../../../shared/preload-api.js';
+import { classifyJLinkTargetName } from '../../../shared/jlink-target-name.js';
 import { buildSession } from '../../../core/session/factory.js';
 import { ERROR_CODES } from '../../../shared/error-codes.js';
 import {
@@ -28,6 +31,7 @@ import {
   type ToolHandlerResult,
 } from '../../registry.js';
 import { runJLink } from '../debug/error-translate.js';
+import { checkFirmwareVectorTable } from '../debug/firmware-sanity.js';
 import {
   activateControlProfileInputSchema,
   applyControlProfileAnswerInputSchema,
@@ -64,6 +68,13 @@ export interface ControlProfileToolsDeps {
 
 /** J-Link auto speed 从最高速向下尝试，避免最高速不稳定时直接失败。 */
 const AUTO_JLINK_SPEEDS_KHZ = [50_000, 25_000, 10_000, 8_000, 4_000, 1_000] as const;
+const FIRMWARE_DIAGNOSTIC_READ_BYTES = 1024 * 1024;
+
+interface ControlProfileDiagnostic {
+  id: string;
+  status: 'pass' | 'warn' | 'fail';
+  message: string;
+}
 
 /**
  * 注册控制配置 MCP 工具。
@@ -124,11 +135,12 @@ export function registerControlProfileTools(
     handler: async (input: InspectControlProfileInput): Promise<ToolHandlerResult> => {
       const { profile, exists } = await loadProfileIfPresent(deps.controlProfileManager, input.root);
       const report = inspectControlProfileCompleteness(profile);
+      const diagnostics = await inspectControlProfileDiagnostics(input.root, profile);
       return {
         success: true,
         evidence: {
           kind: 'workspace_config',
-          data: { root: input.root, path: controlProfilePath(input.root), exists, ...report, profile },
+          data: { root: input.root, path: controlProfilePath(input.root), exists, ...report, profile, diagnostics },
           cursor: 0,
         },
       };
@@ -305,10 +317,63 @@ async function activateJLink(
       'jlink.enabled=true requires jlink.target in control-profile.json',
     );
   }
-  const opts: ProbeConnectOptions = { target };
+  const targetClassification = classifyJLinkTargetName(target);
+  const opts: ProbeConnectOptions = { target: targetClassification.normalizedTarget };
   if (profile.jlink.interface !== undefined) opts.interface = profile.jlink.interface;
   const probe = await runJLink(() => connectProbeWithConfiguredSpeed(jlinkBackend, opts, profile.jlink?.speedKHz));
   return sanitizeProbeForMcp(probe);
+}
+
+async function inspectControlProfileDiagnostics(
+  root: string,
+  profile: ControlProfile | undefined,
+): Promise<ControlProfileDiagnostic[]> {
+  const diagnostics: ControlProfileDiagnostic[] = [];
+  const target = profile?.jlink?.target;
+  if (target !== undefined) {
+    const targetClassification = classifyJLinkTargetName(target);
+    if (targetClassification.kind === 'stm32-order-code') {
+      diagnostics.push({
+        id: 'jlink-target-name',
+        status: 'warn',
+        message: targetClassification.message ?? `Use ${targetClassification.normalizedTarget} as the SEGGER J-Link target name.`,
+      });
+    }
+  }
+  if (!profile?.flash?.binary || !profile.flash.baseAddress) return diagnostics;
+  const baseAddress = Number.parseInt(profile.flash.baseAddress, 16);
+  if (!Number.isFinite(baseAddress)) return diagnostics;
+  try {
+    const firmwarePath = path.isAbsolute(profile.flash.binary)
+      ? profile.flash.binary
+      : path.join(root, profile.flash.binary);
+    const binary = await readFile(firmwarePath);
+    const check = checkFirmwareVectorTable(binary.subarray(0, FIRMWARE_DIAGNOSTIC_READ_BYTES), baseAddress);
+    if (check.status === 'fail') {
+      diagnostics.push({
+        id: 'firmware-vector-base',
+        status: 'fail',
+        message: check.message ?? 'firmware reset vector does not match profile.flash.baseAddress',
+      });
+      return diagnostics;
+    }
+    if (check.status === 'pass') {
+      diagnostics.push({
+        id: 'firmware-vector-base',
+        status: 'pass',
+        message: 'firmware reset vector points inside profile.flash.baseAddress image range',
+      });
+      return diagnostics;
+    }
+    return diagnostics;
+  } catch (err) {
+    diagnostics.push({
+      id: 'firmware-readable',
+      status: 'warn',
+      message: `Unable to read profile.flash.binary for preflight diagnostics: ${err instanceof Error ? err.message : String(err)}`,
+    });
+    return diagnostics;
+  }
 }
 
 /**

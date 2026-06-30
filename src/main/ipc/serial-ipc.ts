@@ -1,9 +1,11 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { electron } from '../electron-runtime.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type { SerialPortInfo } from '../../shared/types.js';
 import type { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
 import type { PreloadResult } from '../../shared/preload-api.js';
 import { ERROR_CODES } from '../../shared/error-codes.js';
+
+const { BrowserWindow, ipcMain } = electron;
 
 /**
  * 注册串口相关 IPC handler 与广播。

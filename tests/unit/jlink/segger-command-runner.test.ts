@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { JLinkAbortedError, JLinkOperationError } from '@/jlink/index.js';
 import {
   buildDefaultCommanderCandidates,
@@ -21,7 +22,10 @@ class FakeProcessRunner {
   readonly requests: SeggerProcessRequest[] = [];
   readonly observedScriptPaths: string[] = [];
   readonly observedBinaryPaths: string[] = [];
+  readonly scripts: string[] = [];
+  readonly binaries: Buffer[] = [];
   result: SeggerProcessResult = { exitCode: 0, signal: null, stdout: 'Verify successful', stderr: '' };
+  writeReadback = true;
   scriptContent = '';
   binaryContent = Buffer.alloc(0);
   scriptPath = '';
@@ -31,31 +35,46 @@ class FakeProcessRunner {
     this.requests.push(request);
     const scriptIndex = request.args.indexOf('-CommandFile');
     expect(scriptIndex).toBeGreaterThanOrEqual(0);
-    this.scriptPath = request.args[scriptIndex + 1]!;
-    this.observedScriptPaths.push(this.scriptPath);
-    this.scriptContent = await readFile(this.scriptPath, 'utf-8');
-    const pathMatch = this.scriptContent.match(/(?:loadbin|verifybin)\s+"([^"]+)"/i);
+    const scriptPath = request.args[scriptIndex + 1]!;
+    this.scriptPath = scriptPath;
+    this.observedScriptPaths.push(scriptPath);
+    const scriptContent = await readFile(scriptPath, 'utf-8');
+    this.scriptContent = scriptContent;
+    this.scripts.push(scriptContent);
+    const pathMatch = scriptContent.match(/(?:loadbin|verifybin)\s+"([^"]+)"/i);
+    let binaryContent = Buffer.alloc(0);
     if (pathMatch?.[1] !== undefined) {
       this.binaryPath = pathMatch[1];
       this.observedBinaryPaths.push(this.binaryPath);
-      this.binaryContent = await readFile(this.binaryPath);
+      binaryContent = await readFile(this.binaryPath);
+      this.binaryContent = binaryContent;
     } else {
       this.binaryPath = '';
       this.binaryContent = Buffer.alloc(0);
+    }
+    this.binaries.push(Buffer.from(binaryContent));
+    const readbackMatch = scriptContent.match(/savebin\s+"([^"]+)"/i);
+    if (this.writeReadback && readbackMatch?.[1] !== undefined) {
+      await writeFile(readbackMatch[1], binaryContent);
     }
     return this.result;
   }
 }
 
 class CapturingProcessRunner extends FakeProcessRunner {
-  readonly scripts: string[] = [];
-  readonly binaries: Buffer[] = [];
-
   override async run(request: SeggerProcessRequest): Promise<SeggerProcessResult> {
-    const result = await super.run(request);
-    this.scripts.push(this.scriptContent);
-    this.binaries.push(Buffer.from(this.binaryContent));
-    return result;
+    return super.run(request);
+  }
+}
+
+class VerifyReadbackMismatchRunner extends FakeProcessRunner {
+  override async run(request: SeggerProcessRequest): Promise<SeggerProcessResult> {
+    await super.run(request);
+    const readbackMatch = this.scriptContent.match(/savebin\s+"([^"]+)"/i);
+    if (readbackMatch?.[1] !== undefined) {
+      await writeFile(readbackMatch[1], Buffer.from([0xaa, 0x00]));
+    }
+    return { exitCode: 0, signal: null, stdout: 'Verify successful\n', stderr: '' };
   }
 }
 
@@ -173,7 +192,88 @@ describe('NodeSeggerProcessRunner', () => {
     expect(source).toContain('shell: false');
     expect(source).toContain("stdio: ['ignore', 'pipe', 'pipe']");
   });
+
+  it('terminates child process descendants when a command times out', async () => {
+    const runner = new NodeSeggerProcessRunner();
+    const marker = `linkterm-runner-child-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+    try {
+      await expect(
+        runner.run({
+          command: process.execPath,
+          args: [
+            '-e',
+            [
+              "const { spawn } = require('node:child_process');",
+              `spawn(process.execPath, ['-e', "process.title='${marker}'; setInterval(() => {}, 1000);"], { stdio: 'ignore', detached: false });`,
+              'setInterval(() => {}, 1000);',
+            ].join(''),
+          ],
+          timeoutMs: 500,
+        }),
+      ).rejects.toBeInstanceOf(JLinkAbortedError);
+
+      expect(listProcessesByCommandLine(marker)).toEqual([]);
+    } finally {
+      killProcessesByCommandLine(marker);
+    }
+  });
 });
+
+function listProcessesByCommandLine(marker: string): string[] {
+  if (process.platform === 'win32') {
+    const escaped = marker.replace(/'/g, "''");
+    const output = execFileSync(
+      windowsPowerShellPath(),
+      [
+        '-NoProfile',
+        '-Command',
+        `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${escaped}*' -and $_.ProcessId -ne $PID } | ForEach-Object { $_.ProcessId }`,
+      ],
+      { encoding: 'utf-8', windowsHide: true },
+    );
+    return output.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  }
+  let output = '';
+  try {
+    output = execFileSync('pgrep', ['-f', marker], { encoding: 'utf-8' });
+  } catch {
+    return [];
+  }
+  return output.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean).filter((pid) => pid !== String(process.pid));
+}
+
+function killProcessesByCommandLine(marker: string): void {
+  if (process.platform === 'win32') {
+    const escaped = marker.replace(/'/g, "''");
+    execFileSync(
+      windowsPowerShellPath(),
+      [
+        '-NoProfile',
+        '-Command',
+        `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${escaped}*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+      ],
+      { encoding: 'utf-8', windowsHide: true },
+    );
+    return;
+  }
+  try {
+    execFileSync('pkill', ['-f', marker], { encoding: 'utf-8' });
+  } catch {
+    // No matching process is fine.
+  }
+}
+
+class TimeoutOnCommanderRunRunner extends FakeProcessRunner {
+  override async run(request: SeggerProcessRequest): Promise<SeggerProcessResult> {
+    await super.run(request);
+    throw new JLinkAbortedError('J-Link Commander timed out after 30000ms');
+  }
+}
+
+function windowsPowerShellPath(): string {
+  return path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
 
 describe('DefaultJLinkCommanderClient', () => {
   let root: string;
@@ -189,7 +289,7 @@ describe('DefaultJLinkCommanderClient', () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it('does not reject a configured target only because local SEGGER XML databases do not list it', async () => {
+  it('keeps Commander available when local SEGGER XML databases do not list a target', async () => {
     const client = new DefaultJLinkCommanderClient({ commanderPath, tempRoot: root });
 
     const availability = client.checkAvailability('AT32F435VGT7');
@@ -200,7 +300,7 @@ describe('DefaultJLinkCommanderClient', () => {
       target: 'AT32F435VGT7',
       targetSupported: false,
     });
-    expect(availability.reason).toBeUndefined();
+    expect(availability.message).toContain('not listed');
   });
 
   it('reports target supported when a SEGGER device database contains the target', async () => {
@@ -212,6 +312,38 @@ describe('DefaultJLinkCommanderClient', () => {
       commanderPath,
       targetSupported: true,
     });
+  });
+
+  it('detects attached physical probes through ShowEmuList without opening a target connection', async () => {
+    const runner = new FakeProcessRunner();
+    runner.result = {
+      exitCode: 0,
+      signal: null,
+      stdout: [
+        'SEGGER J-Link Commander V7.96',
+        'J-Link[0]: Connection: USB, Serial number: 601012352, ProductName: J-Link PLUS',
+        'J-Link[1]: Connection: USB, Serial number: 601012353, ProductName: J-Link EDU',
+      ].join('\n'),
+      stderr: '',
+    };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    await expect(client.detectProbes()).resolves.toEqual([
+      { probeId: 'physical-0', serialNumber: '601012352', connected: false },
+      { probeId: 'physical-1', serialNumber: '601012353', connected: false },
+    ]);
+
+    expect(runner.requests).toHaveLength(1);
+    expect(runner.requests[0]!.args).toEqual([
+      '-ExitOnError',
+      '1',
+      '-NoGui',
+      '1',
+      '-CommandFile',
+      runner.scriptPath,
+    ]);
+    expect(runner.scriptContent).toBe('ShowEmuList\nq\n');
+    expect(await exists(runner.scriptPath)).toBe(false);
   });
 
   it('downloads raw binary through a generated J-Link command file and cleans temporary files', async () => {
@@ -231,7 +363,7 @@ describe('DefaultJLinkCommanderClient', () => {
     );
 
     expect(result).toEqual({ bytesWritten: 4, verified: true });
-    expect(runner.requests).toHaveLength(1);
+    expect(runner.requests).toHaveLength(2);
     expect(runner.requests[0]).toMatchObject({
       command: commanderPath,
       timeoutMs: expect.any(Number),
@@ -252,14 +384,17 @@ describe('DefaultJLinkCommanderClient', () => {
       ]),
     });
     expect(runner.requests[0]!.timeoutMs).toBeLessThanOrEqual(30_000);
-    expect(runner.scriptContent).toContain('device AT32F435RGT7');
-    expect(runner.scriptContent).toContain('eoe 1');
-    expect(runner.scriptContent).toContain('si SWD');
-    expect(runner.scriptContent).toContain('speed 4000');
-    expect(runner.scriptContent).toContain('connect');
-    expect(runner.scriptContent).toContain('loadbin');
-    expect(runner.scriptContent).toContain('verifybin');
-    expect(runner.scriptContent).toContain('0x08008000');
+    expect(runner.scripts[0]).toContain('device AT32F435RGT7');
+    expect(runner.scripts[0]).toContain('eoe 1');
+    expect(runner.scripts[0]).toContain('si SWD');
+    expect(runner.scripts[0]).toContain('speed 4000');
+    expect(runner.scripts[0]).toContain('connect');
+    expect(runner.scripts[0]).toContain('loadbin');
+    expect(runner.scripts[0]).toContain('verifybin');
+    expect(runner.scripts[0]).not.toContain('savebin');
+    expect(runner.scripts[1]).toContain('verifybin');
+    expect(runner.scripts[1]).toContain('savebin');
+    expect(runner.scripts[1]).toContain('0x08008000');
     expect(runner.binaryContent).toEqual(binary);
     expect(await exists(runner.scriptPath)).toBe(false);
     expect(await exists(runner.binaryPath)).toBe(false);
@@ -279,6 +414,22 @@ describe('DefaultJLinkCommanderClient', () => {
 
     expect(runner.requests[0]!.args).toEqual(expect.arrayContaining(['-device', '-AT32F435VGT7']));
     expect(runner.scriptContent).toContain('device -AT32F435VGT7');
+  });
+
+  it('normalizes STM32 full order codes before passing target names to Commander', async () => {
+    const runner = new FakeProcessRunner();
+    runner.result = { exitCode: 0, signal: null, stdout: 'Downloading\nVerify successful\n', stderr: '' };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    await client.download(
+      { target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+      Buffer.from([0x01, 0x02]),
+      { address: 0x08000000, verify: true },
+    );
+
+    expect(runner.requests[0]!.args).toEqual(expect.arrayContaining(['-device', 'STM32H743II']));
+    expect(runner.scriptContent).toContain('device STM32H743II');
+    expect(runner.scriptContent).not.toContain('STM32H743IIT6');
   });
 
   it('honors per-download timeout options when running Commander', async () => {
@@ -309,7 +460,7 @@ describe('DefaultJLinkCommanderClient', () => {
     expect(runner.requests[0]!.timeoutMs).toBeGreaterThan(30_000);
   });
 
-  it('splits large raw binary downloads into bounded Commander chunks', async () => {
+  it('keeps large raw binary downloads in one Commander operation so SEGGER owns flash sector erases', async () => {
     const runner = new CapturingProcessRunner();
     runner.result = { exitCode: 0, signal: null, stdout: 'Downloading\nVerify successful\n', stderr: '' };
     const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
@@ -322,16 +473,17 @@ describe('DefaultJLinkCommanderClient', () => {
     );
 
     expect(result).toEqual({ bytesWritten: binary.byteLength, verified: true });
-    expect(runner.requests).toHaveLength(3);
-    expect(runner.binaries.map((chunk) => chunk.byteLength)).toEqual([32 * 1024, 64 * 1024, 32 * 1024 + 1]);
+    expect(runner.requests).toHaveLength(2);
+    expect(runner.binaries).toHaveLength(2);
+    expect(runner.binaries[0]).toEqual(binary);
+    expect(runner.binaries[1]).toEqual(binary);
     expect(runner.scripts[0]).toContain('loadbin');
     expect(runner.scripts[0]).toContain('verifybin');
     expect(runner.scripts[0]).toContain('0x08008000');
-    expect(runner.scripts[1]).toContain('0x08010000');
-    expect(runner.scripts[2]).toContain('0x08020000');
+    expect(runner.scripts[1]).toContain('savebin');
   });
 
-  it('does not let a raw binary chunk cross an absolute 64 KiB flash boundary', async () => {
+  it('does not split unaligned raw binary downloads across artificial 64 KiB boundaries', async () => {
     const runner = new CapturingProcessRunner();
     runner.result = { exitCode: 0, signal: null, stdout: 'Downloading\nVerify successful\n', stderr: '' };
     const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
@@ -344,9 +496,11 @@ describe('DefaultJLinkCommanderClient', () => {
     );
 
     expect(runner.requests).toHaveLength(2);
-    expect(runner.binaries.map((chunk) => chunk.byteLength)).toEqual([32 * 1024, 32 * 1024]);
+    expect(runner.binaries).toHaveLength(2);
+    expect(runner.binaries[0]).toEqual(binary);
+    expect(runner.binaries[1]).toEqual(binary);
     expect(runner.scripts[0]).toContain('0x08078000');
-    expect(runner.scripts[1]).toContain('0x08080000');
+    expect(runner.scripts[1]).toContain('savebin');
   });
 
   it('uses unique temporary command files for concurrent Commander operations and cleans them up', async () => {
@@ -367,10 +521,10 @@ describe('DefaultJLinkCommanderClient', () => {
       ),
     ]);
 
-    expect(runner.observedScriptPaths).toHaveLength(2);
-    expect(new Set(runner.observedScriptPaths).size).toBe(2);
-    expect(new Set(runner.observedScriptPaths.map((p) => path.dirname(p))).size).toBe(2);
-    expect(runner.observedBinaryPaths).toHaveLength(2);
+    expect(runner.observedScriptPaths).toHaveLength(4);
+    expect(new Set(runner.observedScriptPaths).size).toBe(4);
+    expect(new Set(runner.observedScriptPaths.map((p) => path.dirname(p))).size).toBe(4);
+    expect(runner.observedBinaryPaths).toHaveLength(4);
     for (const scriptPath of runner.observedScriptPaths) {
       expect(await exists(scriptPath)).toBe(false);
       expect(await exists(path.dirname(scriptPath))).toBe(false);
@@ -511,6 +665,15 @@ describe('DefaultJLinkCommanderClient', () => {
     expect(runner.scriptContent).toContain('\nw1 0x20000001, 0xad\n');
   });
 
+  it('adds target-access remediation guidance when a Commander target command times out', async () => {
+    const runner = new TimeoutOnCommanderRunRunner();
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    await expect(
+      client.readMemory({ target: 'STM32H743IIT6', interface: 'swd' }, { address: 0x08000000, length: 64 }),
+    ).rejects.toThrow(/target power.*BOOT.*NRST.*SWD.*device.*protection/i);
+  });
+
   it('sets and clears breakpoints through generated J-Link command files', async () => {
     const runner = new FakeProcessRunner();
     const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
@@ -570,6 +733,111 @@ describe('DefaultJLinkCommanderClient', () => {
     expect(result).toEqual({ ok: false, mismatchAt: 0x08008010 });
     expect(runner.scriptContent).toContain('verifybin');
     expect(runner.scriptContent).not.toContain('loadbin');
+  });
+
+  it('returns a mismatch when Commander verify output succeeds but binary readback differs', async () => {
+    const runner = new VerifyReadbackMismatchRunner();
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    const result = await client.verify(
+      { target: 'AT32F435RGT7' },
+      Buffer.from([0xaa, 0xbb]),
+      { address: 0x08008000 },
+    );
+
+    expect(result).toEqual({ ok: false, mismatchAt: 0x08008001 });
+    expect(runner.scriptContent).toContain('verifybin');
+    expect(runner.scriptContent).toContain('savebin');
+  });
+
+  it('formats savebin length as hex so Commander does not over-read decimal-looking sizes', async () => {
+    const runner = new FakeProcessRunner();
+    runner.result = { exitCode: 0, signal: null, stdout: 'Verify successful\n', stderr: '' };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    const result = await client.verify(
+      { target: 'STM32H743II' },
+      Buffer.alloc(1_081_656, 0xa5),
+      { address: 0x08000000 },
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(runner.scriptContent).toContain('savebin');
+    expect(runner.scriptContent).toContain(', 0x00108138');
+    expect(runner.scriptContent).not.toContain(', 1081656');
+  });
+
+  it('maps missing binary readback output to a stable J-Link operation error', async () => {
+    const runner = new FakeProcessRunner();
+    runner.writeReadback = false;
+    runner.result = { exitCode: 0, signal: null, stdout: 'Verify successful\n', stderr: '' };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    await expect(
+      client.verify(
+        { target: 'AT32F435RGT7' },
+        Buffer.from([0xaa, 0xbb]),
+        { address: 0x08008000 },
+      ),
+    ).rejects.toBeInstanceOf(JLinkOperationError);
+    await expect(
+      client.verify(
+        { target: 'AT32F435RGT7' },
+        Buffer.from([0xaa, 0xbb]),
+        { address: 0x08008000 },
+      ),
+    ).rejects.toThrow(/binary readback/i);
+  });
+
+  it('rejects verified downloads when independent binary readback differs', async () => {
+    const runner = new VerifyReadbackMismatchRunner();
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    await expect(
+      client.download(
+        { target: 'AT32F435RGT7' },
+        Buffer.from([0xaa, 0xbb]),
+        { address: 0x08008000, verify: true },
+      ),
+    ).rejects.toThrow(/binary readback/i);
+  });
+
+  it('does not treat ambiguous verify output as a successful flash verification', async () => {
+    const runner = new FakeProcessRunner();
+    runner.result = {
+      exitCode: 0,
+      signal: null,
+      stdout: 'J-Link Commander finished without a verify summary\n',
+      stderr: '',
+    };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    await expect(
+      client.verify(
+        { target: 'AT32F435RGT7' },
+        Buffer.from([0xaa, 0xbb]),
+        { address: 0x08008000 },
+      ),
+    ).rejects.toThrow(/positive verify evidence/i);
+  });
+
+  it('rejects verified downloads when Commander output lacks positive verify evidence', async () => {
+    const runner = new FakeProcessRunner();
+    runner.result = {
+      exitCode: 0,
+      signal: null,
+      stdout: 'Downloading file [firmware.bin]...\nO.K.\n',
+      stderr: '',
+    };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    await expect(
+      client.download(
+        { target: 'AT32F435RGT7' },
+        Buffer.from([0xaa, 0xbb]),
+        { address: 0x08008000, verify: true },
+      ),
+    ).rejects.toThrow(/positive verify evidence/i);
   });
 
   it('maps command failures to sanitized JLinkOperationError', async () => {
@@ -647,7 +915,7 @@ describe('DefaultJLinkGdbServerClient', () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it('does not reject GDB server startup only because local SEGGER XML databases do not list the target', () => {
+  it('keeps GDB server available when local SEGGER XML databases do not list a target', () => {
     const client = new DefaultJLinkGdbServerClient({ gdbServerPath });
 
     const availability = client.checkAvailability('AT32F435VGT7');
@@ -658,7 +926,7 @@ describe('DefaultJLinkGdbServerClient', () => {
       target: 'AT32F435VGT7',
       targetSupported: false,
     });
-    expect(availability.reason).toBeUndefined();
+    expect(availability.message).toContain('not listed');
   });
 
   it('rejects an untrusted relative GDB server path without spawning', async () => {
@@ -699,6 +967,19 @@ describe('DefaultJLinkGdbServerClient', () => {
         'USB=123456789',
       ]),
     });
+  });
+
+  it('normalizes STM32 full order codes before starting GDB server', async () => {
+    const runner = new FakeManagedProcessRunner();
+    const client = new DefaultJLinkGdbServerClient({ gdbServerPath, runner, defaultTimeoutMs: 1234 });
+
+    await client.start(
+      { target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+      { host: '127.0.0.1', port: 2331 },
+    );
+
+    expect(runner.requests[0]!.args).toEqual(expect.arrayContaining(['-device', 'STM32H743II']));
+    expect(runner.requests[0]!.args).not.toContain('STM32H743IIT6');
   });
 
   it('treats SEGGER V7.92 silent listening port output as GDB server ready', async () => {

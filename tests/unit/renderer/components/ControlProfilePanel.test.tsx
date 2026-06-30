@@ -49,7 +49,6 @@ describe('ControlProfilePanel', () => {
           serial: { enabled: true, port: 'COM7', baudRate: 1234567, mode: 'terminal' },
           jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 'auto' },
           flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
-          rtt: { enabled: false, channels: [0] },
         },
       },
     });
@@ -65,7 +64,7 @@ describe('ControlProfilePanel', () => {
     fireEvent.change(baudInput, { target: { value: '1234567' } });
     fireEvent.click(screen.getByRole('button', { name: 'Common baud rates' }));
     expect(await screen.findByRole('option', { name: '921600' })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Target chip'), { target: { value: 'AT32F435RGT7' } });
+    fireEvent.change(screen.getByLabelText('J-Link device name'), { target: { value: 'AT32F435RGT7' } });
     const speedSelect = screen.getByLabelText('J-Link speed');
     expect(within(speedSelect).getByRole('option', { name: 'Auto (probe maximum)' })).toBeInTheDocument();
     fireEvent.change(speedSelect, { target: { value: 'auto' } });
@@ -81,10 +80,47 @@ describe('ControlProfilePanel', () => {
           serial: { enabled: true, port: 'COM7', baudRate: 1234567, mode: 'terminal' },
           jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 'auto' },
           flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
-          rtt: { enabled: false, channels: [0] },
         },
       }),
     );
+    expect(await screen.findByText(/Saved:/)).toBeInTheDocument();
+  });
+
+  it('saves RTT log observation without requiring a manual probe id', async () => {
+    mock.spies.controlProfile.pickWorkspaceRoot.mockResolvedValueOnce({ success: true, data: { root: 'C:/repo' } });
+    mock.spies.controlProfile.save.mockResolvedValueOnce({
+      success: true,
+      data: {
+        path: 'C:/repo/.linkterm/control-profile.json',
+        profile: {
+          schemaVersion: 'linkterm-control/1.0.0',
+          jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 'auto' },
+          flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+          rtt: { enabled: true },
+        },
+      },
+    });
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Browse workspace' }));
+    await waitFor(() => expect(screen.getByLabelText('Workspace root')).toHaveValue('C:/repo'));
+    fireEvent.change(screen.getByLabelText('Observation channel'), { target: { value: 'rtt' } });
+    fireEvent.change(screen.getByLabelText('J-Link device name'), { target: { value: 'AT32F435RGT7' } });
+    fireEvent.change(screen.getByLabelText('Flash base address'), { target: { value: '0x08000000' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save to workspace' }));
+
+    await waitFor(() =>
+      expect(mock.spies.controlProfile.save).toHaveBeenCalledWith({
+        root: 'C:/repo',
+        profile: {
+          jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 'auto' },
+          flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+          rtt: { enabled: true },
+        },
+      }),
+    );
+    expect(screen.queryByLabelText('Probe id')).toBeNull();
     expect(await screen.findByText(/Saved:/)).toBeInTheDocument();
   });
 
@@ -95,35 +131,72 @@ describe('ControlProfilePanel', () => {
 
     expect(screen.getByText('工作区控制配置')).toBeInTheDocument();
     expect(screen.getByLabelText('工作区目录')).toBeInTheDocument();
+    expect(screen.getByLabelText('J-Link 设备名')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '保存到工作区' })).toBeInTheDocument();
+  });
+
+  it('normalizes STM32 order-code targets before saving from the UI', async () => {
+    mock.spies.controlProfile.pickWorkspaceRoot.mockResolvedValueOnce({ success: true, data: { root: 'C:/repo' } });
+    mock.spies.controlProfile.save.mockResolvedValueOnce({
+      success: true,
+      data: {
+        path: 'C:/repo/.linkterm/control-profile.json',
+        profile: {
+          schemaVersion: 'linkterm-control/1.0.0',
+          serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' },
+          jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 'auto' },
+          flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+        },
+      },
+    });
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Browse workspace' }));
+    await waitFor(() => expect(screen.getByLabelText('Workspace root')).toHaveValue('C:/repo'));
+    fireEvent.change(screen.getByLabelText('J-Link device name'), { target: { value: 'STM32H743IIT6' } });
+    await waitFor(() => expect(screen.getByLabelText('J-Link device name')).toHaveValue('STM32H743II'));
+    expect(screen.getByText(/STM32H743IIT6/)).toBeInTheDocument();
+    expect(screen.getByText(/STM32H743II/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save to workspace' }));
+
+    await waitFor(() =>
+      expect(mock.spies.controlProfile.save).toHaveBeenCalledWith({
+        root: 'C:/repo',
+        profile: {
+          serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' },
+          jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 'auto' },
+          flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+        },
+      }),
+    );
   });
 
   it('opens an RTT log terminal session without saving a connection profile', async () => {
     mock.spies.rttLog.open.mockResolvedValueOnce({
       success: true,
-      data: { sessionId: 'sess_rtt_ui', state: 'open', reused: false },
+      data: { sessionId: 'sess_rtt_ui', state: 'open', reused: false, probeId: 'probe-1', channelIndex: 0 },
     });
 
     render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
 
-    fireEvent.change(screen.getByLabelText('Probe id'), { target: { value: 'probe-1' } });
-    fireEvent.change(screen.getByLabelText('RTT channel'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Browse workspace' }));
+    await waitFor(() => expect(screen.getByLabelText('Workspace root')).toHaveValue('C:/repo'));
+    fireEvent.change(screen.getByLabelText('Observation channel'), { target: { value: 'rtt' } });
     fireEvent.click(screen.getByRole('button', { name: 'Open RTT log' }));
 
     await waitFor(() =>
       expect(mock.spies.rttLog.open).toHaveBeenCalledWith({
-        probeId: 'probe-1',
-        channelIndex: 2,
-        label: 'RTT ch2',
+        root: 'C:/repo',
       }),
     );
 
     expect(useAppStore.getState().sessions.get('sess_rtt_ui')).toEqual({
       id: 'sess_rtt_ui',
-      label: 'RTT ch2',
+      label: 'RTT ch0',
       connectionType: 'rtt-log',
       state: 'open',
-      rttLog: { probeId: 'probe-1', channelIndex: 2 },
+      rttLog: { probeId: 'probe-1', channelIndex: 0 },
     });
     expect(useAppStore.getState().activeSessionId).toBe('sess_rtt_ui');
     expect(mock.spies.controlProfile.save).not.toHaveBeenCalled();

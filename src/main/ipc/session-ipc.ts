@@ -1,4 +1,5 @@
-import { BrowserWindow, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { electron } from '../electron-runtime.js';
+import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import type { SessionManager } from '../../core/session/session-manager.js';
 import type { TranscriptEvent } from '../../core/transcript/types.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
@@ -14,6 +15,8 @@ import type {
   PreloadFail,
 } from '../../shared/preload-api.js';
 import { ERROR_CODES } from '../../shared/error-codes.js';
+
+const { BrowserWindow, ipcMain } = electron;
 
 /** session:write 入参契约。data 通过 IPC 传 base64 字符串，避免 Buffer 序列化平台差异。 */
 interface SessionWriteRequest {

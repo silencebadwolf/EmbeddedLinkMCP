@@ -24,6 +24,7 @@ import {
   type ToolSensitivity,
   LINKTERM_MCP_SCHEMA_VERSION,
 } from './versioning/version-check.js';
+import type { RuntimeDiagnosticsProvider } from './runtime-diagnostics.js';
 
 /**
  * 已知错误码集合。Handler 可以通过 {@link ToolError} 抛出已归类的错误；
@@ -142,11 +143,14 @@ export interface ToolDefinition<TSchema extends z.ZodType> {
   sensitivity: ToolSensitivity;
   /** Zod 入参 schema。 */
   inputSchema: TSchema;
+  /** Optional runtime freshness provider; stale code blocks state-affecting tools. */
+  runtimeDiagnostics?: RuntimeDiagnosticsProvider;
   /** 业务 handler，input 是 inputSchema 解析后的类型。 */
   handler: ToolBusinessHandler<z.infer<TSchema>>;
 }
 
 const registeredToolNames = new WeakMap<McpServer, Set<string>>();
+const runtimeDiagnosticsProviders = new WeakMap<McpServer, RuntimeDiagnosticsProvider>();
 
 /**
  * 读取已通过 LinkTerm registry 注册的工具名。
@@ -156,6 +160,19 @@ const registeredToolNames = new WeakMap<McpServer, Set<string>>();
  */
 export function getRegisteredToolNames(server: McpServer): string[] {
   return Array.from(registeredToolNames.get(server) ?? []).sort();
+}
+
+/**
+ * Attach a server-wide runtime diagnostics provider used by the registry safety gate.
+ *
+ * @param server McpServer 实例
+ * @param provider Runtime freshness provider
+ */
+export function setRuntimeDiagnosticsProvider(
+  server: McpServer,
+  provider: RuntimeDiagnosticsProvider,
+): void {
+  runtimeDiagnosticsProviders.set(server, provider);
 }
 
 /**
@@ -207,6 +224,26 @@ export function registerTool<TSchema extends z.ZodType<{ correlationId?: string;
           origin: 'ai',
           schemaVersion: LINKTERM_MCP_SCHEMA_VERSION,
         });
+      }
+
+      const runtimeDiagnostics = def.runtimeDiagnostics ?? runtimeDiagnosticsProviders.get(server);
+      if (def.sensitivity === 'state-affecting' && runtimeDiagnostics !== undefined) {
+        const runtimeStatus = await runtimeDiagnostics();
+        if (runtimeStatus.code?.fresh === false) {
+          const staleArtifacts = runtimeStatus.code.staleArtifacts;
+          return toCallToolResult({
+            success: false,
+            error: {
+              code: 'INVALID_STATE',
+              message:
+                'Restart the LinkTerm MCP runtime before state-affecting operations; compiled artifacts changed after this process started.',
+              details: { staleArtifacts },
+            },
+            correlationId,
+            origin: 'ai',
+            schemaVersion: LINKTERM_MCP_SCHEMA_VERSION,
+          });
+        }
       }
 
       // 2) 业务 handler

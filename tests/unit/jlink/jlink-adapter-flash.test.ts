@@ -280,6 +280,43 @@ describe('JLinkAdapter flash operations', () => {
     expect(commander.downloadCalls[0]!.binary).toEqual(binary);
   });
 
+  it('performs an independent full-image verify after a verified flashDownload', async () => {
+    const commander = new FakeCommander();
+    commander.downloadResult = { bytesWritten: 4, verified: true };
+    commander.verifyResult = { ok: true };
+    const adapter = createAdapter(commander);
+    const probe = await connect(adapter);
+    const binary = Buffer.from([1, 2, 3, 4]);
+
+    const result = await adapter.flashDownload(probe.probeId, binary, {
+      address: 0x08000000,
+      verify: true,
+    });
+
+    expect(result).toEqual({ bytesWritten: 4, verified: true });
+    expect(commander.verifyCalls).toHaveLength(1);
+    expect(commander.verifyCalls[0]).toMatchObject({
+      probe: { target: 'AT32F435RGT7' },
+      opts: { address: 0x08000000 },
+    });
+    expect(commander.verifyCalls[0]!.binary).toEqual(binary);
+  });
+
+  it('rejects flashDownload when the independent full-image verify finds a mismatch', async () => {
+    const commander = new FakeCommander();
+    commander.downloadResult = { bytesWritten: 4, verified: true };
+    commander.verifyResult = { ok: false, mismatchAt: 0x08000000 };
+    const adapter = createAdapter(commander);
+    const probe = await connect(adapter);
+
+    await expect(
+      adapter.flashDownload(probe.probeId, Buffer.from([1, 2, 3, 4]), {
+        address: 0x08000000,
+        verify: true,
+      }),
+    ).rejects.toThrow(/0x08000000/);
+  });
+
   it('requires an address for raw flashDownload input', async () => {
     const commander = new FakeCommander();
     const adapter = createAdapter(commander);
@@ -361,6 +398,43 @@ describe('JLinkAdapter flash operations', () => {
       ProbeBusyError,
     );
     await expect(adapter.probeDisconnect(serialProbe.probeId)).rejects.toBeInstanceOf(ProbeBusyError);
+
+    release();
+    await expect(first).resolves.toEqual({ bytesWritten: 1, verified: false });
+  });
+
+  it('rejects changing the default probe target while that physical selection is busy', async () => {
+    let release!: () => void;
+    const commander = new FakeCommander();
+    commander.downloadResult = new Promise((resolve) => {
+      release = () => resolve({ bytesWritten: 1, verified: false });
+    });
+    const adapter = createAdapter(commander);
+    const staleTargetProbe = await connect(adapter, { target: 'STM32H743II', interface: 'swd' });
+
+    const first = adapter.flashDownload(staleTargetProbe.probeId, Buffer.from([1]), { address: 0x08000000 });
+    await expect(adapter.probeConnect({ target: 'STM32H743ZI', interface: 'swd' })).rejects.toBeInstanceOf(
+      ProbeBusyError,
+    );
+
+    release();
+    await expect(first).resolves.toEqual({ bytesWritten: 1, verified: false });
+  });
+
+  it('reuses a busy default probe when an STM32 order code normalizes to the same SEGGER target', async () => {
+    let release!: () => void;
+    const commander = new FakeCommander();
+    commander.downloadResult = new Promise((resolve) => {
+      release = () => resolve({ bytesWritten: 1, verified: false });
+    });
+    const adapter = createAdapter(commander);
+    const probe = await connect(adapter, { target: 'STM32H743II', interface: 'swd' });
+
+    const first = adapter.flashDownload(probe.probeId, Buffer.from([1]), { address: 0x08000000 });
+    await expect(adapter.probeConnect({ target: 'STM32H743IIT6', interface: 'swd' })).resolves.toMatchObject({
+      probeId: probe.probeId,
+      target: 'STM32H743II',
+    });
 
     release();
     await expect(first).resolves.toEqual({ bytesWritten: 1, verified: false });

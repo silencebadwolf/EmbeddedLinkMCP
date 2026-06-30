@@ -55,4 +55,18 @@ describe('startMcpHttpRuntimeServer', () => {
     const out = await client.callTool({ name: 'list_sessions', arguments: {} });
     expect(out.structuredContent).toMatchObject({ success: true, origin: 'ai' });
   });
+
+  it('can start on a requested localhost port with a provided token', async () => {
+    server = await startMcpHttpRuntimeServer({
+      sessionManager: new SessionManager(),
+      serialDiscovery: makeSerialDiscovery(),
+      metadataPath: path.join(root, 'mcp-runtime.json'),
+      host: '127.0.0.1',
+      port: 0,
+      token: 'abcdefghijklmnopqrstuvwxyz1234567890_stable',
+    });
+
+    expect(server.url).toBe(`http://127.0.0.1:${server.port}/mcp`);
+    expect(server.token).toBe('abcdefghijklmnopqrstuvwxyz1234567890_stable');
+  });
 });

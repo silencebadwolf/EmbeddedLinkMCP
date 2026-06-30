@@ -10,10 +10,12 @@ import {
   JLinkOperationError,
 } from '../../../jlink/errors.js';
 import type { SerialSessionConfig, SessionSummary } from '../../../shared/types.js';
+import { classifyJLinkTargetName, normalizeJLinkTargetName } from '../../../shared/jlink-target-name.js';
 import { ERROR_CODES } from '../../../shared/error-codes.js';
 import { MAX_BINARY_BYTES } from '../../limits.js';
 import { ToolError, type ToolErrorCode } from '../../registry.js';
 import { ConfirmationRequiredError, translateJLinkError } from '../debug/error-translate.js';
+import { validateFirmwareVectorTable } from '../debug/firmware-sanity.js';
 import type { ControlProfileOpenSerial } from '../control-profile/tools.js';
 import type { RunControlWorkflowInput } from './schemas.js';
 import type {
@@ -57,6 +59,13 @@ interface JLinkParameterSources {
   target: 'profile';
   interface: 'linkterm-default' | 'profile';
   speedKHz: 'linkterm-default' | 'profile';
+}
+
+interface TargetNormalizationEvidence {
+  originalTarget: string;
+  normalizedTarget: string;
+  kind: 'stm32-order-code';
+  message?: string;
 }
 
 interface SpeedPolicyEvidence {
@@ -149,7 +158,7 @@ export async function runControlWorkflow(
 
   throwIfAborted(ctx.signal);
   if (input.dryRun === true) {
-    pushDryRunSteps(ctx);
+    pushDryRunSteps(ctx, firmware);
     return toData(ctx);
   }
 
@@ -220,7 +229,8 @@ async function preflight(
   }
 
   if (needsFlash(input) && input.dryRun !== true) {
-    const availability = await getCommanderAvailability(jlinkBackend, profile.jlink.target);
+    const target = normalizeJLinkTargetName(profile.jlink.target);
+    const availability = await getCommanderAvailability(jlinkBackend, target);
     if (availability?.available === false) {
       const targetUnsupported = availability.reason === 'target-unsupported';
       const errorMessage = targetUnsupported
@@ -249,7 +259,8 @@ async function preflight(
   }
 
   if (input.mode === 'debug-diagnose' && input.dryRun !== true) {
-    const availability = await getGdbServerAvailability(jlinkBackend, profile.jlink.target);
+    const target = normalizeJLinkTargetName(profile.jlink.target);
+    const availability = await getGdbServerAvailability(jlinkBackend, target);
     if (availability?.available === false) {
       const targetUnsupported = availability.reason === 'target-unsupported';
       const errorMessage = targetUnsupported
@@ -378,7 +389,8 @@ async function connectProbeStep(ctx: WorkflowContext, jlinkBackend: IJLinkBacken
     if (jlink.speedKHz === undefined) {
       throw new ToolError(ERROR_CODES.INVALID_ARGUMENT, 'jlink.speedKHz is required');
     }
-    const opts: ProbeConnectOptions = { target: jlink.target, interface: jlink.interface };
+    const targetClassification = classifyJLinkTargetName(jlink.target);
+    const opts: ProbeConnectOptions = { target: targetClassification.normalizedTarget, interface: jlink.interface };
     const speedPolicy = resolveSafeSpeedPolicy(ctx);
     const speedKHz = speedPolicy?.resolvedSpeedKHz ?? jlink.speedKHz;
     const probe = await connectProbeWithConfiguredSpeed(jlinkBackend, opts, speedKHz);
@@ -388,6 +400,7 @@ async function connectProbeStep(ctx: WorkflowContext, jlinkBackend: IJLinkBacken
       probe: Omit<ProbeInfo, 'serialNumber'>;
       parameterSources: JLinkParameterSources;
       speedPolicy?: SpeedPolicyEvidence;
+      targetNormalization?: TargetNormalizationEvidence;
     } = {
       probe: ctx.probe,
       parameterSources: {
@@ -396,6 +409,14 @@ async function connectProbeStep(ctx: WorkflowContext, jlinkBackend: IJLinkBacken
         speedKHz: jlink.speedKHz === undefined ? 'linkterm-default' : 'profile',
       },
     };
+    if (targetClassification.kind === 'stm32-order-code') {
+      evidence.targetNormalization = {
+        originalTarget: targetClassification.originalTarget,
+        normalizedTarget: targetClassification.normalizedTarget,
+        kind: targetClassification.kind,
+        ...(targetClassification.message !== undefined ? { message: targetClassification.message } : {}),
+      };
+    }
     if (speedPolicy !== undefined) evidence.speedPolicy = speedPolicy;
     pushStep(ctx, 'connect_probe', 'passed', evidence, started);
   } catch (err) {
@@ -437,6 +458,13 @@ async function flashStep(
         firmwarePath: firmware.absolutePath,
         bytesWritten: result.bytesWritten,
         verified: result.verified,
+        verification: {
+          requested: firmware.verify,
+          method: firmware.verify
+            ? 'commander-verifybin-plus-savebin-readback'
+            : 'not-requested',
+          postDownloadReadbackRequired: firmware.verify,
+        },
         address: firmware.baseAddress,
         timeoutMs: firmware.timeoutMs,
         parameterSources: firmware.parameterSources,
@@ -621,8 +649,9 @@ async function diagnoseStep(ctx: WorkflowContext, jlinkBackend: IJLinkBackend): 
       const data = await jlinkBackend.memoryRead(probeId, range);
       memory.push({ address: range.address, length: data.byteLength, dataBase64: data.toString('base64') });
     }
-    ctx.summary.debugCaptured = registers !== undefined || memory.length > 0;
-    pushStep(ctx, 'debug_diagnose', 'passed', { registers, memory }, started);
+    const rtt = await readRttForDebug(ctx, jlinkBackend, probeId);
+    ctx.summary.debugCaptured = registers !== undefined || memory.length > 0 || rtt !== undefined;
+    pushStep(ctx, 'debug_diagnose', 'passed', { registers, memory, rtt }, started);
   } catch (err) {
     if (err instanceof JLinkNotImplementedError) {
       pushStep(
@@ -715,7 +744,7 @@ async function resolveFirmware(
   const timeoutSource = firmwareOverride?.timeoutMs !== undefined ? 'request' : 'default';
   const filePath = firmwareOverride?.filePath ?? profile.flash?.binary;
   const baseAddressHex = firmwareOverride?.baseAddress ?? profile.flash?.baseAddress;
-  const verify = firmwareOverride?.verify ?? profile.flash?.verify ?? false;
+  const verify = firmwareOverride?.verify ?? profile.flash?.verify ?? true;
   const timeoutMs = firmwareOverride?.timeoutMs;
   if (filePath === undefined || baseAddressHex === undefined) {
     throw new ToolError(
@@ -726,9 +755,11 @@ async function resolveFirmware(
 
   const pathResolution = await resolveFirmwarePath(root, filePath, filePathSource);
   const firmware = await readFirmwareCapped(pathResolution.path, pathResolution.realRoot);
+  const baseAddress = parseHexAddress(baseAddressHex);
+  validateFirmwareVectorTable(firmware.binary, baseAddress);
   return {
     absolutePath: firmware.absolutePath,
-    baseAddress: parseHexAddress(baseAddressHex),
+    baseAddress,
     verify,
     timeoutMs,
     binary: firmware.binary,
@@ -954,6 +985,7 @@ function needsFlash(input: RunControlWorkflowInput): boolean {
 }
 
 function needsSerial(input: RunControlWorkflowInput): boolean {
+  if (input.observe?.serial === false) return false;
   return input.mode === 'flash-observe' || input.mode === 'flash-observe-diagnose' || input.observe?.serial === true;
 }
 
@@ -966,7 +998,26 @@ function requiresHighImpact(input: RunControlWorkflowInput): boolean {
 }
 
 function shouldCaptureDebug(ctx: WorkflowContext): boolean {
-  return ctx.input.mode === 'debug-diagnose' || (ctx.input.mode === 'flash-observe-diagnose' && ctx.summary.serialObserved === false);
+  return (
+    ctx.input.mode === 'debug-diagnose' ||
+    ctx.input.debug?.rttRead === true ||
+    (ctx.input.mode === 'flash-observe-diagnose' && ctx.summary.serialObserved === false)
+  );
+}
+
+async function readRttForDebug(
+  ctx: WorkflowContext,
+  jlinkBackend: IJLinkBackend,
+  probeId: string,
+): Promise<{ channelIndex: number; dataBase64: string; truncated: boolean } | undefined> {
+  if (ctx.input.debug?.rttRead !== true) return undefined;
+  await jlinkBackend.rttConnect(probeId);
+  const result = await jlinkBackend.rttRead(probeId, 0, 4096);
+  return {
+    channelIndex: result.channelIndex,
+    dataBase64: result.data.toString('base64'),
+    truncated: result.truncated,
+  };
 }
 
 function serialProfileComplete(profile: ControlProfile): profile is ControlProfile & {
@@ -1006,10 +1057,23 @@ function emptySummary(): ControlWorkflowSummary {
   };
 }
 
-function pushDryRunSteps(ctx: WorkflowContext): void {
+function pushDryRunSteps(ctx: WorkflowContext, firmware: ResolvedFirmware | undefined): void {
   if (needsSerial(ctx.input)) pushStep(ctx, 'open_serial', 'skipped', { dryRun: true });
   pushStep(ctx, 'connect_probe', 'skipped', { dryRun: true });
-  if (needsFlash(ctx.input)) pushStep(ctx, 'flash', 'skipped', { dryRun: true });
+  if (needsFlash(ctx.input)) {
+    pushStep(ctx, 'flash', 'skipped', {
+      dryRun: true,
+      ...(firmware
+        ? {
+            firmwarePath: firmware.absolutePath,
+            address: firmware.baseAddress,
+            verify: firmware.verify,
+            timeoutMs: firmware.timeoutMs,
+            parameterSources: firmware.parameterSources,
+          }
+        : {}),
+    });
+  }
   if (needsReset(ctx.input)) pushStep(ctx, 'cpu_reset', 'skipped', { dryRun: true });
   if (needsSerial(ctx.input)) pushStep(ctx, 'observe_serial', 'skipped', { dryRun: true });
 }

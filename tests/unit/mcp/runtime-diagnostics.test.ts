@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { baseDiagnostics, createRuntimeDiagnosticsProvider } from '@/mcp/runtime-diagnostics.js';
@@ -88,6 +88,34 @@ describe('runtime diagnostics', () => {
         url: 'http://127.0.0.1:38217/mcp',
         ageMs: 60_000,
       },
+    });
+  });
+
+  it('reports runtime code as stale when a watched artifact is newer than process startup', async () => {
+    const metadataPath = path.join(root, 'mcp-runtime.json');
+    const artifactPath = path.join(root, 'dist', 'main', 'jlink', 'segger-command-runner.js');
+    await writeFile(metadataPath, metadataJson('2026-06-18T00:00:00.000Z'), 'utf-8');
+    await mkdir(path.dirname(artifactPath), { recursive: true });
+    await writeFile(artifactPath, 'compiled after owner startup', 'utf-8');
+    const provider = createRuntimeDiagnosticsProvider({
+      transportMode: 'owner',
+      metadataPath,
+      now: () => Date.parse('2026-06-18T00:02:00.000Z'),
+      processStartedAt: '2026-06-18T00:00:00.000Z',
+      artifactPaths: [artifactPath],
+      statFile: async () => ({ mtimeMs: Date.parse('2026-06-18T00:01:00.000Z') }),
+    });
+
+    const diagnostics = await provider();
+
+    expect(diagnostics.code).toMatchObject({
+      fresh: false,
+      staleArtifacts: [
+        {
+          path: artifactPath,
+          modifiedAt: '2026-06-18T00:01:00.000Z',
+        },
+      ],
     });
   });
 });

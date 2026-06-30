@@ -1,6 +1,9 @@
-import { app, BrowserWindow, session } from 'electron';
+import type { BrowserWindow as BrowserWindowType } from 'electron';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { electron } from './electron-runtime.js';
+
+const { app, BrowserWindow, session } = electron;
 
 // ESM 下手动派生 __dirname：Electron 主进程不支持 CJS `__dirname` 全局
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -66,7 +69,7 @@ function installCspHeaders(): void {
  *
  * 策略：监听 `did-fail-load`，500ms 后重试，最多 20 次（10s 上限）。
  */
-function loadDevUrlWithRetry(win: BrowserWindow): void {
+function loadDevUrlWithRetry(win: BrowserWindowType): void {
   const MAX_ATTEMPTS = 20;
   const RETRY_DELAY_MS = 500;
   let attempts = 0;
@@ -78,7 +81,7 @@ function loadDevUrlWithRetry(win: BrowserWindow): void {
     });
   };
 
-  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+  win.webContents.on('did-fail-load', (_event, errorCode: number, errorDescription: string, validatedURL: string) => {
     if (validatedURL && !validatedURL.startsWith(DEV_SERVER_URL)) return;
     if (attempts >= MAX_ATTEMPTS) {
       console.error(
@@ -104,7 +107,7 @@ function loadDevUrlWithRetry(win: BrowserWindow): void {
  *
  * @returns 已创建并加载内容的 BrowserWindow 实例
  */
-export function createMainWindow(): BrowserWindow {
+export function createMainWindow(): BrowserWindowType {
   installCspHeaders();
 
   const win = new BrowserWindow({
@@ -139,6 +142,6 @@ export function createMainWindow(): BrowserWindow {
  *
  * @param _win 即将关闭的窗口实例（当前未使用，保留为后续扩展点）
  */
-export function handleWindowClose(_win: BrowserWindow): void {
+export function handleWindowClose(_win: BrowserWindowType): void {
   // Phase 5 起在这里 destroyAll session、shutdown MCP server
 }

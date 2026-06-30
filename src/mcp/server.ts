@@ -45,7 +45,7 @@ import { registerDebugBinaryTools } from './surfaces/debug/tools-binary.js';
 import { registerRttLogSessionTools } from './surfaces/rtt-log-session/tools.js';
 import { registerUiTools } from './surfaces/ui/tools.js';
 import type { CapturableWindow, UiStoreBridge } from './surfaces/ui/types.js';
-import { getRegisteredToolNames } from './registry.js';
+import { getRegisteredToolNames, setRuntimeDiagnosticsProvider } from './registry.js';
 import { buildToolSetDiagnostics } from './tool-set.js';
 import { baseDiagnostics, type RuntimeDiagnosticsProvider } from './runtime-diagnostics.js';
 
@@ -139,6 +139,9 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
       instructions: createAgentRunbookInstructions(LINKTERM_MCP_SCHEMA_VERSION),
     },
   );
+  const runtimeDiagnostics =
+    options.runtimeDiagnostics ?? (() => baseDiagnostics(activeTransport === null ? 'not-started' : 'stdio'));
+  setRuntimeDiagnosticsProvider(server, runtimeDiagnostics);
 
   registerTerminalTools(server, {
     sessionManager: options.sessionManager,
@@ -155,7 +158,7 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
     controlProfileManager: options.controlProfileManager,
     jlinkBackend,
     getActiveWindow: options.getActiveWindow,
-    runtimeDiagnostics: options.runtimeDiagnostics ?? (() => baseDiagnostics(activeTransport === null ? 'not-started' : 'stdio')),
+    runtimeDiagnostics,
     toolSetDiagnostics: () => buildToolSetDiagnostics(getRegisteredToolNames(server)),
   });
 

@@ -16,15 +16,17 @@ import { getLinkterm } from '../lib/linkterm-bridge.js';
 import { useT } from '../i18n/index.js';
 import { useAppStore } from '../store/app-store.js';
 import type { ControlProfilePayload } from '../../shared/preload-api.js';
+import { classifyJLinkTargetName } from '../../shared/jlink-target-name.js';
 
 interface ControlProfilePanelProps {
   open: boolean;
   onOpenChange(open: boolean): void;
 }
 
-const COMMON_TARGETS = ['AT32F435RGT7', 'STM32F103C8', 'STM32F407VG', 'STM32H743ZI', 'GD32F303', 'nRF52840'] as const;
+const COMMON_TARGETS = ['AT32F435RGT7', 'STM32F103C8', 'STM32F407VG', 'STM32H743II', 'GD32F303', 'nRF52840'] as const;
 const JLINK_SPEED_OPTIONS = ['auto', '50000', '25000', '10000', '8000', '4000', '1000'] as const;
 const SELECT_CLASS = 'flex h-9 w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-1 text-sm text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500';
+type ObservationChannel = 'serial' | 'rtt';
 
 /** UI entry for humans to save workspace-local control-profile.json. */
 export function ControlProfilePanel({
@@ -33,6 +35,7 @@ export function ControlProfilePanel({
 }: ControlProfilePanelProps): React.ReactElement {
   const t = useT();
   const [root, setRoot] = React.useState('');
+  const [observationChannel, setObservationChannel] = React.useState<ObservationChannel>('serial');
   const [serialPort, setSerialPort] = React.useState('');
   const [baudRate, setBaudRate] = React.useState('115200');
   const [serialMode, setSerialMode] = React.useState<'normal' | 'terminal'>('terminal');
@@ -41,12 +44,11 @@ export function ControlProfilePanel({
   const [speedKHz, setSpeedKHz] = React.useState<(typeof JLINK_SPEED_OPTIONS)[number]>('auto');
   const [binary, setBinary] = React.useState('build/app.bin');
   const [baseAddress, setBaseAddress] = React.useState('0x08000000');
-  const [rttProbeId, setRttProbeId] = React.useState('');
-  const [rttChannel, setRttChannel] = React.useState('0');
   const [saving, setSaving] = React.useState(false);
   const [openingRtt, setOpeningRtt] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [targetHint, setTargetHint] = React.useState<string | null>(null);
 
   const browseWorkspace = async (): Promise<void> => {
     const api = getLinkterm();
@@ -86,7 +88,7 @@ export function ControlProfilePanel({
       setError(t('controlProfile.error.rootRequired'));
       return;
     }
-    if (!serialPort) {
+    if (observationChannel === 'serial' && !serialPort) {
       setError(t('controlProfile.error.serialPortRequired'));
       return;
     }
@@ -94,16 +96,11 @@ export function ControlProfilePanel({
     setError(null);
     setMessage(null);
     try {
+      const normalizedTarget = classifyJLinkTargetName(target).normalizedTarget;
       const profile: ControlProfilePayload = {
-        serial: {
-          enabled: true,
-          port: serialPort,
-          baudRate: Number(baudRate),
-          mode: serialMode,
-        },
         jlink: {
           enabled: true,
-          target,
+          target: normalizedTarget,
           interface: debugInterface,
           speedKHz: speedKHz === 'auto' ? 'auto' : Number(speedKHz),
         },
@@ -112,7 +109,18 @@ export function ControlProfilePanel({
           baseAddress,
           verify: true,
         },
-        rtt: { enabled: false, channels: [0] },
+        ...(observationChannel === 'serial'
+          ? {
+              serial: {
+                enabled: true,
+                port: serialPort,
+                baudRate: Number(baudRate),
+                mode: serialMode,
+              },
+            }
+          : {
+              rtt: { enabled: true },
+            }),
       };
       const result = await api.controlProfile.save({ root: root.trim(), profile });
       if (result.success) {
@@ -125,20 +133,20 @@ export function ControlProfilePanel({
     }
   };
 
+  const updateTarget = (value: string): void => {
+    const classification = classifyJLinkTargetName(value);
+    setTarget(classification.normalizedTarget);
+    setTargetHint(classification.kind === 'stm32-order-code' ? classification.message ?? null : null);
+  };
+
   const openRttLog = async (): Promise<void> => {
     const api = getLinkterm();
     if (!api) {
       setError(t('controlProfile.error.preloadUnavailable'));
       return;
     }
-    const probeId = rttProbeId.trim();
-    const channelIndex = Number(rttChannel.trim());
-    if (!probeId) {
-      setError(t('controlProfile.rttLog.error.probeRequired'));
-      return;
-    }
-    if (!Number.isInteger(channelIndex) || channelIndex < 0) {
-      setError(t('controlProfile.rttLog.error.channelInvalid'));
+    if (!root.trim()) {
+      setError(t('controlProfile.error.rootRequired'));
       return;
     }
 
@@ -146,9 +154,11 @@ export function ControlProfilePanel({
     setError(null);
     setMessage(null);
     try {
-      const label = `RTT ch${channelIndex}`;
-      const result = await api.rttLog.open({ probeId, channelIndex, label });
+      const result = await api.rttLog.open({ root: root.trim() });
       if (result.success) {
+        const probeId = result.data.probeId ?? '';
+        const channelIndex = result.data.channelIndex ?? 0;
+        const label = `RTT ch${channelIndex}`;
         useAppStore.getState().addSession({
           id: result.data.sessionId,
           label,
@@ -191,26 +201,44 @@ export function ControlProfilePanel({
           </div>
 
           <div className="space-y-2">
-            <Label>{t('controlProfile.serialPort')}</Label>
-            <SerialPortPicker value={serialPort} onChange={setSerialPort} />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="control-baud">{t('controlProfile.baudRate')}</Label>
-            <BaudRateInput id="control-baud" value={baudRate} onChange={setBaudRate} />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="control-serial-mode">{t('controlProfile.serialMode')}</Label>
+            <Label htmlFor="control-observation">{t('controlProfile.observationChannel')}</Label>
             <select
-              id="control-serial-mode"
-              value={serialMode}
-              onChange={(e) => setSerialMode(e.target.value as 'normal' | 'terminal')}
+              id="control-observation"
+              value={observationChannel}
+              onChange={(e) => setObservationChannel(e.target.value as ObservationChannel)}
               className={SELECT_CLASS}
             >
-              <option value="terminal">{t('dialog.serial.mode.terminal')}</option>
-              <option value="normal">{t('dialog.serial.mode.normal')}</option>
+              <option value="serial">{t('controlProfile.observation.serial')}</option>
+              <option value="rtt">{t('controlProfile.observation.rtt')}</option>
             </select>
           </div>
+
+          {observationChannel === 'serial' ? (
+            <>
+              <div className="space-y-2">
+                <Label>{t('controlProfile.serialPort')}</Label>
+                <SerialPortPicker value={serialPort} onChange={setSerialPort} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="control-baud">{t('controlProfile.baudRate')}</Label>
+                <BaudRateInput id="control-baud" value={baudRate} onChange={setBaudRate} />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="control-serial-mode">{t('controlProfile.serialMode')}</Label>
+                <select
+                  id="control-serial-mode"
+                  value={serialMode}
+                  onChange={(e) => setSerialMode(e.target.value as 'normal' | 'terminal')}
+                  className={SELECT_CLASS}
+                >
+                  <option value="terminal">{t('dialog.serial.mode.terminal')}</option>
+                  <option value="normal">{t('dialog.serial.mode.normal')}</option>
+                </select>
+              </div>
+            </>
+          ) : null}
+
           <div className="space-y-2">
             <Label htmlFor="control-interface">{t('controlProfile.debugInterface')}</Label>
             <select
@@ -230,9 +258,10 @@ export function ControlProfilePanel({
               id="control-target"
               list="control-target-options"
               value={target}
-              onChange={(e) => setTarget(e.target.value)}
+              onChange={(e) => updateTarget(e.target.value)}
               placeholder={t('controlProfile.target.placeholder')}
             />
+            {targetHint ? <p className="text-xs text-amber-300">{targetHint}</p> : null}
             <datalist id="control-target-options">
               {COMMON_TARGETS.map((chip) => (
                 <option key={chip} value={chip} />
@@ -280,35 +309,17 @@ export function ControlProfilePanel({
             />
           </div>
 
-          <section className="space-y-3 rounded-md border border-gray-800 bg-gray-900/60 p-3 sm:col-span-2">
-            <div>
-              <h3 className="text-sm font-medium text-gray-200">{t('controlProfile.rttLog.title')}</h3>
-              <p className="mt-1 text-xs text-gray-500">{t('controlProfile.rttLog.description')}</p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="control-rtt-probe">{t('controlProfile.rttLog.probeId')}</Label>
-                <Input
-                  id="control-rtt-probe"
-                  value={rttProbeId}
-                  onChange={(e) => setRttProbeId(e.target.value)}
-                  placeholder={t('controlProfile.rttLog.probeId.placeholder')}
-                />
+          {observationChannel === 'rtt' ? (
+            <section className="space-y-3 rounded-md border border-gray-800 bg-gray-900/60 p-3 sm:col-span-2">
+              <div>
+                <h3 className="text-sm font-medium text-gray-200">{t('controlProfile.rttLog.title')}</h3>
+                <p className="mt-1 text-xs text-gray-500">{t('controlProfile.rttLog.description')}</p>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="control-rtt-channel">{t('controlProfile.rttLog.channel')}</Label>
-                <Input
-                  id="control-rtt-channel"
-                  value={rttChannel}
-                  onChange={(e) => setRttChannel(e.target.value)}
-                  inputMode="numeric"
-                />
-              </div>
-            </div>
-            <Button type="button" variant="secondary" onClick={() => void openRttLog()} disabled={openingRtt}>
-              {openingRtt ? t('controlProfile.rttLog.opening') : t('controlProfile.rttLog.open')}
-            </Button>
-          </section>
+              <Button type="button" variant="secondary" onClick={() => void openRttLog()} disabled={openingRtt}>
+                {openingRtt ? t('controlProfile.rttLog.opening') : t('controlProfile.rttLog.open')}
+              </Button>
+            </section>
+          ) : null}
         </div>
 
         {error ? <p className="rounded border border-red-900 bg-red-950 px-3 py-2 text-sm text-red-100">{error}</p> : null}

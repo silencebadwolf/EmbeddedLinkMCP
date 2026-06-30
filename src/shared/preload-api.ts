@@ -22,11 +22,13 @@ import type {
 import type { TranscriptEventEnvelope, SerializedTranscriptEvent } from './transcript-ipc-types.js';
 import type {
   AgentIntegrationInstallResult,
+  AgentIntegrationDiagnosticResult,
   AgentIntegrationStatus,
   AgentIntegrationTargetId,
 } from './agent-integrations.js';
 export type {
   AgentIntegrationInstallResult,
+  AgentIntegrationDiagnosticResult,
   AgentIntegrationStatus,
   AgentIntegrationTargetId,
 } from './agent-integrations.js';
@@ -113,7 +115,8 @@ export type TranscriptSubscribeSuccess = SessionReadSuccess;
 
 /** rttLog.open 入参。 */
 export interface RttLogOpenRequestPayload {
-  probeId: string;
+  probeId?: string;
+  root?: string;
   channelIndex?: number;
   pollIntervalMs?: number;
   maxBytesPerRead?: number;
@@ -125,6 +128,8 @@ export interface RttLogOpenSuccess {
   sessionId: SessionId;
   state: SessionState;
   reused: boolean;
+  probeId?: string;
+  channelIndex?: number;
 }
 
 /** session 命名空间下的方法。 */
@@ -282,6 +287,8 @@ export interface AgentIntegrationsNamespace {
   list(): Promise<PreloadResult<ReadonlyArray<AgentIntegrationStatus>>>;
   /** 安装或修复一个 Agent 的 LinkTerm MCP 配置；主进程会在写入前备份。 */
   install(req: { targetId: AgentIntegrationTargetId }): Promise<PreloadResult<AgentIntegrationInstallResult>>;
+  /** 诊断一个 Agent 的 LinkTerm MCP 配置与运行前置条件。 */
+  diagnose(req: { targetId: AgentIntegrationTargetId }): Promise<PreloadResult<AgentIntegrationDiagnosticResult>>;
 }
 
 /** renderer/preload 可见的工作区控制配置主体。 */

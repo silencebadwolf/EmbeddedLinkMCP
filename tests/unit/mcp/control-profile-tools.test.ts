@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -89,7 +89,6 @@ describe('MCP control profile tools', () => {
         serial: { enabled: true, port: 'COM3', baudRate: 115200, mode: 'terminal' },
         jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
         flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
-        rtt: { enabled: false, channels: [0] },
       },
     });
 
@@ -178,6 +177,24 @@ describe('MCP control profile tools', () => {
     });
   });
 
+  it('normalizes STM32 order-code targets before saved profiles are activated', async () => {
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+      },
+    });
+
+    const out = await callTool(h.client, 'activate_control_profile', { root: h.root });
+
+    expect(out.success).toBe(true);
+    expect(h.fake.callsOf('probeConnect')[0]!.args[0]).toEqual({
+      target: 'STM32H743II',
+      interface: 'swd',
+      speedKHz: 4000,
+    });
+  });
+
   it('activate_control_profile reports CONTROL_PROFILE_NOT_FOUND for missing profile', async () => {
     const out = await callTool(h.client, 'activate_control_profile', { root: h.root });
     expect(out.success).toBe(false);
@@ -202,9 +219,63 @@ describe('MCP control profile tools', () => {
     const data = (out.evidence as { data: { exists: boolean; complete: boolean; missingFields: string[] } }).data;
     expect(data.exists).toBe(false);
     expect(data.complete).toBe(false);
-    expect(data.missingFields).toContain('serial.port');
+    expect(data.missingFields).toContain('observation.channel');
     expect(data.missingFields).toContain('jlink.target');
     expect(data.missingFields).toContain('flash.baseAddress');
+  });
+
+  it('inspect_control_profile reports firmware reset vector mismatch before flashing', async () => {
+    const firmware = Buffer.alloc(64, 0xff);
+    firmware.writeUInt32LE(0x24000d20, 0);
+    firmware.writeUInt32LE(0x080a8141, 4);
+    await writeFile(path.join(h.root, 'rtthread.bin'), firmware);
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.bin', baseAddress: '0x08008000', verify: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'inspect_control_profile', { root: h.root });
+
+    expect(out.success).toBe(true);
+    const data = (out.evidence as {
+      data: {
+        diagnostics: Array<{ id: string; status: string; message: string }>;
+      };
+    }).data;
+    expect(data.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'firmware-vector-base',
+        status: 'fail',
+        message: expect.stringContaining('0x080a8141'),
+      }),
+    ]));
+  });
+
+  it('inspect_control_profile warns when a stale profile contains an STM32 order-code target', async () => {
+    await mkdir(path.join(h.root, '.linkterm'), { recursive: true });
+    await writeFile(path.join(h.root, '.linkterm', 'control-profile.json'), JSON.stringify({
+      schemaVersion: 'linkterm-control/1.0.0',
+      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+    }, null, 2));
+
+    const out = await callTool(h.client, 'inspect_control_profile', { root: h.root });
+
+    expect(out.success).toBe(true);
+    const data = (out.evidence as {
+      data: {
+        diagnostics: Array<{ id: string; status: string; message: string }>;
+      };
+    }).data;
+    expect(data.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'jlink-target-name',
+        status: 'warn',
+        message: expect.stringContaining('STM32H743II'),
+      }),
+    ]));
   });
 
   it('prepare_control_profile_questions produces a human-facing question', async () => {
@@ -214,7 +285,8 @@ describe('MCP control profile tools', () => {
     const data = (out.evidence as { data: { question: string; missingFields: string[] } }).data;
     expect(data.question).toContain('0x08000000');
     expect(data.question).toContain('COM3');
-    expect(data.missingFields).toContain('serial.port');
+    expect(data.question).toContain('RTT');
+    expect(data.missingFields).toContain('observation.channel');
   });
 
   it('apply_control_profile_answer parses a human answer and writes the profile', async () => {

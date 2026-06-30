@@ -19,6 +19,28 @@ export interface McpStdioProxy {
   stop(): Promise<void>;
 }
 
+type ProxyStopFn = () => Promise<void>;
+
+/**
+ * Forward one request to the owner HTTP runtime.
+ *
+ * Transport failures mean the owner process or localhost endpoint disappeared. In that case the
+ * stdio proxy must close so the Agent host can restart MCP instead of keeping a dead tool surface.
+ */
+export async function forwardRuntimeRequest<T>(
+  operation: () => Promise<T>,
+  stopProxy: ProxyStopFn,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (err) {
+    if (isOwnerRuntimeTransportError(err)) {
+      void stopProxy().catch(() => undefined);
+    }
+    throw err;
+  }
+}
+
 /**
  * Start a stdio MCP server that forwards tool listing/calls to an existing HTTP runtime endpoint.
  *
@@ -49,24 +71,47 @@ export async function startMcpStdioProxy(metadata: McpRuntimeMetadata): Promise<
     },
   );
 
+  let stopping = false;
+  const stop = async (): Promise<void> => {
+    if (stopping) return;
+    stopping = true;
+    await server.close().catch(() => undefined);
+    await stdioTransport.close().catch(() => undefined);
+    await httpTransport.close().catch(() => undefined);
+    await client.close().catch(() => undefined);
+  };
+
   server.setRequestHandler(ListToolsRequestSchema, async (request): Promise<ListToolsResult> => {
-    return client.listTools(request.params);
+    return forwardRuntimeRequest(
+      () => client.listTools(request.params),
+      stop,
+    );
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
-    const result = await client.callTool(request.params, CallToolResultSchema);
-    return CallToolResultSchema.parse(result);
+    return forwardRuntimeRequest(async () => {
+      const result = await client.callTool(request.params, CallToolResultSchema);
+      return CallToolResultSchema.parse(result);
+    }, stop);
   });
 
   const stdioTransport = new StdioServerTransport();
   await server.connect(stdioTransport);
 
   return {
-    stop: async () => {
-      await server.close().catch(() => undefined);
-      await stdioTransport.close().catch(() => undefined);
-      await httpTransport.close().catch(() => undefined);
-      await client.close().catch(() => undefined);
-    },
+    stop,
   };
+}
+
+function isOwnerRuntimeTransportError(err: unknown): boolean {
+  if (!err) return false;
+  if (err instanceof TypeError && err.message.toLowerCase().includes('fetch failed')) return true;
+  if (err instanceof Error) {
+    const message = err.message.toLowerCase();
+    return message.includes('fetch failed')
+      || message.includes('econnrefused')
+      || message.includes('socket hang up')
+      || message.includes('terminated');
+  }
+  return false;
 }

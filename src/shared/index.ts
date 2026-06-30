@@ -3,3 +3,4 @@ export * from './constants.js';
 export * from './ipc-protocol.js';
 export * from './transcript-ipc-types.js';
 export * from './agent-integrations.js';
+export * from './jlink-target-name.js';

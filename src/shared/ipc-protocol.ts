@@ -36,6 +36,7 @@ export const IPC_CHANNELS = {
   CONNECTIONS_DELETE: 'connections:delete',
   AGENT_INTEGRATIONS_LIST: 'agentIntegrations:list',
   AGENT_INTEGRATIONS_INSTALL: 'agentIntegrations:install',
+  AGENT_INTEGRATIONS_DIAGNOSE: 'agentIntegrations:diagnose',
   CONTROL_PROFILE_SAVE: 'controlProfile:save',
   CONTROL_PROFILE_LOAD: 'controlProfile:load',
   CONTROL_PROFILE_PICK_WORKSPACE_ROOT: 'controlProfile:pickWorkspaceRoot',

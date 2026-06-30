@@ -16,6 +16,7 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { IJLinkBackend, ProbeInfo } from '../../../jlink/types.js';
+import { normalizeJLinkTargetName } from '../../../shared/jlink-target-name.js';
 import { registerTool, type ToolHandlerResult } from '../../registry.js';
 import { ok, runJLink, withAbortableTimeout, ConfirmationRequiredError } from './error-translate.js';
 import {
@@ -113,9 +114,10 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
     sensitivity: 'state-affecting',
     inputSchema: probeConnectInputSchema,
     handler: async (input: ProbeConnectInput): Promise<ToolHandlerResult> => {
+      const target = normalizeJLinkTargetName(input.target);
       const probe = await runJLink(() =>
         jlinkBackend.probeConnect({
-          target: input.target,
+          target,
           ...(input.interface !== undefined ? { interface: input.interface } : {}),
           ...(input.speedKHz !== undefined ? { speedKHz: input.speedKHz } : {}),
           ...(input.serialNumber !== undefined ? { serialNumber: input.serialNumber } : {}),

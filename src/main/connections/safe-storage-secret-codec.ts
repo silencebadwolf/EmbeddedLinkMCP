@@ -1,5 +1,7 @@
-import { safeStorage } from 'electron';
+import { electron } from '../electron-runtime.js';
 import type { SecretCodec } from '../../core/connections/index.js';
+
+const { safeStorage } = electron;
 
 /** Electron safeStorage-backed credential codec for saved connection profiles. */
 export class SafeStorageSecretCodec implements SecretCodec {

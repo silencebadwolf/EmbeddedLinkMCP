@@ -17,7 +17,7 @@
  *   作为权威值；客户端字段视为忽略，避免渲染端伪造已有 id。
  */
 
-import { ipcMain } from 'electron';
+import { electron } from '../electron-runtime.js';
 import type { SessionManager } from '../../core/session/session-manager.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type { SessionId, SessionState } from '../../shared/types.js';
@@ -27,6 +27,8 @@ import type {
 } from '../../shared/preload-api.js';
 import { openSessionInputSchema } from '../../mcp/surfaces/terminal/schemas.js';
 import { createAndOpenSession } from './session-open-helper.js';
+
+const { ipcMain } = electron;
 
 /** session:create 的入参契约。`sessionId`/`label` 是 UI 便利字段（label 进 config.label）。 */
 interface SessionCreateRequest {

@@ -150,6 +150,17 @@ describe('MCP debug tools', () => {
       expect((status2.error as { code: string }).code).toBe('PROBE_NOT_FOUND');
     });
 
+    it('probe_connect normalizes STM32 order-code targets before backend connection', async () => {
+      const connect = await callTool(h.client, 'probe_connect', { target: 'STM32H743IIT6' });
+
+      expect(connect.success).toBe(true);
+      const probe = (connect.evidence as { data: { probe: { target: string } } }).data.probe;
+      expect(probe.target).toBe('STM32H743II');
+      expect(h.fake!.callsOf('probeConnect')[0]!.args[0]).toMatchObject({
+        target: 'STM32H743II',
+      });
+    });
+
     it('probe_connect with empty target returns INVALID_STATE via fake backend', async () => {
       // schema accepts non-empty string; we pass " " which schema accepts (min 1)
       // but FakeJLinkBackend.probeConnect throws JLinkInvalidStateError for whitespace-only target.

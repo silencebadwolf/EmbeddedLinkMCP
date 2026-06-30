@@ -8,6 +8,16 @@ import {
   JLinkInvalidStateError,
   ProbeNotFoundError,
 } from '@/jlink/index.js';
+import type { ProbeInfo } from '@/jlink/index.js';
+import type { JLinkCommanderClient } from '@/jlink/segger-command-runner.js';
+
+function commanderWithPhysicalProbes(probes: ProbeInfo[]): JLinkCommanderClient {
+  return {
+    async detectProbes() {
+      return probes;
+    },
+  } as JLinkCommanderClient;
+}
 
 describe('JLinkAdapter', () => {
   describe('probe lifecycle', () => {
@@ -50,21 +60,61 @@ describe('JLinkAdapter', () => {
       );
     });
 
-    it('probeDetect returns empty array (Phase 9 stub)', async () => {
-      const a = new JLinkAdapter();
+    it('probeDetect returns empty array when Commander sees no physical probes', async () => {
+      const a = new JLinkAdapter({ commander: commanderWithPhysicalProbes([]) });
       expect(await a.probeDetect()).toEqual([]);
     });
 
+    it('probeDetect returns physical probes discovered by Commander before connect', async () => {
+      const a = new JLinkAdapter({
+        commander: commanderWithPhysicalProbes([
+          { probeId: 'physical-0', serialNumber: '601012352', connected: false },
+        ]),
+      });
+
+      await expect(a.probeDetect()).resolves.toEqual([
+        { probeId: 'physical-0', serialNumber: '601012352', connected: false },
+      ]);
+    });
+
+    it('probeDetect merges matching physical probes with connected handles', async () => {
+      const a = new JLinkAdapter({
+        commander: commanderWithPhysicalProbes([
+          { probeId: 'physical-0', serialNumber: '601012352', connected: false },
+          { probeId: 'physical-1', serialNumber: '601012353', connected: false },
+        ]),
+      });
+      const connected = await a.probeConnect({ target: 'STM32F4', serialNumber: '601012352' });
+
+      const probes = await a.probeDetect();
+
+      expect(probes).toEqual([
+        { ...connected, serialNumber: '601012352' },
+        { probeId: 'physical-1', serialNumber: '601012353', connected: false },
+      ]);
+    });
+
     it('reuses an existing handle when connecting the same probe selection twice', async () => {
-      const a = new JLinkAdapter();
+      const a = new JLinkAdapter({ commander: commanderWithPhysicalProbes([]) });
       const a1 = await a.probeConnect({ target: 'STM32F4', interface: 'swd', speedKHz: 4000 });
       const a2 = await a.probeConnect({ target: 'STM32F4', interface: 'swd', speedKHz: 4000 });
       expect(a2.probeId).toBe(a1.probeId);
       expect(await a.probeDetect()).toHaveLength(1);
     });
 
+    it('retires a stale default probe handle when the target name changes', async () => {
+      const a = new JLinkAdapter({ commander: commanderWithPhysicalProbes([]) });
+      const stale = await a.probeConnect({ target: 'STM32H743II', interface: 'swd' });
+      const current = await a.probeConnect({ target: 'STM32H743IIT6', interface: 'swd' });
+
+      expect(current.probeId).toBe(stale.probeId);
+      expect(current.target).toBe('STM32H743II');
+      await expect(a.probeStatus(stale.probeId)).resolves.toEqual(current);
+      await expect(a.probeDetect()).resolves.toEqual([current]);
+    });
+
     it('keeps explicitly selected probes as distinct handles', async () => {
-      const a = new JLinkAdapter();
+      const a = new JLinkAdapter({ commander: commanderWithPhysicalProbes([]) });
       const a1 = await a.probeConnect({ target: 'STM32F4', serialNumber: '11111111' });
       const a2 = await a.probeConnect({ target: 'STM32F4', serialNumber: '22222222' });
       expect(a1.probeId).not.toBe(a2.probeId);

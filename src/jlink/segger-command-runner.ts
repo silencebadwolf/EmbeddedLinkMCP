@@ -1,16 +1,17 @@
-import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import { execFile, spawn, type ChildProcessByStdio } from 'node:child_process';
 import { createConnection, type Socket } from 'node:net';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
+import { normalizeJLinkTargetName } from '../shared/jlink-target-name.js';
 import {
   JLinkAbortedError,
   JLinkInvalidStateError,
   JLinkOperationError,
 } from './errors.js';
-import type { CommanderScriptResult, MemoryRange, RegisterValue, RttChannelInfo, RttReadResult } from './types.js';
+import type { CommanderScriptResult, MemoryRange, ProbeInfo, RegisterValue, RttChannelInfo, RttReadResult } from './types.js';
 
 /** Probe context required by SEGGER Commander commands. */
 export interface CommanderProbeContext {
@@ -78,6 +79,9 @@ export interface JLinkCommanderAvailability {
 export interface JLinkCommanderClient {
   /** Check whether the Commander executable and optional target support can be resolved without spawning a process. */
   checkAvailability?(target?: string): JLinkCommanderAvailability;
+
+  /** Enumerate physically attached J-Link probes without opening a target connection. */
+  detectProbes?(): Promise<ProbeInfo[]>;
 
   /** Program a raw binary at an explicit address. */
   download(
@@ -258,8 +262,11 @@ interface TempFlashFiles extends TempCommandFile {
   binaryPath: string;
 }
 
+interface TempVerifyFiles extends TempFlashFiles {
+  readbackPath: string;
+}
+
 const DEFAULT_TIMEOUT_MS = 30_000;
-const RAW_FLASH_CHUNK_BYTES = 64 * 1024;
 const LARGE_RAW_FLASH_THRESHOLD_BYTES = 512 * 1024;
 const LARGE_RAW_FLASH_TIMEOUT_MS = 180_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -280,24 +287,30 @@ function defaultRawFlashTimeoutMs(binaryLength: number): number {
   return binaryLength >= LARGE_RAW_FLASH_THRESHOLD_BYTES ? LARGE_RAW_FLASH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
 }
 
-function splitRawFlashChunks(binary: Buffer, baseAddress: number): Array<{ address: number; binary: Buffer }> {
-  const chunks: Array<{ address: number; binary: Buffer }> = [];
-  let offset = 0;
-  while (offset < binary.byteLength) {
-    const address = baseAddress + offset;
-    const boundaryRemaining = RAW_FLASH_CHUNK_BYTES - (address % RAW_FLASH_CHUNK_BYTES);
-    const length = Math.min(RAW_FLASH_CHUNK_BYTES, boundaryRemaining, binary.byteLength - offset);
-    chunks.push({
-      address,
-      binary: binary.subarray(offset, offset + length),
-    });
-    offset += length;
-  }
-  return chunks.length === 0 ? [{ address: baseAddress, binary }] : chunks;
-}
-
 function tail(value: string, maxChars: number): string {
   return value.length <= maxChars ? value : value.slice(value.length - maxChars);
+}
+
+function terminateProcessTree(child: ChildProcessByStdio<null, Readable, Readable>, signal: NodeJS.Signals): void {
+  if (child.pid === undefined) return;
+  if (process.platform === 'win32') {
+    execFile(
+      'taskkill.exe',
+      ['/PID', String(child.pid), '/T', signal === 'SIGKILL' ? '/F' : '/F'],
+      { windowsHide: true },
+      () => undefined,
+    );
+    return;
+  }
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+      // The process may have already exited.
+    }
+  }
 }
 
 /** Node child_process based runner for SEGGER command-line tools. */
@@ -312,6 +325,7 @@ export class NodeSeggerProcessRunner implements SeggerProcessRunner {
         child = spawn(request.command, request.args, {
           shell: false,
           windowsHide: true,
+          detached: true,
           stdio: ['ignore', 'pipe', 'pipe'],
         });
       } catch (err) {
@@ -374,9 +388,9 @@ export class NodeSeggerProcessRunner implements SeggerProcessRunner {
         if (settled || terminatingError !== undefined) return;
         terminatingError = err;
         clearPrimaryWaiters();
-        child.kill('SIGTERM');
+        terminateProcessTree(child, 'SIGTERM');
         terminateTimer = setTimeout(() => {
-          child.kill('SIGKILL');
+          terminateProcessTree(child, 'SIGKILL');
         }, TERMINATE_GRACE_MS);
       };
 
@@ -671,7 +685,7 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     this.#maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   }
 
-  /** Check whether a trusted Commander executable path is configured; target XML lookup is advisory only. */
+  /** Check whether a trusted Commander executable path and exact SEGGER target are configured. */
   checkAvailability(target?: string): JLinkCommanderAvailability {
     if (this.#commanderPath !== undefined) {
       if (target !== undefined && target.trim() !== '') {
@@ -684,7 +698,7 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
           commanderPath: this.#commanderPath,
           target,
           targetSupported: false,
-          message: `SEGGER J-Link device database scan did not find target ${target}; LinkTerm will still let SEGGER Commander attempt the operation`,
+          message: `SEGGER J-Link target ${target} is not listed in the local XML device databases; Commander may still support built-in targets, but update SEGGER J-Link/device packs or use an exact supported device name if Commander reports an unknown device.`,
         };
       }
       return { available: true, commanderPath: this.#commanderPath };
@@ -695,6 +709,22 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
       message:
         'J-Link Commander executable not found; install SEGGER J-Link or set LINKTERM_JLINK_COMMANDER to an existing absolute path',
     };
+  }
+
+  /** Enumerate attached J-Link probes through Commander ShowEmuList without connecting to a target. */
+  async detectProbes(): Promise<ProbeInfo[]> {
+    const commanderPath = this.#requireCommanderPath();
+    return this.#withTempCommandFile(async (file) => {
+      await writeFile(file.scriptPath, 'ShowEmuList\nq\n', 'utf-8');
+      const result = await this.#runner.run({
+        command: commanderPath,
+        args: buildCommanderProbeDetectArgs(file.scriptPath),
+        timeoutMs: this.#defaultTimeoutMs,
+        maxOutputBytes: this.#maxOutputBytes,
+      });
+      assertProbeDetectSuccess(result);
+      return parseShowEmuListOutput(`${result.stdout}\n${result.stderr}`);
+    });
   }
 
   /** Program a raw binary at an explicit flash address. */
@@ -708,27 +738,34 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     assertAddress(opts.address, 'download');
     const commanderPath = this.#requireCommanderPath();
     const timeoutMs = opts.timeoutMs ?? defaultRawFlashTimeoutMs(binary.byteLength);
-    let bytesWritten = 0;
-    for (const chunk of splitRawFlashChunks(binary, opts.address)) {
-      if (signal?.aborted) throw new JLinkAbortedError();
-      await this.#withTempFlashFiles(chunk.binary, async (files) => {
-        const lines = [
-          `loadbin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(chunk.address)}`,
-        ];
-        if (opts.verify === true) {
-          lines.push(`verifybin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(chunk.address)}`);
-        }
-        const result = await this.#runCommander(commanderPath, probe, files, lines, signal, timeoutMs);
-        if (opts.verify === true && classifyVerifyMismatch(result)) {
-          throw new JLinkOperationError('J-Link flash verify failed after download', {
-            operation: 'flashDownload',
-          });
-        }
-        assertCommanderSuccess(result, probe, 'flashDownload');
-      });
-      bytesWritten += chunk.binary.byteLength;
+    await this.#withTempFlashFiles(binary, async (files) => {
+      const lines = [`loadbin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(opts.address)}`];
+      if (opts.verify === true) {
+        lines.push(`verifybin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(opts.address)}`);
+      }
+      const result = await this.#runCommander(commanderPath, probe, files, lines, signal, timeoutMs);
+      if (opts.verify === true && classifyVerifyMismatch(result)) {
+        throw new JLinkOperationError('J-Link flash verify failed after download', {
+          operation: 'flashDownload',
+        });
+      }
+      assertCommanderSuccess(result, probe, 'flashDownload');
+      if (opts.verify === true) {
+        assertPositiveVerifyEvidence(result, probe, 'flashDownload');
+      }
+    });
+    if (opts.verify === true) {
+      const verifyResult = await this.verify(probe, binary, { address: opts.address }, signal);
+      if (!verifyResult.ok) {
+        const mismatch = verifyResult.mismatchAt === undefined
+          ? 'unknown'
+          : formatAddress(verifyResult.mismatchAt);
+        throw new JLinkOperationError(`J-Link flashDownload binary readback mismatch at ${mismatch}`, {
+          operation: 'flashDownload',
+        });
+      }
     }
-    return { bytesWritten, verified: opts.verify === true };
+    return { bytesWritten: binary.byteLength, verified: opts.verify === true };
   }
 
   /** Verify a raw binary at an explicit flash address. */
@@ -741,12 +778,15 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     if (signal?.aborted) throw new JLinkAbortedError();
     assertAddress(opts.address, 'verify');
     const commanderPath = this.#requireCommanderPath();
-    return this.#withTempFlashFiles(binary, async (files) => {
+    return this.#withTempVerifyFiles(binary, async (files) => {
       const result = await this.#runCommander(
         commanderPath,
         probe,
         files,
-        [`verifybin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(opts.address)}`],
+        [
+          `verifybin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(opts.address)}`,
+          `savebin ${quoteCommanderPath(files.readbackPath)}, ${formatAddress(opts.address)}, ${formatAddress(binary.byteLength)}`,
+        ],
         signal,
       );
       const mismatch = classifyVerifyMismatch(result);
@@ -756,6 +796,10 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
           : { ok: false, mismatchAt: mismatch.mismatchAt };
       }
       assertCommanderSuccess(result, probe, 'flashVerify');
+      assertPositiveVerifyEvidence(result, probe, 'flashVerify');
+      const readback = await readVerifyReadback(files.readbackPath, probe);
+      const readbackMismatch = firstMismatchAddress(binary, readback, opts.address);
+      if (readbackMismatch !== undefined) return { ok: false, mismatchAt: readbackMismatch };
       return { ok: true };
     });
   }
@@ -1012,6 +1056,14 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     });
   }
 
+  /** Create temporary binary/script/readback files, run an operation, then remove the directory. */
+  async #withTempVerifyFiles<T>(binary: Buffer, fn: (files: TempVerifyFiles) => Promise<T>): Promise<T> {
+    return this.#withTempFlashFiles(binary, async (files) => fn({
+      ...files,
+      readbackPath: path.join(files.dir, 'readback.bin'),
+    }));
+  }
+
   /** Create a temporary J-Link command file path, run an operation, then remove the directory. */
   async #withTempCommandFile<T>(fn: (file: TempCommandFile) => Promise<T>): Promise<T> {
     const dir = await mkdtemp(path.join(this.#tempRoot, 'linkterm-jlink-'));
@@ -1037,13 +1089,17 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
   ): Promise<SeggerProcessResult> {
     const script = [...buildConnectionScriptLines(probe, commanderPath), ...commandLines, 'q', ''].join('\n');
     await writeFile(files.scriptPath, script, 'utf-8');
-    return this.#runner.run({
-      command: commanderPath,
-      args: buildCommanderArgs(probe, files.scriptPath, commanderPath),
-      signal,
-      timeoutMs: timeoutMs ?? this.#defaultTimeoutMs,
-      maxOutputBytes: this.#maxOutputBytes,
-    });
+    try {
+      return await this.#runner.run({
+        command: commanderPath,
+        args: buildCommanderArgs(probe, files.scriptPath, commanderPath),
+        signal,
+        timeoutMs: timeoutMs ?? this.#defaultTimeoutMs,
+        maxOutputBytes: this.#maxOutputBytes,
+      });
+    } catch (err) {
+      throw addCommanderTimeoutGuidance(err, commandLines);
+    }
   }
 }
 
@@ -1204,6 +1260,17 @@ export function buildCommanderArgs(probe: CommanderProbeContext, scriptPath: str
   return args;
 }
 
+function buildCommanderProbeDetectArgs(scriptPath: string): string[] {
+  return [
+    '-ExitOnError',
+    '1',
+    '-NoGui',
+    '1',
+    '-CommandFile',
+    scriptPath,
+  ];
+}
+
 function assertAddress(address: number | undefined, operation: string): asserts address is number {
   if (address === undefined) {
     throw new JLinkInvalidStateError(`${operation} requires an explicit address for raw binary input`, {
@@ -1256,13 +1323,14 @@ function buildConnectionScriptLines(probe: CommanderProbeContext, commanderPath?
  */
 function normalizeDeviceName(target: string, commanderPath?: string): string {
   // 已带前缀或无法查数据库时，保持原样
-  if (target.startsWith('-') || commanderPath === undefined) return target;
+  const normalizedTarget = normalizeJLinkTargetName(target);
+  if (normalizedTarget.startsWith('-') || commanderPath === undefined) return normalizedTarget;
 
   // SEGGER 约定：AddOn 名称 = "-" + 内置名称
-  const addOnTarget = `-${target}`;
+  const addOnTarget = `-${normalizedTarget}`;
   if (commanderSupportsTarget(commanderPath, addOnTarget)) return addOnTarget;
 
-  return target;
+  return normalizedTarget;
 }
 
 function safeCommanderToken(value: string, field: string): string {
@@ -1432,6 +1500,20 @@ function assertRttMaxBytes(maxBytes: number): void {
   }
 }
 
+function addCommanderTimeoutGuidance(err: unknown, commandLines: string[]): unknown {
+  if (!(err instanceof JLinkAbortedError) || !/timed out/i.test(err.message)) return err;
+  if (!hasTargetAccessCommand(commandLines)) return err;
+  return new JLinkAbortedError(
+    `${err.message}; target access did not complete. Check target power, BOOT straps, NRST/reset wiring, SWDIO/SWCLK wiring, exact J-Link device name, debug speed, readout/write protection, and whether another tool owns the probe.`,
+  );
+}
+
+function hasTargetAccessCommand(commandLines: readonly string[]): boolean {
+  return commandLines.some((line) =>
+    /^(?:connect|mem|loadbin|verifybin|savebin|loadfile|savefile|h|r|regs|erase|w[124]|wreg|setbp|clrbp)\b/i.test(line.trim()),
+  );
+}
+
 function parseRegisterDump(output: string): RegisterValue[] {
   const registers: RegisterValue[] = [];
   for (const line of output.split(/\r?\n/u)) {
@@ -1460,12 +1542,75 @@ function parseMemoryDump(output: string): Buffer {
   return Buffer.from(bytes);
 }
 
+function firstMismatchAddress(expected: Buffer, actual: Buffer, baseAddress: number): number | undefined {
+  const length = Math.min(expected.byteLength, actual.byteLength);
+  for (let offset = 0; offset < length; offset += 1) {
+    if (expected[offset] !== actual[offset]) return baseAddress + offset;
+  }
+  if (expected.byteLength !== actual.byteLength) return baseAddress + length;
+  return undefined;
+}
+
+async function readVerifyReadback(readbackPath: string, probe: CommanderProbeContext): Promise<Buffer> {
+  try {
+    return await readFile(readbackPath);
+  } catch (err) {
+    throw new JLinkOperationError(
+      sanitizeOutput('J-Link flashVerify binary readback was not produced by Commander savebin', probe),
+      {
+        operation: 'flashVerify',
+        underlying: err,
+      },
+    );
+  }
+}
+
 function classifyVerifyMismatch(result: SeggerProcessResult): { mismatchAt?: number } | undefined {
   const output = `${result.stdout}\n${result.stderr}`;
   if (!/verify\s+failed|verify\s+error|contents\s+of\s+.*differ/i.test(output)) return undefined;
   const match = output.match(/(?:address|@)\s*(?:address\s*)?(0x[0-9a-fA-F]+)/i);
   if (!match) return {};
   return { mismatchAt: Number.parseInt(match[1]!, 16) };
+}
+
+function assertPositiveVerifyEvidence(
+  result: SeggerProcessResult,
+  probe: CommanderProbeContext,
+  operation: string,
+): void {
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (/verify\s+successful|verification\s+successful|contents\s+of\s+.*(?:match|identical)/i.test(output)) {
+    return;
+  }
+  throw new JLinkOperationError(
+    sanitizeOutput(`J-Link ${operation} completed without positive verify evidence: ${output}`, probe),
+    { operation },
+  );
+}
+
+function assertProbeDetectSuccess(result: SeggerProcessResult): void {
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (/no\s+emulators\s+found|no\s+j-link\s+device\s+found/i.test(output)) return;
+  if (result.exitCode === 0 && !/script\s+processing\s+failed/i.test(output)) return;
+  throw new JLinkOperationError(sanitizeProcessOutput(`J-Link probeDetect failed: ${output}`).slice(0, 4000), {
+    operation: 'probeDetect',
+  });
+}
+
+function parseShowEmuListOutput(output: string): ProbeInfo[] {
+  const probes: ProbeInfo[] = [];
+  for (const line of output.split(/\r?\n/u)) {
+    const match = line.match(
+      /J-Link\[(\d+)\]:.*?\bSerial\s+number:\s*([^\s,]+)(?:,|\s|$)/iu,
+    );
+    if (match === null) continue;
+    probes.push({
+      probeId: `physical-${match[1]!}`,
+      serialNumber: match[2]!,
+      connected: false,
+    });
+  }
+  return probes;
 }
 
 function assertCommanderSuccess(
@@ -1508,7 +1653,7 @@ export class DefaultJLinkGdbServerClient implements JLinkGdbServerClient {
     this.#maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   }
 
-  /** Check whether a trusted GDB server executable path is configured; target XML lookup is advisory only. */
+  /** Check whether a trusted GDB server executable path and exact SEGGER target are configured. */
   checkAvailability(target?: string): JLinkGdbServerAvailability {
     if (this.#gdbServerPath !== undefined) {
       if (target !== undefined && target.trim() !== '') {
@@ -1521,7 +1666,7 @@ export class DefaultJLinkGdbServerClient implements JLinkGdbServerClient {
           gdbServerPath: this.#gdbServerPath,
           target,
           targetSupported: false,
-          message: `SEGGER J-Link device database scan did not find target ${target}; LinkTerm will still let J-Link GDB Server attempt the operation`,
+          message: `SEGGER J-Link target ${target} is not listed in the local XML device databases; GDB server may still support built-in targets, but update SEGGER J-Link/device packs or use an exact supported device name if it reports an unknown device.`,
         };
       }
       return { available: true, gdbServerPath: this.#gdbServerPath };
@@ -1640,9 +1785,10 @@ const GDB_SERVER_READY_PATTERN = /listening\s+on\s+tcp\/ip\s+port|gdb\s+server\s
 const DEFAULT_RTT_TELNET_PORT = 19021;
 
 function buildGdbServerArgs(probe: CommanderProbeContext, opts: { host: string; port: number }): string[] {
+  const target = normalizeJLinkTargetName(probe.target);
   const args = [
     '-device',
-    safeCommanderToken(probe.target, 'target'),
+    safeCommanderToken(target, 'target'),
     '-if',
     (probe.interface ?? 'swd').toUpperCase(),
     '-speed',

@@ -17,11 +17,16 @@ const { handlers, ipcMainMock } = vi.hoisted(() => {
   };
 });
 
-vi.mock('electron', () => ({ ipcMain: ipcMainMock }));
+const electronMock = { app: {}, ipcMain: ipcMainMock };
+globalThis.__linktermElectronMock = electronMock;
 
-import { registerAgentIntegrationsIpc } from '../../../../src/main/ipc/agent-integrations-ipc.js';
+vi.mock('electron', () => ({ default: electronMock, ...electronMock }));
+
 import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
 import type { AgentIntegrationManager } from '../../../../src/core/agent-integrations/index.js';
+import type { registerAgentIntegrationsIpc as RegisterAgentIntegrationsIpc } from '../../../../src/main/ipc/agent-integrations-ipc.js';
+
+let registerAgentIntegrationsIpc: typeof RegisterAgentIntegrationsIpc;
 
 function makeManager(): AgentIntegrationManager {
   return {
@@ -48,11 +53,18 @@ function makeManager(): AgentIntegrationManager {
         canInstall: false,
       },
     })),
+    diagnose: vi.fn(async () => ({
+      targetId: 'codex',
+      label: 'Codex',
+      transport: 'HTTP',
+      checks: [{ id: 'config', label: 'Codex MCP config', status: 'pass' }],
+    })),
   } as unknown as AgentIntegrationManager;
 }
 
 describe('registerAgentIntegrationsIpc', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    ({ registerAgentIntegrationsIpc } = await import('../../../../src/main/ipc/agent-integrations-ipc.js'));
     handlers.clear();
     ipcMainMock.handle.mockClear();
     ipcMainMock.removeHandler.mockClear();
@@ -81,6 +93,34 @@ describe('registerAgentIntegrationsIpc', () => {
     expect(manager.install).toHaveBeenCalledWith('vscode');
   });
 
+  it('accepts WSL Codex target ids from discovered status rows', async () => {
+    const manager = makeManager();
+    registerAgentIntegrationsIpc(manager);
+
+    const handler = handlers.get(IPC_CHANNELS.AGENT_INTEGRATIONS_INSTALL)!;
+    const result = await handler({}, { targetId: 'codex:wsl:Ubuntu-24.04:jianyin' }) as {
+      success: boolean;
+    };
+
+    expect(result.success).toBe(true);
+    expect(manager.install).toHaveBeenCalledWith('codex:wsl:Ubuntu-24.04:jianyin');
+  });
+
+  it('diagnoses a target by id', async () => {
+    const manager = makeManager();
+    registerAgentIntegrationsIpc(manager);
+
+    const handler = handlers.get(IPC_CHANNELS.AGENT_INTEGRATIONS_DIAGNOSE)!;
+    const result = await handler({}, { targetId: 'codex' }) as {
+      success: boolean;
+      data?: { transport: string };
+    };
+
+    expect(result.success).toBe(true);
+    expect(result.data?.transport).toBe('HTTP');
+    expect(manager.diagnose).toHaveBeenCalledWith('codex');
+  });
+
   it('rejects invalid install payloads', async () => {
     const manager = makeManager();
     registerAgentIntegrationsIpc(manager);
@@ -98,5 +138,6 @@ describe('registerAgentIntegrationsIpc', () => {
 
     expect(ipcMainMock.removeHandler).toHaveBeenCalledWith(IPC_CHANNELS.AGENT_INTEGRATIONS_LIST);
     expect(ipcMainMock.removeHandler).toHaveBeenCalledWith(IPC_CHANNELS.AGENT_INTEGRATIONS_INSTALL);
+    expect(ipcMainMock.removeHandler).toHaveBeenCalledWith(IPC_CHANNELS.AGENT_INTEGRATIONS_DIAGNOSE);
   });
 });

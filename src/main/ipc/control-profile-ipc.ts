@@ -1,4 +1,4 @@
-import { dialog, ipcMain } from 'electron';
+import { electron } from '../electron-runtime.js';
 import {
   ControlProfileAlreadyInitializedError,
   ControlProfileManager,
@@ -11,6 +11,8 @@ import {
 } from '../../core/workspace/index.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type { ControlProfileFilePayload, ControlProfilePayload, PreloadResult } from '../../shared/preload-api.js';
+
+const { dialog, ipcMain } = electron;
 
 /** 保存/读取工作区控制配置 IPC handler。 */
 export function registerControlProfileIpc(manager: ControlProfileManager): () => void {

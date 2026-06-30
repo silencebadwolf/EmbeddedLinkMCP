@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { electron } from '../electron-runtime.js';
 import type { SessionManager } from '../../core/session/session-manager.js';
 import {
   ConnectionProfileManager,
@@ -13,6 +13,8 @@ import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type { PreloadResult, SessionCreateRequestConfig } from '../../shared/preload-api.js';
 import type { SessionId, SessionState } from '../../shared/types.js';
 import { createAndOpenSession } from './session-open-helper.js';
+
+const { ipcMain } = electron;
 
 type SaveAndOpenResult = PreloadResult<{
   profile: SavedConnectionSummary;

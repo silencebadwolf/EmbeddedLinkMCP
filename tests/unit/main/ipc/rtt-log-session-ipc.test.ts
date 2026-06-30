@@ -17,15 +17,25 @@ const { handlers, ipcMainMock } = vi.hoisted(() => {
   };
 });
 
-vi.mock('electron', () => ({ ipcMain: ipcMainMock }));
+const electronMock = { app: {}, ipcMain: ipcMainMock };
+globalThis.__linktermElectronMock = electronMock;
+
+vi.mock('electron', () => ({ default: electronMock, ...electronMock }));
 
 import { SessionManager } from '../../../../src/core/session/session-manager.js';
-import { registerRttLogSessionIpc } from '../../../../src/main/ipc/rtt-log-session-ipc.js';
+import { ControlProfileManager } from '../../../../src/core/workspace/control-profile-manager.js';
+import type { registerRttLogSessionIpc as RegisterRttLogSessionIpc } from '../../../../src/main/ipc/rtt-log-session-ipc.js';
 import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
 import { FakeJLinkBackend } from '../../../fixtures/fake-jlink-backend.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+let registerRttLogSessionIpc: typeof RegisterRttLogSessionIpc;
 
 describe('registerRttLogSessionIpc', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    ({ registerRttLogSessionIpc } = await import('../../../../src/main/ipc/rtt-log-session-ipc.js'));
     handlers.clear();
     ipcMainMock.handle.mockClear();
     ipcMainMock.removeHandler.mockClear();
@@ -68,6 +78,51 @@ describe('registerRttLogSessionIpc', () => {
         rttLog: { probeId: probe.probeId, channelIndex: 0 },
       }),
     ]);
+  });
+
+  it('auto-connects J-Link and opens RTT log from a workspace control profile', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lt-rtt-ipc-'));
+    try {
+      const sessionManager = new SessionManager();
+      const backend = new FakeJLinkBackend();
+      const controlProfileManager = new ControlProfileManager();
+      await controlProfileManager.init(root, {
+        jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        rtt: { enabled: true, channels: [0] },
+      });
+      registerRttLogSessionIpc(sessionManager, backend, controlProfileManager);
+      const handler = handlers.get(IPC_CHANNELS.RTT_LOG_OPEN)!;
+
+      const result = await handler(undefined, {
+        root,
+        label: 'RTT auto',
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        data: {
+          state: 'open',
+          reused: false,
+          channelIndex: 0,
+        },
+      });
+      const probeConnect = backend.callsOf('probeConnect');
+      expect(probeConnect).toEqual([
+        {
+          method: 'probeConnect',
+          args: [{ target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 }],
+        },
+      ]);
+      expect(backend.callsOf('rttConnect')).toHaveLength(1);
+      const summary = sessionManager.listSummaries()[0];
+      expect(summary).toEqual(expect.objectContaining({
+        connectionType: 'rtt-log',
+        label: 'RTT auto',
+        rttLog: { probeId: expect.any(String), channelIndex: 0 },
+      }));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('returns a structured failure for invalid RTT log open input', async () => {

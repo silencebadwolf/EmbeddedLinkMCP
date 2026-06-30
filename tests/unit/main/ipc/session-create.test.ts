@@ -23,8 +23,12 @@ const { handlers, ipcMainMock } = vi.hoisted(() => {
   };
 });
 
+const electronMock = { app: {}, ipcMain: ipcMainMock };
+globalThis.__linktermElectronMock = electronMock;
+
 vi.mock('electron', () => ({
-  ipcMain: ipcMainMock,
+  default: electronMock,
+  ...electronMock,
 }));
 
 // node-pty 在测试环境通常未编译；session-factory import LocalShellSession 路径会拉到它
@@ -37,12 +41,15 @@ vi.mock('node-pty', () => ({
 vi.mock('serialport', () => ({ SerialPort: class {} }));
 vi.mock('ssh2', () => ({ Client: class {} }));
 
-import { registerSessionCreate } from '../../../../src/main/ipc/session-create-handler.js';
 import { SessionManager } from '../../../../src/core/session/session-manager.js';
 import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
+import type { registerSessionCreate as RegisterSessionCreate } from '../../../../src/main/ipc/session-create-handler.js';
+
+let registerSessionCreate: typeof RegisterSessionCreate;
 
 describe('registerSessionCreate', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    ({ registerSessionCreate } = await import('../../../../src/main/ipc/session-create-handler.js'));
     handlers.clear();
     ipcMainMock.handle.mockClear();
     ipcMainMock.removeHandler.mockClear();

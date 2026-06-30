@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -40,6 +40,33 @@ function makeVscodeMcpJsonTargets(root: string): AgentIntegrationTarget[] {
   ];
 }
 
+function makeCodexTargets(root: string): AgentIntegrationTarget[] {
+  return [
+    {
+      id: 'codex',
+      label: 'Codex',
+      configPath: path.join(root, '.codex', 'config.toml'),
+      configKind: 'codex-config-toml',
+      platform: 'windows',
+      locationLabel: 'Windows',
+    },
+  ];
+}
+
+function makeWslCodexTargets(root: string): AgentIntegrationTarget[] {
+  return [
+    {
+      id: 'codex:wsl:Ubuntu-24.04:jianyin',
+      label: 'Codex (Ubuntu-24.04)',
+      configPath: path.join(root, 'wsl', 'Ubuntu-24.04', 'home', 'jianyin', '.codex', 'config.toml'),
+      wslConfigPath: '/home/jianyin/.codex/config.toml',
+      configKind: 'codex-config-toml',
+      platform: 'wsl',
+      locationLabel: 'WSL: Ubuntu-24.04 / jianyin',
+    },
+  ];
+}
+
 function makeLaunchConfig(root: string): LinkTermMcpLaunchConfig {
   return {
     command: path.join(root, 'LinkTerm.exe'),
@@ -48,6 +75,13 @@ function makeLaunchConfig(root: string): LinkTermMcpLaunchConfig {
       LINKTERM_MCP_STDIO: '1',
       LINKTERM_FORCE_DIST: '1',
     },
+  };
+}
+
+function makeWslLaunchConfig(root: string): LinkTermMcpLaunchConfig {
+  return {
+    ...makeLaunchConfig(root),
+    cwd: '/mnt/c/Users/Admin/Desktop/Code/link-terminal',
   };
 }
 
@@ -261,6 +295,378 @@ describe('AgentIntegrationManager', () => {
 
     expect(status.status).toBe('needs-update');
     expect(status.canInstall).toBe(true);
+  });
+
+  it('installs Codex mcp_servers.linkterm TOML while preserving existing settings', async () => {
+    const targets = makeCodexTargets(root);
+    const codex = targets[0];
+    await mkdir(path.dirname(codex.configPath), { recursive: true });
+    const original = [
+      'model = "gpt-5"',
+      '',
+      '[mcp_servers.gitnexus]',
+      'command = "gitnexus"',
+      'args = [ "mcp" ]',
+      '',
+    ].join('\n');
+    await writeFile(codex.configPath, original);
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeLaunchConfig(root),
+      now: () => new Date('2026-06-15T08:09:10Z'),
+    });
+
+    const result = await manager.install('codex');
+
+    expect(result.status.status).toBe('configured');
+    expect(result.status.platform).toBe('windows');
+    expect(result.status.locationLabel).toBe('Windows');
+    expect(result.backupPath).toMatch(/config\.toml\.bak-20260615-080910-\d{6}$/);
+
+    const written = await readFile(codex.configPath, 'utf-8');
+    expect(written).toContain('model = "gpt-5"');
+    expect(written).toContain('[mcp_servers.gitnexus]');
+    expect(written).toContain('[mcp_servers.linkterm]');
+    expect(written).toContain('type = "stdio"');
+    expect(written).toContain(`command = ${JSON.stringify(makeLaunchConfig(root).command)}`);
+    expect(written).toContain(`args = [ ${JSON.stringify(root)} ]`);
+    expect(written).toContain('[mcp_servers.linkterm.env]');
+    expect(written).toContain('LINKTERM_MCP_STDIO = "1"');
+    expect(await readFile(result.backupPath!, 'utf-8')).toBe(original);
+  });
+
+  it('installs Codex HTTP MCP config using a bearer token environment variable', async () => {
+    const targets = makeCodexTargets(root).map((target) => ({
+      ...target,
+      transport: {
+        type: 'http' as const,
+        url: 'http://localhost:57371/mcp',
+        bearerTokenEnvVar: 'LINKTERM_MCP_TOKEN',
+      },
+    }));
+    const codex = targets[0];
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeLaunchConfig(root),
+      env: { LINKTERM_MCP_TOKEN: 'test-token' },
+    });
+
+    await manager.install('codex');
+
+    const written = await readFile(codex.configPath, 'utf-8');
+    expect(written).toContain('[mcp_servers.linkterm]');
+    expect(written).toContain('url = "http://localhost:57371/mcp"');
+    expect(written).toContain('bearer_token_env_var = "LINKTERM_MCP_TOKEN"');
+    expect(written).not.toContain('command = ');
+    expect(await manager.getStatus('codex')).toMatchObject({
+      status: 'configured',
+      configured: true,
+    });
+  });
+
+  it('persists the Codex HTTP bearer token environment variable during install', async () => {
+    const targets = makeCodexTargets(root).map((target) => ({
+      ...target,
+      transport: {
+        type: 'http' as const,
+        url: 'http://localhost:57371/mcp',
+        bearerTokenEnvVar: 'LINKTERM_MCP_TOKEN',
+      },
+    }));
+    const envWriter = {
+      writeTokenEnv: vi.fn(async () => ({
+        changed: true,
+        restartRequired: true,
+        message: 'Restart Codex to inherit LINKTERM_MCP_TOKEN',
+      })),
+    };
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeLaunchConfig(root),
+      env: { LINKTERM_MCP_TOKEN: 'stable-token' },
+      tokenEnvWriter: envWriter,
+    });
+
+    const result = await manager.install('codex');
+
+    expect(envWriter.writeTokenEnv).toHaveBeenCalledWith(targets[0], {
+      envVar: 'LINKTERM_MCP_TOKEN',
+      token: 'stable-token',
+    });
+    expect(result.status.message).toBe('Restart Codex to inherit LINKTERM_MCP_TOKEN');
+  });
+
+  it('persists the WSL Codex HTTP bearer token environment variable during install', async () => {
+    const targets = makeWslCodexTargets(root).map((target) => ({
+      ...target,
+      transport: {
+        type: 'http' as const,
+        url: 'http://localhost:57371/mcp',
+        bearerTokenEnvVar: 'LINKTERM_MCP_TOKEN',
+      },
+    }));
+    const envWriter = {
+      writeTokenEnv: vi.fn(async () => ({
+        changed: false,
+        restartRequired: false,
+      })),
+    };
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeWslLaunchConfig(root),
+      env: { LINKTERM_MCP_TOKEN: 'stable-token' },
+      tokenEnvWriter: envWriter,
+    });
+
+    await manager.install('codex:wsl:Ubuntu-24.04:jianyin');
+
+    expect(envWriter.writeTokenEnv).toHaveBeenCalledWith(targets[0], {
+      envVar: 'LINKTERM_MCP_TOKEN',
+      token: 'stable-token',
+    });
+  });
+
+  it('reports Codex HTTP config as needs-update when the token environment variable is missing', async () => {
+    const targets = makeCodexTargets(root).map((target) => ({
+      ...target,
+      transport: {
+        type: 'http' as const,
+        url: 'http://localhost:57371/mcp',
+        bearerTokenEnvVar: 'LINKTERM_MCP_TOKEN',
+      },
+    }));
+    const codex = targets[0];
+    await mkdir(path.dirname(codex.configPath), { recursive: true });
+    await writeFile(
+      codex.configPath,
+      [
+        '[mcp_servers.linkterm]',
+        'url = "http://localhost:57371/mcp"',
+        'bearer_token_env_var = "LINKTERM_MCP_TOKEN"',
+        '',
+      ].join('\n'),
+    );
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeLaunchConfig(root),
+      env: {},
+    });
+
+    expect(await manager.getStatus('codex')).toMatchObject({
+      status: 'needs-update',
+      configured: false,
+      canInstall: true,
+      message: 'Set LINKTERM_MCP_TOKEN before starting Codex',
+    });
+  });
+
+  it('diagnoses Codex HTTP config and token environment readiness', async () => {
+    const targets = makeCodexTargets(root).map((target) => ({
+      ...target,
+      transport: {
+        type: 'http' as const,
+        url: 'http://localhost:57371/mcp',
+        bearerTokenEnvVar: 'LINKTERM_MCP_TOKEN',
+      },
+    }));
+    const codex = targets[0];
+    await mkdir(path.dirname(codex.configPath), { recursive: true });
+    await writeFile(
+      codex.configPath,
+      [
+        '[mcp_servers.linkterm]',
+        'url = "http://localhost:57371/mcp"',
+        'bearer_token_env_var = "LINKTERM_MCP_TOKEN"',
+        '',
+      ].join('\n'),
+    );
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeLaunchConfig(root),
+      env: {},
+    });
+
+    await expect(manager.diagnose('codex')).resolves.toMatchObject({
+      targetId: 'codex',
+      transport: 'HTTP',
+      checks: [
+        { id: 'config', status: 'pass' },
+        {
+          id: 'token-env',
+          status: 'fail',
+          message: 'LINKTERM_MCP_TOKEN is not available in the current process environment',
+        },
+      ],
+    });
+  });
+
+  it('reports stale Codex TOML linkterm config as needs-update and repairs only that section', async () => {
+    const targets = makeCodexTargets(root);
+    const codex = targets[0];
+    await mkdir(path.dirname(codex.configPath), { recursive: true });
+    await writeFile(
+      codex.configPath,
+      [
+        '[mcp_servers.linkterm]',
+        'command = "old.exe"',
+        'args = [ "old" ]',
+        '',
+        '[mcp_servers.linkterm.env]',
+        'LINKTERM_MCP_STDIO = "0"',
+        '',
+        '[mcp_servers.other]',
+        'command = "keep.exe"',
+        '',
+      ].join('\n'),
+    );
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeLaunchConfig(root),
+    });
+
+    const before = await manager.getStatus('codex');
+    expect(before.status).toBe('needs-update');
+
+    await manager.install('codex');
+
+    const after = await manager.getStatus('codex');
+    expect(after.status).toBe('configured');
+    const written = await readFile(codex.configPath, 'utf-8');
+    expect(written).toContain('[mcp_servers.other]');
+    expect(written).toContain('command = "keep.exe"');
+    expect(written).not.toContain('old.exe');
+  });
+
+  it('reports Codex TOML linkterm config without stdio type as needs-update', async () => {
+    const targets = makeCodexTargets(root);
+    const codex = targets[0];
+    await mkdir(path.dirname(codex.configPath), { recursive: true });
+    await writeFile(
+      codex.configPath,
+      [
+        '[mcp_servers.linkterm]',
+        `command = ${JSON.stringify(makeLaunchConfig(root).command)}`,
+        `args = [ ${JSON.stringify(root)} ]`,
+        '',
+        '[mcp_servers.linkterm.env]',
+        'LINKTERM_MCP_STDIO = "1"',
+        'LINKTERM_FORCE_DIST = "1"',
+        '',
+      ].join('\n'),
+    );
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeLaunchConfig(root),
+    });
+
+    const status = await manager.getStatus('codex');
+
+    expect(status.status).toBe('needs-update');
+    expect(status.canInstall).toBe(true);
+  });
+
+  it('installs WSL Codex config through Windows cmd interop', async () => {
+    const targets = makeWslCodexTargets(root);
+    const codex = targets[0];
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeWslLaunchConfig(root),
+    });
+
+    await manager.install('codex:wsl:Ubuntu-24.04:jianyin');
+
+    const written = await readFile(codex.configPath, 'utf-8');
+    expect(written).toContain('[mcp_servers.linkterm]');
+    expect(written).toContain('type = "stdio"');
+    expect(written).toContain('command = "cmd.exe"');
+    expect(written).toContain('/d');
+    expect(written).toContain('/s');
+    expect(written).toContain('/c');
+    expect(written).toContain('LinkTerm.exe');
+    expect(written).toContain('cwd = "/mnt/c/Users/Admin/Desktop/Code/link-terminal"');
+    expect(written).toContain('[mcp_servers.linkterm.env]');
+    expect(written).toContain('LINKTERM_MCP_STDIO = "1"');
+  });
+
+  it('reports WSL Codex config without cwd as needs-update to avoid UNC stdout pollution', async () => {
+    const targets = makeWslCodexTargets(root);
+    const codex = targets[0];
+    await mkdir(path.dirname(codex.configPath), { recursive: true });
+    const expected = makeWslLaunchConfig(root);
+    await writeFile(
+      codex.configPath,
+      [
+        '[mcp_servers.linkterm]',
+        'type = "stdio"',
+        `command = ${JSON.stringify(expected.command)}`,
+        `args = [ ${expected.args.map((arg) => JSON.stringify(arg)).join(', ')} ]`,
+        '',
+        '[mcp_servers.linkterm.env]',
+        'LINKTERM_MCP_STDIO = "1"',
+        'LINKTERM_FORCE_DIST = "1"',
+        '',
+      ].join('\n'),
+    );
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: expected,
+    });
+
+    const status = await manager.getStatus('codex:wsl:Ubuntu-24.04:jianyin');
+
+    expect(status.status).toBe('needs-update');
+    expect(status.canInstall).toBe(true);
+  });
+
+  it('reads and writes WSL Codex config through the WSL file bridge', async () => {
+    const targets = makeWslCodexTargets(root);
+    const files = new Map<string, string>([
+      ['/home/jianyin/.codex/config.toml', 'model = "gpt-5"\n'],
+    ]);
+    const wslFiles = {
+      readFile: vi.fn(async (target: AgentIntegrationTarget) => {
+        const raw = files.get(target.wslConfigPath!);
+        if (raw === undefined) {
+          const err = new Error('missing') as NodeJS.ErrnoException;
+          err.code = 'ENOENT';
+          throw err;
+        }
+        return raw;
+      }),
+      writeFile: vi.fn(async (target: AgentIntegrationTarget, data: string) => {
+        files.set(target.wslConfigPath!, data);
+      }),
+      writeBackup: vi.fn(async (target: AgentIntegrationTarget, data: string, backupName: string) => {
+        files.set(`${target.wslConfigPath!}.${backupName}`, data);
+        return `${target.wslConfigPath!}.${backupName}`;
+      }),
+    };
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeLaunchConfig(root),
+      wslFiles,
+    });
+
+    const result = await manager.install('codex:wsl:Ubuntu-24.04:jianyin');
+
+    expect(wslFiles.readFile).toHaveBeenCalledWith(targets[0]);
+    expect(wslFiles.writeFile).toHaveBeenCalledWith(
+      targets[0],
+      expect.stringContaining('[mcp_servers.linkterm]'),
+    );
+    expect(result.backupPath).toMatch(/^\/home\/jianyin\/\.codex\/config\.toml\.bak-/);
+    expect(files.get('/home/jianyin/.codex/config.toml')).toContain('command = "cmd.exe"');
   });
 
   it('installs Claude Desktop mcpServers.linkterm and reports mismatched existing config as needs-update', async () => {

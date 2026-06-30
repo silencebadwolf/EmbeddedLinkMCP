@@ -16,6 +16,7 @@ import type {
   UiStatePatch,
   AgentIntegrationStatus,
   AgentIntegrationInstallResult,
+  AgentIntegrationDiagnosticResult,
   ControlProfileFilePayload,
 } from '../../src/shared/preload-api.js';
 import type { TranscriptEventEnvelope } from '../../src/shared/transcript-ipc-types.js';
@@ -63,6 +64,7 @@ export interface MockPreloadAPI {
     agentIntegrations: {
       list: ReturnType<typeof vi.fn>;
       install: ReturnType<typeof vi.fn>;
+      diagnose: ReturnType<typeof vi.fn>;
     };
     controlProfile: {
       save: ReturnType<typeof vi.fn>;
@@ -178,13 +180,21 @@ export function createMockPreloadAPI(): MockPreloadAPI {
         },
       }),
   );
+  const agentIntegrationDiagnose = vi.fn(
+    async (): Promise<PreloadResult<AgentIntegrationDiagnosticResult>> =>
+      okEmpty({
+        targetId: 'codex',
+        label: 'Codex',
+        transport: 'HTTP',
+        checks: [{ id: 'config', label: 'Codex MCP config', status: 'pass' }],
+      }),
+  );
 
   const defaultControlProfile: ControlProfileFilePayload = {
     schemaVersion: 'linkterm-control/1.0.0',
     serial: { enabled: true, port: 'COM1', baudRate: 115200, mode: 'terminal' },
     jlink: { enabled: false },
     flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
-    rtt: { enabled: false, channels: [0] },
   };
   const controlProfileSave = vi.fn(async () =>
     okEmpty({ path: 'C:/repo/.linkterm/control-profile.json', profile: defaultControlProfile }),
@@ -228,6 +238,7 @@ export function createMockPreloadAPI(): MockPreloadAPI {
     agentIntegrations: {
       list: agentIntegrationList,
       install: agentIntegrationInstall,
+      diagnose: agentIntegrationDiagnose,
     },
     controlProfile: {
       save: controlProfileSave,
@@ -268,6 +279,7 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       agentIntegrations: {
         list: agentIntegrationList,
         install: agentIntegrationInstall,
+        diagnose: agentIntegrationDiagnose,
       },
       controlProfile: {
         save: controlProfileSave,

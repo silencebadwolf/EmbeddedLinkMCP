@@ -2,9 +2,11 @@
 
 import type { ControlProfile } from './control-profile-types.js';
 import type { ControlProfileBody } from './control-profile-schema.js';
+import { normalizeJLinkTargetName } from '../../shared/jlink-target-name.js';
 
 /** 控制配置向导关注的字段名。 */
 export type ControlProfileField =
+  | 'observation.channel'
   | 'serial.port'
   | 'serial.baudRate'
   | 'jlink.target'
@@ -45,9 +47,15 @@ export function parseControlProfileAnswer(answer: string): ParsedControlProfileA
   const rejectedFields: RejectedControlProfileField[] = [];
   const patch: ControlProfileBody = {};
 
-  const port = extractSerialPort(answer);
+  const wantsRtt = extractRttEnabled(answer);
+  if (wantsRtt) {
+    patch.rtt = { enabled: true, channels: [0] };
+    parsedFields.push('rtt.enabled');
+  }
+
+  const port = wantsRtt ? undefined : extractSerialPort(answer);
   const baudRate = extractBaudRate(answer);
-  if (port !== undefined || baudRate !== undefined) {
+  if (!wantsRtt && (port !== undefined || baudRate !== undefined)) {
     patch.serial = { enabled: true, mode: 'terminal' };
     if (port !== undefined) {
       patch.serial.port = port;
@@ -65,7 +73,7 @@ export function parseControlProfileAnswer(answer: string): ParsedControlProfileA
   if (target !== undefined || iface !== undefined || speedKHz !== undefined) {
     patch.jlink = { enabled: true };
     if (target !== undefined) {
-      patch.jlink.target = target;
+      patch.jlink.target = normalizeJLinkTargetName(target);
       parsedFields.push('jlink.target');
     }
     if (iface !== undefined) {
@@ -103,8 +111,6 @@ export function parseControlProfileAnswer(answer: string): ParsedControlProfileA
     }
   }
 
-  patch.rtt = { enabled: false, channels: [0] };
-
   return { patch, parsedFields, rejectedFields };
 }
 
@@ -119,11 +125,13 @@ export function inspectControlProfileCompleteness(
 ): ControlProfileCompletenessReport {
   const missingFields: ControlProfileField[] = [];
 
-  if (profile?.serial?.enabled !== true || profile.serial.port === undefined) {
-    missingFields.push('serial.port');
-  }
-  if (profile?.serial?.enabled !== true || profile.serial.baudRate === undefined) {
-    missingFields.push('serial.baudRate');
+  const hasSerialObservation =
+    profile?.serial?.enabled === true &&
+    profile.serial.port !== undefined &&
+    profile.serial.baudRate !== undefined;
+  const hasRttObservation = profile?.rtt?.enabled === true;
+  if (!hasSerialObservation && !hasRttObservation) {
+    missingFields.push('observation.channel');
   }
   if (profile?.jlink?.enabled !== true || profile.jlink.target === undefined) {
     missingFields.push('jlink.target');
@@ -140,9 +148,6 @@ export function inspectControlProfileCompleteness(
   if (profile?.flash?.baseAddress === undefined) {
     missingFields.push('flash.baseAddress');
   }
-  if (profile?.rtt?.enabled === undefined) {
-    missingFields.push('rtt.enabled');
-  }
 
   return { complete: missingFields.length === 0, missingFields };
 }
@@ -158,10 +163,15 @@ export function buildControlProfileQuestion(report: ControlProfileCompletenessRe
     return '当前工作区控制配置已完整，可以直接调用 activate_control_profile 拉起控制。';
   }
   return (
-    '请告诉我这些控制参数：串口号、波特率、芯片型号、SWD/JTAG、J-Link 速度、bin 路径、flash 起始地址、RTT 是否启用。' +
-    '可以一句话回答，例如：COM3，115200，AT32F435RGT7，SWD，4000kHz，build/app.bin，0x08000000，RTT 关闭。' +
+    '请告诉我这些控制参数：观察通道（串口或 RTT 日志）、芯片型号、SWD/JTAG、J-Link 速度、bin 路径、flash 起始地址。' +
+    '串口模式请提供串口号和波特率，例如：COM3，115200，AT32F435RGT7，SWD，4000kHz，build/app.bin，0x08000000。' +
+    'RTT 模式可以回答：RTT 日志，AT32F435RGT7，SWD，4000kHz，build/app.bin，0x08000000。' +
     `当前缺失字段：${report.missingFields.join(', ')}`
   );
+}
+
+function extractRttEnabled(answer: string): boolean {
+  return /\bRTT\b|RTT\s*日志|RTT\s*log/i.test(answer);
 }
 
 /**

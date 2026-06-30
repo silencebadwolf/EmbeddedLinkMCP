@@ -404,6 +404,58 @@ describe('MCP agent runbook tool', () => {
     expect(data.recommendedNextActions.join('\n')).not.toMatch(/JLink\.exe|gdb|flash CLI|serial CLI|VS Code task/i);
   });
 
+  it('prioritizes stale runtime restart guidance before hardware workflows', async () => {
+    await teardown(h);
+    h = await setup({
+      controlProfileManager: new ControlProfileManager(),
+    });
+    await h.controlProfileManager.init(h.root, {
+      serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
+      jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 'auto' },
+      flash: { binary: 'build/gcc-arm-debug/rtthread.bin', baseAddress: '0x08000000', verify: true },
+    });
+    await h.mcp.stop();
+    const { server: serverTransport, client: clientTransport } = createInMemoryMcpTransportPair();
+    h.mcp = createMcpServer({
+      sessionManager: h.manager,
+      serialDiscovery: h.serialDiscovery,
+      controlProfileManager: h.controlProfileManager,
+      runtimeDiagnostics: () => ({
+        identity: {
+          runtimeId: 'stale-runtime-id',
+          pid: 21248,
+          startedAt: '2026-06-29T12:49:36.000Z',
+        },
+        transport: { mode: 'http-owner' },
+        metadata: { available: true, fresh: true },
+        code: {
+          fresh: false,
+          staleArtifacts: [
+            {
+              path: 'dist/main/jlink/segger-command-runner.js',
+              modifiedAt: '2026-06-29T16:00:20.000Z',
+            },
+          ],
+        },
+      }),
+      transportFactory: () => serverTransport,
+    });
+    await h.client.close();
+    await h.mcp.start();
+    h.client = new Client({ name: 'lt-agent-runbook-test', version: '0.0.0' });
+    await h.client.connect(clientTransport);
+
+    const out = await callTool(h.client, 'get_app_status', { root: h.root });
+
+    const data = (out.evidence as {
+      data: {
+        recommendedNextActions: string[];
+      };
+    }).data;
+    expect(data.recommendedNextActions[0]).toMatch(/restart the LinkTerm MCP runtime/i);
+    expect(data.recommendedNextActions[0]).toContain('segger-command-runner.js');
+  });
+
   it('checks UI availability without capturing a screenshot', async () => {
     await teardown(h);
     let captureCalls = 0;
@@ -491,7 +543,6 @@ describe('MCP agent runbook tool', () => {
       serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
       jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 'auto' },
       flash: { binary: 'build/app.bin', baseAddress: '0x08008000', verify: true },
-      rtt: { enabled: false, channels: [0] },
     });
 
     const out = await callTool(h.client, 'get_agent_runbook', { root: h.root });
@@ -519,7 +570,6 @@ describe('MCP agent runbook tool', () => {
       serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
       jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
       flash: { binary: 'build/app.bin', baseAddress: '0x08008000', verify: true },
-      rtt: { enabled: false, channels: [0] },
     });
 
     const out = await callTool(h.client, 'get_app_status', { root: h.root });
@@ -557,6 +607,35 @@ describe('MCP agent runbook tool', () => {
       }),
     );
     expect(data.recommendedWorkflows[0]?.arguments).not.toHaveProperty('firmware');
+  });
+
+  it('recommends checking J-Link probe visibility before flash workflows when no probe is detected', async () => {
+    await teardown(h);
+    h = await setup({ jlinkBackend: new FakeJLinkBackend() });
+    await h.controlProfileManager.init(h.root, {
+      serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
+      jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 'auto' },
+      flash: { binary: 'build/gcc-arm-debug/rtthread.bin', baseAddress: '0x08008000', verify: true },
+    });
+
+    const out = await callTool(h.client, 'get_app_status', { root: h.root });
+
+    const data = (out.evidence as {
+      data: {
+        recommendedNextActions: string[];
+        recommendedWorkflows: Array<{ id: string }>;
+        jlink: { available: boolean; probeCount: number };
+      };
+    }).data;
+    expect(data.jlink).toMatchObject({ available: true, probeCount: 0 });
+    const guidance = data.recommendedNextActions.join('\n');
+    expect(guidance).toMatch(/J-Link probe visibility/i);
+    expect(guidance).toMatch(/USB/i);
+    expect(guidance).toMatch(/power/i);
+    expect(guidance).toMatch(/driver/i);
+    expect(guidance).toMatch(/J-Link toolchain/i);
+    expect(guidance).not.toContain('run_control_workflow');
+    expect(data.recommendedWorkflows).toEqual([]);
   });
 
   it('allows read-only schema mismatch and attaches warning metadata', async () => {

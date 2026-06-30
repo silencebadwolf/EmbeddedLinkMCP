@@ -21,6 +21,7 @@ export interface StartMcpHttpRuntimeServerOptions extends Omit<CreateMcpServerOp
   metadataPath: string;
   host?: string;
   port?: number;
+  token?: string;
 }
 
 /**
@@ -33,7 +34,7 @@ export async function startMcpHttpRuntimeServer(
   options: StartMcpHttpRuntimeServerOptions,
 ): Promise<McpHttpRuntimeServer> {
   const host = options.host ?? '127.0.0.1';
-  const token = createRuntimeToken();
+  const token = options.token ?? createRuntimeToken();
 
   const activeMcpServers = new Set<LinkTermMcpServer>();
   const pendingStops = new Set<Promise<void>>();

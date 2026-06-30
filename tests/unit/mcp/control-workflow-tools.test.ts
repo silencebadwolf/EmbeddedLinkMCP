@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, symlink, truncate, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -404,12 +404,105 @@ describe('MCP control workflow tool', () => {
       'cpu_reset',
       'observe_serial',
     ]);
+    expect(data.steps.find((step) => step.id === 'flash')).toMatchObject({
+      evidence: {
+        verification: {
+          requested: true,
+          method: 'commander-verifybin-plus-savebin-readback',
+          postDownloadReadbackRequired: true,
+        },
+      },
+    });
     expect(h.fake.callsOf('flashDownload')[0]!.args).toMatchObject([
       expect.any(String),
       4,
       { address: 0x08008000, verify: true },
     ]);
     expect(h.fake.callsOf('cpuReset')).toHaveLength(1);
+  });
+
+  it('runs flash-observe-diagnose without serial when RTT debug observation is requested', async () => {
+    await writeFile(path.join(h.root, 'rtthread.bin'), Buffer.from([0x01, 0x02, 0x03, 0x04]));
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        serial: { enabled: false, port: 'COM7', baudRate: 921600, mode: 'terminal' },
+        jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.bin', baseAddress: '0x08008000', verify: true },
+        rtt: { enabled: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe-diagnose',
+      observe: { serial: false },
+      debug: { readRegisters: true, rttRead: true },
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    const data = (out.evidence as {
+      data: {
+        summary: Record<string, boolean>;
+        steps: Array<{ id: string; status: string; evidence?: Record<string, unknown> }>;
+      };
+    }).data;
+    expect(data.summary).toMatchObject({
+      serialOpened: false,
+      probeConnected: true,
+      flashed: true,
+      verified: true,
+      reset: true,
+      debugCaptured: true,
+    });
+    expect(data.steps.map((step) => step.id)).toEqual([
+      'load_profile',
+      'preflight',
+      'connect_probe',
+      'flash',
+      'cpu_reset',
+      'gdb_server_start',
+      'debug_diagnose',
+    ]);
+    expect(h.openSerialCalls).toHaveLength(0);
+    expect(h.fake.callsOf('rttConnect')).toHaveLength(1);
+    expect(h.fake.callsOf('rttRead')).toHaveLength(1);
+    expect(data.steps.find((step) => step.id === 'debug_diagnose')?.evidence).toMatchObject({
+      rtt: {
+        channelIndex: 0,
+        dataBase64: Buffer.from('hello-rtt').toString('base64'),
+        truncated: false,
+      },
+    });
+  });
+
+  it('rejects flash workflows when a Cortex-M vector table reset address does not match the flash base', async () => {
+    const firmware = Buffer.alloc(64, 0xff);
+    firmware.writeUInt32LE(0x24000d20, 0);
+    firmware.writeUInt32LE(0x080a8141, 4);
+    await writeFile(path.join(h.root, 'rtthread.bin'), firmware);
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.bin', baseAddress: '0x08008000', verify: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      observe: { timeoutMs: 50 },
+      confirm: true,
+    });
+
+    expect(out.success).toBe(false);
+    expect((out.error as { code: string; message: string }).code).toBe('INVALID_ARGUMENT');
+    expect((out.error as { message: string }).message).toContain('reset vector');
+    expect(h.fake.callsOf('probeConnect')).toHaveLength(0);
+    expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
   });
 
   it('reports profile and request parameter sources for J-Link and firmware inputs', async () => {
@@ -450,6 +543,102 @@ describe('MCP control workflow tool', () => {
       parameterSources: { filePath: 'request', baseAddress: 'request', verify: 'request' },
     });
     expect(JSON.stringify(data)).not.toMatch(/nRF52|JLinkMCP/);
+  });
+
+  it('normalizes STM32 order-code targets before workflow preflight and probe connection', async () => {
+    await writeFile(path.join(h.root, 'rtthread.bin'), Buffer.from([0x01, 0x02, 0x03, 0x04]));
+    await mkdir(path.join(h.root, '.linkterm'), { recursive: true });
+    await writeFile(path.join(h.root, '.linkterm', 'control-profile.json'), JSON.stringify({
+      schemaVersion: 'linkterm-control/1.0.0',
+      serial: { enabled: false },
+      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+      flash: { binary: 'rtthread.bin', baseAddress: '0x08008000', verify: true },
+    }, null, 2));
+    await h.controlProfileManager.load(h.root);
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'debug-diagnose',
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    expect(h.fake.callsOf('probeConnect')[0]!.args[0]).toMatchObject({
+      target: 'STM32H743II',
+      interface: 'swd',
+      speedKHz: 4000,
+    });
+    const data = (out.evidence as {
+      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+    }).data;
+    expect(data.steps.find((step) => step.id === 'connect_probe')?.evidence).toMatchObject({
+      targetNormalization: {
+        originalTarget: 'STM32H743IIT6',
+        normalizedTarget: 'STM32H743II',
+      },
+    });
+  });
+
+  it('persists normalized STM32 order-code targets before new workflow profiles run', async () => {
+    await writeFile(path.join(h.root, 'rtthread.bin'), Buffer.from([0x01, 0x02, 0x03, 0x04]));
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.bin', baseAddress: '0x08008000', verify: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'debug-diagnose',
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    expect(h.fake.callsOf('probeConnect')[0]!.args[0]).toMatchObject({
+      target: 'STM32H743II',
+      interface: 'swd',
+      speedKHz: 4000,
+    });
+  });
+
+  it('defaults flash workflow firmware verification on when profile and request omit verify', async () => {
+    await writeFile(path.join(h.root, 'rtthread.bin'), Buffer.from([0x01, 0x02, 0x03, 0x04]));
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
+        jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.bin', baseAddress: '0x08008000' },
+      },
+    });
+
+    const pending = callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      observe: { markers: ['msh'], timeoutMs: 1000 },
+      confirm: true,
+    });
+    const timer = setInterval(() => {
+      h.transport.pushIncoming(Buffer.from('msh />'));
+    }, 20);
+
+    const out = await pending.finally(() => clearInterval(timer));
+
+    expect(out.success).toBe(true);
+    expect(h.fake.callsOf('flashDownload')[0]!.args).toMatchObject([
+      expect.any(String),
+      4,
+      { address: 0x08008000, verify: true },
+    ]);
+    const data = (out.evidence as {
+      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+    }).data;
+    expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
+      verified: true,
+      parameterSources: { verify: 'default' },
+    });
   });
 
   it('passes firmware timeout to flash backend and reports the request source', async () => {
@@ -1050,7 +1239,18 @@ describe('MCP control workflow tool', () => {
       data: { steps: Array<{ id: string; status: string; evidence?: Record<string, unknown> }> };
     }).data;
     expect(data.steps.find((step) => step.id === 'flash')?.status).toBe('skipped');
-    expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({ dryRun: true });
+    expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
+      dryRun: true,
+      firmwarePath: path.join(h.root, 'rtthread.bin'),
+      address: 0x08008000,
+      verify: true,
+      parameterSources: {
+        filePath: 'profile',
+        baseAddress: 'profile',
+        verify: 'profile',
+        timeoutMs: 'default',
+      },
+    });
     expect(h.fake.callsOf('probeConnect')).toHaveLength(0);
     expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
   });

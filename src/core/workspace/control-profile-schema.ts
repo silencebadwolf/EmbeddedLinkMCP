@@ -53,7 +53,8 @@ export const controlProfileBodySchema = z
     flash: controlFlashProfileSchema.optional(),
     rtt: controlRttProfileSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine(requireExclusiveObservationChannel);
 
 /** 完整持久化 control-profile.json schema。 */
 export const controlProfileSchema = z
@@ -64,6 +65,20 @@ export const controlProfileSchema = z
     flash: controlFlashProfileSchema.optional(),
     rtt: controlRttProfileSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine(requireExclusiveObservationChannel);
 
 export type ControlProfileBody = z.infer<typeof controlProfileBodySchema>;
+
+function requireExclusiveObservationChannel(
+  profile: { serial?: { enabled: boolean }; rtt?: { enabled: boolean } },
+  ctx: z.RefinementCtx,
+): void {
+  if (profile.serial?.enabled === true && profile.rtt?.enabled === true) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['rtt'],
+      message: 'serial and RTT log observation cannot both be enabled',
+    });
+  }
+}
