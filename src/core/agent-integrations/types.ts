@@ -4,6 +4,7 @@ export type {
   AgentIntegrationDiagnosticCheckStatus,
   AgentIntegrationDiagnosticResult,
   AgentIntegrationInstallResult,
+  AgentIntegrationUninstallResult,
   AgentIntegrationStatus,
   AgentIntegrationStatusKind,
   AgentIntegrationTarget,

@@ -87,6 +87,12 @@ export interface AgentIntegrationInstallResult {
   backupPath?: string;
 }
 
+/** Result returned after removing LinkTerm from one agent integration config. */
+export interface AgentIntegrationUninstallResult {
+  status: AgentIntegrationStatus;
+  backupPath?: string;
+}
+
 export type AgentIntegrationDiagnosticCheckStatus = 'pass' | 'warn' | 'fail';
 
 export interface AgentIntegrationDiagnosticCheck {

@@ -1,6 +1,10 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
-import type { ControlProfileManager } from '../../../core/workspace/index.js';
+import {
+  defaultHostPathResolver,
+  type ControlProfileManager,
+  type HostPathResolver,
+} from '../../../core/workspace/index.js';
 import type { IJLinkBackend, ProbeInfo } from '../../../jlink/types.js';
 import type { SerialPortInfo } from '../../../shared/types.js';
 import type { SerialDiscovery } from '../../../transports/serial/serial-discovery.js';
@@ -29,6 +33,7 @@ export interface AgentRunbookToolsDeps {
   sessionManager: SessionManager;
   serialDiscovery: SerialDiscovery;
   controlProfileManager?: ControlProfileManager;
+  hostPathResolver?: HostPathResolver;
   jlinkBackend: IJLinkBackend;
   getActiveWindow?: () => CapturableWindow | null;
   runtimeDiagnostics?: () => RuntimeDiagnostics | Promise<RuntimeDiagnostics>;
@@ -86,6 +91,7 @@ interface RecommendedWorkflow {
 }
 
 export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookToolsDeps): void {
+  const hostPathResolver = deps.hostPathResolver ?? defaultHostPathResolver;
   registerTool(server, {
     name: 'get_agent_runbook',
     description:
@@ -94,7 +100,7 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
     inputSchema: getAgentRunbookInputSchema,
     handler: async (input: GetAgentRunbookInput): Promise<ToolHandlerResult> => {
       try {
-        const profileSummary = await buildProfileSummary(deps.controlProfileManager, input.root);
+        const profileSummary = await buildProfileSummary(deps.controlProfileManager, input.root, hostPathResolver);
         const runbook = createAgentRunbook({
           schemaVersion: LINKTERM_MCP_SCHEMA_VERSION,
           profileSummary,
@@ -123,7 +129,7 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
     handler: async (input: GetAppStatusInput): Promise<ToolHandlerResult> => {
       try {
         const [profileSummary, serialStatus, jlinkStatus, runtimeStatus] = await Promise.all([
-          buildProfileSummary(deps.controlProfileManager, input.root),
+          buildProfileSummary(deps.controlProfileManager, input.root, hostPathResolver),
           buildSerialStatus(deps.serialDiscovery),
           buildJLinkStatus(deps.jlinkBackend),
           deps.runtimeDiagnostics?.() ?? defaultRuntimeDiagnostics(),
@@ -176,6 +182,7 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
 async function buildProfileSummary(
   manager: ControlProfileManager | undefined,
   root: string | undefined,
+  hostPathResolver: HostPathResolver,
 ): Promise<RunbookProfileSummary> {
   if (root === undefined) {
     return createProfileStatusSummary('root-not-provided', false);
@@ -184,7 +191,8 @@ async function buildProfileSummary(
     return createProfileStatusSummary('manager-unavailable', true, 'ControlProfileManager is not available in this runtime.');
   }
   try {
-    const profile = await manager.load(root);
+    const hostRoot = await hostPathResolver.toHostPath(root);
+    const profile = await manager.load(hostRoot);
     return sanitizeControlProfileForRunbook(profile, 'loaded');
   } catch (err) {
     if (err instanceof ToolError) throw err;

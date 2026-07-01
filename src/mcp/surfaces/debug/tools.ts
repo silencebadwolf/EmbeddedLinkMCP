@@ -15,6 +15,7 @@
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { HostPathResolver } from '../../../core/workspace/index.js';
 import type { IJLinkBackend, ProbeInfo } from '../../../jlink/types.js';
 import { normalizeJLinkTargetName } from '../../../shared/jlink-target-name.js';
 import { registerTool, type ToolHandlerResult } from '../../registry.js';
@@ -68,6 +69,8 @@ import {
 export interface DebugToolsDeps {
   /** J-Link backend；缺省时 server 注入 NullJLinkBackend，全工具拒绝。 */
   jlinkBackend: IJLinkBackend;
+  /** 把客户端/WSL profileRoot 解析为 LinkTerm 后端可读路径。 */
+  hostPathResolver?: HostPathResolver;
 }
 
 /**

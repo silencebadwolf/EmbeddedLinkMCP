@@ -78,6 +78,14 @@ export {
 } from './control-profile-manager.js';
 
 export {
+  createHostPathResolver,
+  defaultHostPathResolver,
+  type HostPathResolver,
+  type HostPathResolverOptions,
+  type WslHostPathRoot,
+} from './host-path-resolver.js';
+
+export {
   parseControlProfileAnswer,
   inspectControlProfileCompleteness,
   buildControlProfileQuestion,

@@ -8,6 +8,7 @@ import { SessionManager } from '@/core/session/session-manager.js';
 import { ControlProfileManager } from '@/core/workspace/index.js';
 import { JLinkNotImplementedError, JLinkOperationError } from '@/jlink/errors.js';
 import type { FlashDownloadOptions, IJLinkBackend } from '@/jlink/types.js';
+import type { JLinkDeviceCatalog } from '@/jlink/device-catalog.js';
 import { createMcpServer } from '@/mcp/index.js';
 import type { LinkTermMcpServer } from '@/mcp/server.js';
 import { ControlWorkflowJobManager } from '@/mcp/surfaces/control-workflow/job-manager.js';
@@ -34,8 +35,10 @@ interface Harness {
 
 interface SetupOptions {
   jlinkBackend?: IJLinkBackend;
+  jlinkDeviceCatalog?: JLinkDeviceCatalog;
   openSerial?: (config: SerialSessionConfig) => Promise<{ sessionId: string; state: SessionState }>;
   jobManager?: ControlWorkflowJobManager;
+  hostPathResolver?: { toHostPath(inputPath: string): Promise<string> };
 }
 
 async function setup(options: SetupOptions = {}): Promise<Harness> {
@@ -53,6 +56,7 @@ async function setup(options: SetupOptions = {}): Promise<Harness> {
     serialDiscovery,
     controlProfileManager,
     jlinkBackend: options.jlinkBackend ?? fake,
+    jlinkDeviceCatalog: options.jlinkDeviceCatalog,
     controlWorkflowJobManager: jobManager,
     controlProfileOpenSerial: options.openSerial ?? (async (config) => {
       openSerialCalls.push(config);
@@ -67,6 +71,7 @@ async function setup(options: SetupOptions = {}): Promise<Harness> {
       );
       return { sessionId: session.id, state: session.state as SessionState };
     }),
+    hostPathResolver: options.hostPathResolver,
     transportFactory: () => serverTransport,
   });
   await mcp.start();
@@ -976,6 +981,163 @@ describe('MCP control workflow tool', () => {
     expect(h.openSerialCalls).toHaveLength(0);
     expect(backend.callsOf('probeConnect')).toHaveLength(0);
     expect(backend.callsOf('flashDownload')).toHaveLength(0);
+  });
+
+  it('continues flash workflow when target is absent from XML catalog and records advisory evidence', async () => {
+    await teardown(h);
+    const backend = new FakeJLinkBackend();
+    h = await setup({
+      jlinkBackend: backend,
+      jlinkDeviceCatalog: {
+        search: async () => ({
+          available: true,
+          sourceFiles: ['JLinkDevices.xml'],
+          devices: [{ name: 'STM32H743ZI', vendor: 'ST', sourceFile: 'JLinkDevices.xml', flashBanks: [] }],
+        }),
+        get: async () => undefined,
+        has: async () => false,
+        refresh: async () => undefined,
+      },
+    });
+    await writeFile(path.join(h.root, 'rtthread.bin'), Buffer.from([0x01, 0x02, 0x03, 0x04]));
+    await h.controlProfileManager.init(h.root, {
+      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+      flash: { binary: 'rtthread.bin', baseAddress: '0x08000000', verify: true },
+    }, { force: true });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      observe: { serial: false },
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    const data = (out.evidence as {
+      data: {
+        failedStep?: string;
+        steps: Array<{ id: string; evidence?: Record<string, unknown> }>;
+        blockingReasons?: unknown[];
+      };
+    }).data;
+    expect(data.failedStep).toBeUndefined();
+    expect(data.blockingReasons).toBeUndefined();
+    expect(data.steps.find((step) => step.id === 'preflight')?.evidence).toMatchObject({
+      targetResolution: {
+        target: 'STM32H743II',
+        warnings: [expect.objectContaining({ kind: 'jlink_target_not_in_catalog' })],
+      },
+    });
+    expect(data.steps.find((step) => step.id === 'connect_probe')?.evidence).toMatchObject({
+      probe: { target: 'STM32H743II' },
+    });
+    expect(backend.callsOf('probeConnect')).toEqual([
+      {
+        method: 'probeConnect',
+        args: [{ target: 'STM32H743II', interface: 'swd', speedKHz: 4000 }],
+      },
+    ]);
+  });
+
+  it('runs flash workflows from a WSL Linux root without requiring agents to copy firmware to a Windows temp folder', async () => {
+    await teardown(h);
+    const linuxRoot = '/home/jianyin/code/FNA1000';
+    const hostRoot = await mkdtemp(path.join(tmpdir(), 'lt-control-workflow-wsl-host-'));
+    h = await setup({
+      hostPathResolver: {
+        async toHostPath(inputPath: string): Promise<string> {
+          if (inputPath === linuxRoot) return hostRoot;
+          if (inputPath.startsWith(`${linuxRoot}/`)) {
+            return path.join(hostRoot, ...inputPath.slice(linuxRoot.length + 1).split('/'));
+          }
+          return inputPath;
+        },
+      },
+    });
+    await writeFile(path.join(hostRoot, 'rtthread.bin'), Buffer.from([0x01, 0x02, 0x03, 0x04]));
+    await h.controlProfileManager.init(hostRoot, {
+      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+      flash: { binary: 'rtthread.bin', baseAddress: '0x08000000', verify: true },
+    }, { force: true });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: linuxRoot,
+      mode: 'flash-observe',
+      observe: { serial: false },
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    const data = (out.evidence as {
+      data: { root: string; steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+    }).data;
+    expect(data.root).toBe(linuxRoot);
+    expect(data.steps.map((step) => step.id)).toEqual([
+      'load_profile',
+      'preflight',
+      'connect_probe',
+      'flash',
+      'cpu_reset',
+    ]);
+    expect(data.steps.find((step) => step.id === 'load_profile')?.evidence).toMatchObject({
+      root: linuxRoot,
+      hostRoot,
+      rootResolved: true,
+    });
+    expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
+      firmwarePath: path.join(hostRoot, 'rtthread.bin'),
+    });
+    expect(h.fake.callsOf('flashDownload')[0]!.args).toMatchObject([
+      expect.any(String),
+      4,
+      { address: 0x08000000, verify: true },
+    ]);
+  });
+
+  it('runs flash workflows when the control profile stores an absolute WSL Linux firmware path', async () => {
+    await teardown(h);
+    const linuxRoot = `/home/linkterm-${Date.now()}/code/FNA1000`;
+    const linuxFirmware = `${linuxRoot}/build/gcc-arm-debug/rtthread.bin`;
+    const hostRoot = await mkdtemp(path.join(tmpdir(), 'lt-control-workflow-wsl-bin-host-'));
+    const hostFirmware = path.join(hostRoot, 'build', 'gcc-arm-debug', 'rtthread.bin');
+    h = await setup({
+      hostPathResolver: {
+        async toHostPath(inputPath: string): Promise<string> {
+          if (inputPath === linuxRoot) return hostRoot;
+          if (inputPath.startsWith(`${linuxRoot}/`)) {
+            return path.join(hostRoot, ...inputPath.slice(linuxRoot.length + 1).split('/'));
+          }
+          return inputPath;
+        },
+      },
+    });
+    await mkdir(path.dirname(hostFirmware), { recursive: true });
+    await writeFile(hostFirmware, Buffer.from([0x01, 0x02, 0x03, 0x04]));
+    await h.controlProfileManager.init(hostRoot, {
+      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+      flash: { binary: linuxFirmware, baseAddress: '0x08000000', verify: true },
+    }, { force: true });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: linuxRoot,
+      mode: 'flash-observe',
+      observe: { serial: false },
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    const data = (out.evidence as {
+      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+    }).data;
+    expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
+      firmwarePath: hostFirmware,
+      parameterSources: { filePath: 'profile' },
+    });
+    expect(h.fake.callsOf('flashDownload')[0]!.args).toMatchObject([
+      expect.any(String),
+      4,
+      { address: 0x08000000, verify: true },
+    ]);
   });
 
   it('reports serial access denied as a structured block before probe connection or flash', async () => {

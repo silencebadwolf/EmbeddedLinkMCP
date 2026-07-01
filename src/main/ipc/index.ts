@@ -12,8 +12,8 @@ import {
   type LinkTermMcpLaunchConfig,
 } from '../../core/agent-integrations/index.js';
 import { createWslAgentConfigFileBridge } from './wsl-agent-config-file-bridge.js';
-import { JLinkAdapter } from '../../jlink/index.js';
-import type { IJLinkBackend } from '../../jlink/index.js';
+import { JLinkAdapter, createJLinkDeviceCatalog } from '../../jlink/index.js';
+import type { IJLinkBackend, JLinkDeviceCatalog } from '../../jlink/index.js';
 import { createMcpServer, type LinkTermMcpServer } from '../../mcp/index.js';
 import { startMcpHttpRuntimeServer, type McpHttpRuntimeServer } from '../../mcp/http-runtime-server.js';
 import { createRuntimeDiagnosticsProvider } from '../../mcp/runtime-diagnostics.js';
@@ -29,6 +29,7 @@ import { registerSerialIpc } from './serial-ipc.js';
 import { registerSessionIpc } from './session-ipc.js';
 import { registerSessionCreate } from './session-create-handler.js';
 import { registerRttLogSessionIpc } from './rtt-log-session-ipc.js';
+import { registerJLinkDeviceCatalogIpc } from './jlink-device-catalog-ipc.js';
 import { registerConnectionProfilesIpc } from './connection-profiles-ipc.js';
 import { registerAgentIntegrationsIpc } from './agent-integrations-ipc.js';
 import { buildDefaultAgentIntegrationTargets } from './agent-integration-targets.js';
@@ -62,6 +63,8 @@ export interface MainProcessContext {
    * /detect），其余方法抛 NOT_IMPLEMENTED；Phase 13+ 替换为真实 SEGGER 适配器。
    */
   jlinkBackend: IJLinkBackend;
+  /** 本机 SEGGER J-Link 设备库搜索/校验服务。 */
+  jlinkDeviceCatalog: JLinkDeviceCatalog;
   /** 控制工作流后台 job 管理器，必须在 HTTP 短生命周期 MCP server 间共享。 */
   controlWorkflowJobManager: ControlWorkflowJobManager;
   mcpServer: LinkTermMcpServer;
@@ -138,6 +141,7 @@ export async function registerIpcHandlers(
     tokenEnvWriter: createCodexTokenEnvWriter(),
   });
   const jlinkBackend: IJLinkBackend = new JLinkAdapter();
+  const jlinkDeviceCatalog = createJLinkDeviceCatalog();
   const controlWorkflowJobManager = new ControlWorkflowJobManager();
 
   const uiBridge = createUiBridge(() =>
@@ -174,6 +178,7 @@ export async function registerIpcHandlers(
     controlProfileManager,
     controlWorkflowJobManager,
     jlinkBackend,
+    jlinkDeviceCatalog,
     uiBridge,
     getActiveWindow,
     runtimeDiagnostics: directStdioRuntimeDiagnostics,
@@ -189,6 +194,7 @@ export async function registerIpcHandlers(
     controlProfileManager,
     controlWorkflowJobManager,
     jlinkBackend,
+    jlinkDeviceCatalog,
     uiBridge,
     getActiveWindow,
     runtimeDiagnostics: ownerRuntimeDiagnostics,
@@ -204,6 +210,7 @@ export async function registerIpcHandlers(
     sessionManager,
     jlinkBackend,
     controlProfileManager,
+    jlinkDeviceCatalog,
   );
   const unregisterConnectionProfiles = registerConnectionProfilesIpc(
     sessionManager,
@@ -213,6 +220,7 @@ export async function registerIpcHandlers(
     agentIntegrationManager,
   );
   const unregisterControlProfile = registerControlProfileIpc(controlProfileManager);
+  const unregisterJLinkDeviceCatalog = registerJLinkDeviceCatalogIpc(jlinkDeviceCatalog);
 
   const shouldAutoStart =
     options.autoStartMcp ?? process.env.LINKTERM_MCP_STDIO === '1';
@@ -228,6 +236,7 @@ export async function registerIpcHandlers(
       unregisterConnectionProfiles();
       unregisterAgentIntegrations();
       unregisterControlProfile();
+      unregisterJLinkDeviceCatalog();
       await mcpHttpServer.close().catch(() => undefined);
       serialDiscovery.dispose();
       throw err;
@@ -242,6 +251,7 @@ export async function registerIpcHandlers(
     unregisterConnectionProfiles();
     unregisterAgentIntegrations();
     unregisterControlProfile();
+    unregisterJLinkDeviceCatalog();
     // 先停 MCP，避免 destroyAll 期间还有新工具调用进来
     await mcpServer.stop().catch(() => undefined);
     await mcpHttpServer.close().catch(() => undefined);
@@ -257,6 +267,7 @@ export async function registerIpcHandlers(
     connectionProfileManager,
     agentIntegrationManager,
     jlinkBackend,
+    jlinkDeviceCatalog,
     controlWorkflowJobManager,
     mcpServer,
     mcpHttpServer,

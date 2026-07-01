@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { resolveElectronRuntime } from '../../../src/main/electron-runtime.js';
 
 declare global {
@@ -19,6 +19,19 @@ describe('resolveElectronRuntime', () => {
     expect(() => resolveElectronRuntime(() => 'C:\\Electron\\electron.exe')).toThrow(
       /Electron runtime API is unavailable/u,
     );
+  });
+
+  it('accepts Electron preload API objects without main-process app APIs', () => {
+    const preloadElectronApi = {
+      contextBridge: { exposeInMainWorld: () => undefined },
+      ipcRenderer: {
+        invoke: async () => undefined,
+        on: () => undefined,
+        removeListener: () => undefined,
+      },
+    };
+
+    expect(resolveElectronRuntime(() => preloadElectronApi)).toBe(preloadElectronApi);
   });
 
   it('uses the test override before resolving the npm electron wrapper', () => {
@@ -57,5 +70,37 @@ describe('resolveElectronRuntime', () => {
         processWithElectronBinding.electron = originalElectron;
       }
     }
+  });
+
+  it('allows preload to expose window.linkterm when Electron only provides preload APIs', async () => {
+    const exposeInMainWorld = vi.fn();
+    const preloadElectronApi = {
+      contextBridge: { exposeInMainWorld },
+      ipcRenderer: {
+        invoke: vi.fn(async () => undefined),
+        on: vi.fn(),
+        removeListener: vi.fn(),
+      },
+    };
+    globalThis.__linktermElectronMock = preloadElectronApi;
+
+    try {
+      vi.resetModules();
+      await import('../../../src/main/preload.js');
+    } finally {
+      delete globalThis.__linktermElectronMock;
+    }
+
+    expect(exposeInMainWorld).toHaveBeenCalledWith(
+      'linkterm',
+      expect.objectContaining({
+        agentIntegrations: expect.objectContaining({
+          list: expect.any(Function),
+          install: expect.any(Function),
+          uninstall: expect.any(Function),
+          diagnose: expect.any(Function),
+        }),
+      }),
+    );
   });
 });

@@ -366,6 +366,119 @@ describe('AgentIntegrationManager', () => {
     });
   });
 
+  it('uninstalls VS Code mcp.json linkterm config while preserving other servers and creating backup', async () => {
+    const targets = makeVscodeMcpJsonTargets(root);
+    const vscodeMcp = targets[0];
+    await mkdir(path.dirname(vscodeMcp.configPath), { recursive: true });
+    const original = {
+      inputs: [{ id: 'keep' }],
+      servers: {
+        keep: { command: 'keep.exe' },
+        linkterm: { ...makeLaunchConfig(root), type: 'stdio' },
+      },
+    };
+    await writeFile(vscodeMcp.configPath, JSON.stringify(original, null, 2));
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeLaunchConfig(root),
+      now: () => new Date('2026-06-15T08:09:10Z'),
+    });
+
+    const result = await manager.uninstall('vscode');
+
+    expect(result.status.status).toBe('not-configured');
+    expect(result.backupPath).toMatch(/mcp\.json\.bak-20260615-080910-\d{6}$/);
+    const parsed = JSON.parse(await readFile(vscodeMcp.configPath, 'utf-8')) as {
+      inputs: unknown[];
+      servers: Record<string, unknown>;
+    };
+    expect(parsed.inputs).toEqual([{ id: 'keep' }]);
+    expect(parsed.servers).toEqual({ keep: { command: 'keep.exe' } });
+    expect(await readFile(result.backupPath!, 'utf-8')).toBe(JSON.stringify(original, null, 2));
+  });
+
+  it('uninstalls Codex TOML linkterm config while preserving other MCP servers', async () => {
+    const targets = makeCodexTargets(root);
+    const codex = targets[0];
+    await mkdir(path.dirname(codex.configPath), { recursive: true });
+    await writeFile(
+      codex.configPath,
+      [
+        'model = "gpt-5"',
+        '',
+        '[mcp_servers.linkterm]',
+        'type = "stdio"',
+        'command = "LinkTerm.exe"',
+        'args = [ "." ]',
+        '',
+        '[mcp_servers.linkterm.env]',
+        'LINKTERM_MCP_STDIO = "1"',
+        '',
+        '[mcp_servers.gitnexus]',
+        'command = "gitnexus"',
+        'args = [ "mcp" ]',
+        '',
+      ].join('\n'),
+    );
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeLaunchConfig(root),
+    });
+
+    const result = await manager.uninstall('codex');
+
+    expect(result.status.status).toBe('not-configured');
+    const written = await readFile(codex.configPath, 'utf-8');
+    expect(written).toContain('model = "gpt-5"');
+    expect(written).toContain('[mcp_servers.gitnexus]');
+    expect(written).toContain('command = "gitnexus"');
+    expect(written).not.toContain('[mcp_servers.linkterm]');
+    expect(written).not.toContain('[mcp_servers.linkterm.env]');
+  });
+
+  it('uninstalls WSL Codex config through the WSL file bridge', async () => {
+    const targets = makeWslCodexTargets(root);
+    const files = new Map<string, string>([
+      [
+        '/home/jianyin/.codex/config.toml',
+        [
+          '[mcp_servers.linkterm]',
+          'url = "http://localhost:57371/mcp"',
+          'bearer_token_env_var = "LINKTERM_MCP_TOKEN"',
+          '',
+          '[mcp_servers.keep]',
+          'command = "keep"',
+          '',
+        ].join('\n'),
+      ],
+    ]);
+    const wslFiles = {
+      readFile: vi.fn(async (target: AgentIntegrationTarget) => files.get(target.wslConfigPath!) ?? ''),
+      writeFile: vi.fn(async (target: AgentIntegrationTarget, data: string) => {
+        files.set(target.wslConfigPath!, data);
+      }),
+      writeBackup: vi.fn(async (target: AgentIntegrationTarget, data: string, backupName: string) => {
+        files.set(`${target.wslConfigPath!}.${backupName}`, data);
+        return `${target.wslConfigPath!}.${backupName}`;
+      }),
+    };
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeWslLaunchConfig(root),
+      wslFiles,
+    });
+
+    const result = await manager.uninstall('codex:wsl:Ubuntu-24.04:jianyin');
+
+    expect(wslFiles.writeBackup).toHaveBeenCalled();
+    expect(wslFiles.writeFile).toHaveBeenCalledWith(targets[0], expect.not.stringContaining('linkterm'));
+    expect(result.backupPath).toMatch(/^\/home\/jianyin\/\.codex\/config\.toml\.bak-/);
+    expect(files.get('/home/jianyin/.codex/config.toml')).toContain('[mcp_servers.keep]');
+  });
+
   it('persists the Codex HTTP bearer token environment variable during install', async () => {
     const targets = makeCodexTargets(root).map((target) => ({
       ...target,
@@ -500,7 +613,46 @@ describe('AgentIntegrationManager', () => {
         {
           id: 'token-env',
           status: 'fail',
-          message: 'LINKTERM_MCP_TOKEN is not available in the current process environment',
+          message: 'LINKTERM_MCP_TOKEN is not visible to LinkTerm right now. Set it before starting LinkTerm and restart Codex so HTTP MCP authentication can inherit it.',
+        },
+      ],
+    });
+  });
+
+  it('diagnoses available Codex HTTP token env with an explanatory pass message', async () => {
+    const targets = makeCodexTargets(root).map((target) => ({
+      ...target,
+      transport: {
+        type: 'http' as const,
+        url: 'http://localhost:57371/mcp',
+        bearerTokenEnvVar: 'LINKTERM_MCP_TOKEN',
+      },
+    }));
+    const codex = targets[0];
+    await mkdir(path.dirname(codex.configPath), { recursive: true });
+    await writeFile(
+      codex.configPath,
+      [
+        '[mcp_servers.linkterm]',
+        'url = "http://localhost:57371/mcp"',
+        'bearer_token_env_var = "LINKTERM_MCP_TOKEN"',
+        '',
+      ].join('\n'),
+    );
+
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeLaunchConfig(root),
+      env: { LINKTERM_MCP_TOKEN: 'stable-token' },
+    });
+
+    await expect(manager.diagnose('codex')).resolves.toMatchObject({
+      checks: [
+        { id: 'config', status: 'pass' },
+        {
+          id: 'token-env',
+          status: 'pass',
+          message: 'LINKTERM_MCP_TOKEN is visible to LinkTerm. HTTP MCP authentication can use it after Codex inherits the environment.',
         },
       ],
     });

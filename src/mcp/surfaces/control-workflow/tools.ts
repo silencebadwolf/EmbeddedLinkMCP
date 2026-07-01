@@ -9,8 +9,10 @@ import {
   ControlProfileSchemaVersionMismatchError,
   ControlProfileTooLargeError,
   WorkspaceInvalidRootError,
+  type HostPathResolver,
 } from '../../../core/workspace/index.js';
 import type { IJLinkBackend } from '../../../jlink/types.js';
+import type { JLinkDeviceCatalog } from '../../../jlink/device-catalog.js';
 import { ERROR_CODES } from '../../../shared/error-codes.js';
 import { registerTool, ToolError, type ToolHandlerResult } from '../../registry.js';
 import { ConfirmationRequiredError, translateJLinkError } from '../debug/error-translate.js';
@@ -38,6 +40,8 @@ export interface ControlWorkflowToolsDeps {
   controlProfileManager: ControlProfileManager;
   sessionManager: SessionManager;
   jlinkBackend: IJLinkBackend;
+  jlinkDeviceCatalog?: JLinkDeviceCatalog;
+  hostPathResolver?: HostPathResolver;
   controlProfileOpenSerial?: ControlProfileOpenSerial;
   controlWorkflowJobManager?: ControlWorkflowJobManager;
 }
@@ -73,6 +77,8 @@ export function registerControlWorkflowTools(
           controlProfileManager: deps.controlProfileManager,
           sessionManager: deps.sessionManager,
           jlinkBackend: deps.jlinkBackend,
+          jlinkDeviceCatalog: deps.jlinkDeviceCatalog,
+          hostPathResolver: deps.hostPathResolver,
           openSerial,
         };
         if (input.execution?.mode === 'background' && input.dryRun !== true) {

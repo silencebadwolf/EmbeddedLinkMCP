@@ -54,6 +54,7 @@ export function AgentIntegrationsPanel({
   const [statuses, setStatuses] = React.useState<ReadonlyArray<AgentIntegrationStatus>>([]);
   const [loading, setLoading] = React.useState(false);
   const [installingId, setInstallingId] = React.useState<AgentIntegrationTargetId | null>(null);
+  const [removingId, setRemovingId] = React.useState<AgentIntegrationTargetId | null>(null);
   const [diagnosingId, setDiagnosingId] = React.useState<AgentIntegrationTargetId | null>(null);
   const [diagnostics, setDiagnostics] = React.useState<
     Partial<Record<AgentIntegrationTargetId, AgentIntegrationDiagnosticResult>>
@@ -109,6 +110,37 @@ export function AgentIntegrationsPanel({
       );
     } finally {
       setInstallingId(null);
+    }
+  };
+
+  const uninstall = async (targetId: AgentIntegrationTargetId): Promise<void> => {
+    const api = getLinkterm();
+    if (!api) {
+      setError(t('agent.error.unavailable'));
+      return;
+    }
+    setRemovingId(targetId);
+    setError(null);
+    try {
+      const result = await api.agentIntegrations.uninstall({ targetId });
+      if (!result.success) {
+        setError(result.error.message);
+        return;
+      }
+      setStatuses((prev) =>
+        prev.map((status) =>
+          status.id === targetId
+            ? { ...result.data.status, backupPath: result.data.backupPath ?? result.data.status.backupPath }
+            : status,
+        ),
+      );
+      setDiagnostics((prev) => {
+        const next = { ...prev };
+        delete next[targetId];
+        return next;
+      });
+    } finally {
+      setRemovingId(null);
     }
   };
 
@@ -198,6 +230,15 @@ export function AgentIntegrationsPanel({
                     onClick={() => void diagnose(status.id)}
                   >
                     {diagnosingId === status.id ? t('agent.diagnosing') : t('agent.diagnose')}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={loading || !status.configured || removingId === status.id}
+                    onClick={() => void uninstall(status.id)}
+                  >
+                    {removingId === status.id ? t('agent.removing') : t('agent.remove')}
                   </Button>
                   <Button
                     type="button"

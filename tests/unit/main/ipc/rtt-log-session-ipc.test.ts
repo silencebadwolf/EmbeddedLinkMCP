@@ -125,6 +125,41 @@ describe('registerRttLogSessionIpc', () => {
     }
   });
 
+  it('continues RTT auto-open when profile target is absent from XML catalog', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lt-rtt-ipc-catalog-'));
+    try {
+      const sessionManager = new SessionManager();
+      const backend = new FakeJLinkBackend();
+      const controlProfileManager = new ControlProfileManager();
+      const catalog = {
+        search: vi.fn(async () => ({ available: true, sourceFiles: ['JLinkDevices.xml'], devices: [] })),
+        get: vi.fn(async () => undefined),
+        has: vi.fn(async () => false),
+        refresh: vi.fn(async () => undefined),
+      };
+      registerRttLogSessionIpc(sessionManager, backend, controlProfileManager, catalog);
+      await controlProfileManager.init(root, {
+        jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+        rtt: { enabled: true },
+      }, { force: true });
+
+      const handler = handlers.get(IPC_CHANNELS.RTT_LOG_OPEN)!;
+      const result = await handler({}, { root }) as { success: boolean; data?: { channelIndex: number } };
+
+      expect(result.success).toBe(true);
+      expect(result.data?.channelIndex).toBe(0);
+      expect(backend.callsOf('probeConnect')).toEqual([
+        {
+          method: 'probeConnect',
+          args: [{ target: 'STM32H743II', interface: 'swd', speedKHz: 4000 }],
+        },
+      ]);
+      expect(backend.callsOf('rttConnect')).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('returns a structured failure for invalid RTT log open input', async () => {
     const sessionManager = new SessionManager();
     const backend = new FakeJLinkBackend();

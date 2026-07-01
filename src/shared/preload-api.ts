@@ -22,12 +22,14 @@ import type {
 import type { TranscriptEventEnvelope, SerializedTranscriptEvent } from './transcript-ipc-types.js';
 import type {
   AgentIntegrationInstallResult,
+  AgentIntegrationUninstallResult,
   AgentIntegrationDiagnosticResult,
   AgentIntegrationStatus,
   AgentIntegrationTargetId,
 } from './agent-integrations.js';
 export type {
   AgentIntegrationInstallResult,
+  AgentIntegrationUninstallResult,
   AgentIntegrationDiagnosticResult,
   AgentIntegrationStatus,
   AgentIntegrationTargetId,
@@ -287,8 +289,48 @@ export interface AgentIntegrationsNamespace {
   list(): Promise<PreloadResult<ReadonlyArray<AgentIntegrationStatus>>>;
   /** 安装或修复一个 Agent 的 LinkTerm MCP 配置；主进程会在写入前备份。 */
   install(req: { targetId: AgentIntegrationTargetId }): Promise<PreloadResult<AgentIntegrationInstallResult>>;
+  /** 移除一个 Agent 配置中的 LinkTerm MCP 配置；主进程会在写入前备份。 */
+  uninstall(req: { targetId: AgentIntegrationTargetId }): Promise<PreloadResult<AgentIntegrationUninstallResult>>;
   /** 诊断一个 Agent 的 LinkTerm MCP 配置与运行前置条件。 */
   diagnose(req: { targetId: AgentIntegrationTargetId }): Promise<PreloadResult<AgentIntegrationDiagnosticResult>>;
+}
+
+/** renderer/preload 可见的 SEGGER/J-Link flash bank 元数据。 */
+export interface JLinkDeviceFlashBankPayload {
+  name?: string;
+  baseAddress?: string;
+  maxSize?: string;
+  loader?: string;
+}
+
+/** renderer/preload 可见的 SEGGER/J-Link 设备库条目。 */
+export interface JLinkDeviceInfoPayload {
+  name: string;
+  vendor?: string;
+  core?: string;
+  aliases?: ReadonlyArray<string>;
+  jlinkScriptFile?: string;
+  sourceFile: string;
+  flashBanks: ReadonlyArray<JLinkDeviceFlashBankPayload>;
+}
+
+/** renderer/preload 可见的 SEGGER/J-Link 设备库搜索结果。 */
+export interface JLinkDeviceSearchResultPayload {
+  available: boolean;
+  reason?: 'database-not-found';
+  devices: ReadonlyArray<JLinkDeviceInfoPayload>;
+  sourceFiles: ReadonlyArray<string>;
+  queryNormalization?: { originalQuery: string; normalizedQuery: string };
+}
+
+/** J-Link 本机设备库命名空间。 */
+export interface JLinkDevicesNamespace {
+  /** 搜索本机 SEGGER 设备库中的已注册设备名。 */
+  search(req: { query?: string; vendor?: string; limit?: number }): Promise<PreloadResult<JLinkDeviceSearchResultPayload>>;
+  /** 通过精确注册名读取一个设备库条目。 */
+  get(req: { name: string }): Promise<PreloadResult<{ device?: JLinkDeviceInfoPayload }>>;
+  /** 清理并重建设备库缓存。 */
+  refresh(): Promise<PreloadResult<{ refreshed: true }>>;
 }
 
 /** renderer/preload 可见的工作区控制配置主体。 */
@@ -346,6 +388,7 @@ export interface PreloadAPI {
   ui: UiNamespace;
   connections: ConnectionsNamespace;
   agentIntegrations: AgentIntegrationsNamespace;
+  jlinkDevices: JLinkDevicesNamespace;
   controlProfile: ControlProfileNamespace;
 }
 

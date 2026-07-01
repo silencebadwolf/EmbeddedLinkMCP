@@ -23,6 +23,7 @@ import path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ZodError } from 'zod';
 import { ERROR_CODES } from '../../../shared/error-codes.js';
+import { defaultHostPathResolver } from '../../../core/workspace/index.js';
 import { controlProfileSchema } from '../../../core/workspace/control-profile-schema.js';
 import { registerTool, ToolError, type ToolHandlerResult } from '../../registry.js';
 import { decodeBase64Capped } from './binary-codec.js';
@@ -60,7 +61,8 @@ async function assertFlashProfileMatchesProbe(
 ): Promise<void> {
   if (input.profileRoot === undefined) return;
 
-  const profilePath = path.join(input.profileRoot, '.linkterm', 'control-profile.json');
+  const profileRoot = await (deps.hostPathResolver ?? defaultHostPathResolver).toHostPath(input.profileRoot);
+  const profilePath = path.join(profileRoot, '.linkterm', 'control-profile.json');
   const profile = await readControlProfileForFlashGuard(profilePath);
   const expectedTarget = profile.jlink?.target;
   if (expectedTarget !== undefined) {

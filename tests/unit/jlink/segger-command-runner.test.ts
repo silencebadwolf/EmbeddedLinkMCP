@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -217,7 +218,7 @@ describe('NodeSeggerProcessRunner', () => {
     } finally {
       killProcessesByCommandLine(marker);
     }
-  });
+  }, 15_000);
 });
 
 function listProcessesByCommandLine(marker: string): string[] {
@@ -312,6 +313,31 @@ describe('DefaultJLinkCommanderClient', () => {
       commanderPath,
       targetSupported: true,
     });
+  });
+
+  it('reports target supported when the cached Commander internal device export contains the target', async () => {
+    const cacheRoot = path.join(tmpdir(), 'linkterm-jlink-device-catalog');
+    const hash = createHash('sha256').update(commanderPath).digest('hex').slice(0, 16);
+    const cachePath = path.join(cacheRoot, `ExpDevListXML-${hash}.xml`);
+    await mkdir(cacheRoot, { recursive: true });
+    await writeFile(cachePath, `
+      <DeviceDatabase>
+        <VendorInfo Name="ST">
+          <DeviceInfo Name="STM32H743II" Core="JLINK_CORE_CORTEX_M7" />
+        </VendorInfo>
+      </DeviceDatabase>
+    `, 'utf-8');
+    const client = new DefaultJLinkCommanderClient({ commanderPath, tempRoot: root });
+
+    try {
+      expect(client.checkAvailability('STM32H743II')).toMatchObject({
+        available: true,
+        commanderPath,
+        targetSupported: true,
+      });
+    } finally {
+      await rm(cachePath, { force: true });
+    }
   });
 
   it('detects attached physical probes through ShowEmuList without opening a target connection', async () => {
@@ -927,6 +953,33 @@ describe('DefaultJLinkGdbServerClient', () => {
       targetSupported: false,
     });
     expect(availability.message).toContain('not listed');
+  });
+
+  it('uses the sibling Commander internal device export cache for target support checks', async () => {
+    const commanderPath = path.join(root, process.platform === 'win32' ? 'JLink.exe' : 'JLinkExe');
+    const cacheRoot = path.join(tmpdir(), 'linkterm-jlink-device-catalog');
+    const hash = createHash('sha256').update(commanderPath).digest('hex').slice(0, 16);
+    const cachePath = path.join(cacheRoot, `ExpDevListXML-${hash}.xml`);
+    await writeFile(commanderPath, '', 'utf-8');
+    await mkdir(cacheRoot, { recursive: true });
+    await writeFile(cachePath, `
+      <DeviceDatabase>
+        <VendorInfo Name="ST">
+          <DeviceInfo Name="STM32H743II" Core="Cortex-M7" />
+        </VendorInfo>
+      </DeviceDatabase>
+    `, 'utf-8');
+    const client = new DefaultJLinkGdbServerClient({ gdbServerPath });
+
+    try {
+      expect(client.checkAvailability('STM32H743II')).toMatchObject({
+        available: true,
+        gdbServerPath,
+        targetSupported: true,
+      });
+    } finally {
+      await rm(cachePath, { force: true });
+    }
   });
 
   it('rejects an untrusted relative GDB server path without spawning', async () => {

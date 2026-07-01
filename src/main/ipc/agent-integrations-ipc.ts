@@ -1,6 +1,7 @@
 import { electron } from '../electron-runtime.js';
 import type {
   AgentIntegrationInstallResult,
+  AgentIntegrationUninstallResult,
   AgentIntegrationDiagnosticResult,
   AgentIntegrationStatus,
   AgentIntegrationTargetId,
@@ -38,6 +39,18 @@ export function registerAgentIntegrationsIpc(manager: AgentIntegrationManager): 
   );
 
   ipcMain.handle(
+    IPC_CHANNELS.AGENT_INTEGRATIONS_UNINSTALL,
+    async (_event, raw: unknown): Promise<PreloadResult<AgentIntegrationUninstallResult>> => {
+      try {
+        const targetId = parseTargetId(raw);
+        return { success: true, data: await manager.uninstall(targetId) };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
     IPC_CHANNELS.AGENT_INTEGRATIONS_DIAGNOSE,
     async (_event, raw: unknown): Promise<PreloadResult<AgentIntegrationDiagnosticResult>> => {
       try {
@@ -52,6 +65,7 @@ export function registerAgentIntegrationsIpc(manager: AgentIntegrationManager): 
   return () => {
     ipcMain.removeHandler(IPC_CHANNELS.AGENT_INTEGRATIONS_LIST);
     ipcMain.removeHandler(IPC_CHANNELS.AGENT_INTEGRATIONS_INSTALL);
+    ipcMain.removeHandler(IPC_CHANNELS.AGENT_INTEGRATIONS_UNINSTALL);
     ipcMain.removeHandler(IPC_CHANNELS.AGENT_INTEGRATIONS_DIAGNOSE);
   };
 }

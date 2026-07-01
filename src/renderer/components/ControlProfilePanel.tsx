@@ -15,7 +15,7 @@ import { BaudRateInput } from './BaudRateInput.js';
 import { getLinkterm } from '../lib/linkterm-bridge.js';
 import { useT } from '../i18n/index.js';
 import { useAppStore } from '../store/app-store.js';
-import type { ControlProfilePayload } from '../../shared/preload-api.js';
+import type { ControlProfilePayload, JLinkDeviceInfoPayload } from '../../shared/preload-api.js';
 import { classifyJLinkTargetName } from '../../shared/jlink-target-name.js';
 
 interface ControlProfilePanelProps {
@@ -23,8 +23,8 @@ interface ControlProfilePanelProps {
   onOpenChange(open: boolean): void;
 }
 
-const COMMON_TARGETS = ['AT32F435RGT7', 'STM32F103C8', 'STM32F407VG', 'STM32H743II', 'GD32F303', 'nRF52840'] as const;
 const JLINK_SPEED_OPTIONS = ['auto', '50000', '25000', '10000', '8000', '4000', '1000'] as const;
+const JLINK_DEVICE_SUGGESTION_LIMIT = 30;
 const SELECT_CLASS = 'flex h-9 w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-1 text-sm text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500';
 type ObservationChannel = 'serial' | 'rtt';
 
@@ -40,6 +40,11 @@ export function ControlProfilePanel({
   const [baudRate, setBaudRate] = React.useState('115200');
   const [serialMode, setSerialMode] = React.useState<'normal' | 'terminal'>('terminal');
   const [target, setTarget] = React.useState('');
+  const [targetQuery, setTargetQuery] = React.useState('');
+  const [deviceOptions, setDeviceOptions] = React.useState<ReadonlyArray<JLinkDeviceInfoPayload>>([]);
+  const [deviceCatalogAvailable, setDeviceCatalogAvailable] = React.useState<boolean | null>(null);
+  const [searchingDevices, setSearchingDevices] = React.useState(false);
+  const [selectedCatalogTarget, setSelectedCatalogTarget] = React.useState<string | null>(null);
   const [debugInterface, setDebugInterface] = React.useState<'swd' | 'jtag'>('swd');
   const [speedKHz, setSpeedKHz] = React.useState<(typeof JLINK_SPEED_OPTIONS)[number]>('auto');
   const [binary, setBinary] = React.useState('build/app.bin');
@@ -49,6 +54,7 @@ export function ControlProfilePanel({
   const [message, setMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [targetHint, setTargetHint] = React.useState<string | null>(null);
+  const deviceSearchSequence = React.useRef(0);
 
   const browseWorkspace = async (): Promise<void> => {
     const api = getLinkterm();
@@ -96,7 +102,7 @@ export function ControlProfilePanel({
     setError(null);
     setMessage(null);
     try {
-      const normalizedTarget = classifyJLinkTargetName(target).normalizedTarget;
+      const normalizedTarget = selectedCatalogTarget ?? classifyJLinkTargetName(targetQuery || target).normalizedTarget;
       const profile: ControlProfilePayload = {
         jlink: {
           enabled: true,
@@ -133,11 +139,57 @@ export function ControlProfilePanel({
     }
   };
 
+  const searchDeviceCatalog = React.useCallback(async (query: string): Promise<void> => {
+    const api = getLinkterm();
+    const trimmedQuery = query.trim();
+    const sequence = deviceSearchSequence.current + 1;
+    deviceSearchSequence.current = sequence;
+
+    if (trimmedQuery === '' || !api) {
+      setDeviceOptions([]);
+      setDeviceCatalogAvailable(null);
+      setSearchingDevices(false);
+      return;
+    }
+
+    setSearchingDevices(true);
+    const result = await api.jlinkDevices.search({ query: trimmedQuery, limit: JLINK_DEVICE_SUGGESTION_LIMIT });
+    if (deviceSearchSequence.current !== sequence) return;
+    setSearchingDevices(false);
+    if (result.success) {
+      setDeviceCatalogAvailable(result.data.available);
+      setDeviceOptions(result.data.devices);
+      return;
+    }
+    setDeviceCatalogAvailable(null);
+    setDeviceOptions([]);
+  }, []);
+
   const updateTarget = (value: string): void => {
     const classification = classifyJLinkTargetName(value);
-    setTarget(classification.normalizedTarget);
+    setTarget(value);
+    setTargetQuery(value);
+    setSelectedCatalogTarget(null);
     setTargetHint(classification.kind === 'stm32-order-code' ? classification.message ?? null : null);
+    void searchDeviceCatalog(value);
   };
+
+  const selectCatalogDevice = (device: JLinkDeviceInfoPayload): void => {
+    deviceSearchSequence.current += 1;
+    setTarget(device.name);
+    setTargetQuery(device.name);
+    setSelectedCatalogTarget(device.name);
+    setTargetHint(null);
+    setDeviceOptions([]);
+  };
+
+  const showManualTargetWarning =
+    deviceCatalogAvailable === true &&
+    targetQuery.trim() !== '' &&
+    selectedCatalogTarget === null &&
+    classifyJLinkTargetName(targetQuery).kind !== 'stm32-order-code' &&
+    deviceOptions.length === 0 &&
+    !searchingDevices;
 
   const openRttLog = async (): Promise<void> => {
     const api = getLinkterm();
@@ -256,17 +308,38 @@ export function ControlProfilePanel({
             <Label htmlFor="control-target">{t('controlProfile.target')}</Label>
             <Input
               id="control-target"
-              list="control-target-options"
               value={target}
               onChange={(e) => updateTarget(e.target.value)}
               placeholder={t('controlProfile.target.placeholder')}
             />
+            {searchingDevices ? <p className="text-xs text-gray-400">{t('controlProfile.target.catalogSearching')}</p> : null}
+            {deviceCatalogAvailable === false ? (
+              <p className="text-xs text-gray-400">{t('controlProfile.target.catalogUnavailable')}</p>
+            ) : null}
+            {deviceOptions.length > 0 ? (
+              <div className="max-h-36 overflow-y-auto rounded-md border border-gray-800 bg-gray-900">
+                {deviceOptions.map((device) => (
+                  <button
+                    key={`${device.sourceFile}:${device.name}`}
+                    type="button"
+                    onClick={() => selectCatalogDevice(device)}
+                    className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs text-gray-100 hover:bg-gray-800"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{device.name}</span>
+                      <span className="block truncate text-gray-500">
+                        {[device.vendor, device.core, ...(device.aliases ?? [])].filter(Boolean).join(' / ') || t('controlProfile.target.source')}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-gray-500">{t('controlProfile.target.source')}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
             {targetHint ? <p className="text-xs text-amber-300">{targetHint}</p> : null}
-            <datalist id="control-target-options">
-              {COMMON_TARGETS.map((chip) => (
-                <option key={chip} value={chip} />
-              ))}
-            </datalist>
+            {showManualTargetWarning ? (
+              <p className="text-xs text-amber-300">{t('controlProfile.target.manualWarning')}</p>
+            ) : null}
           </div>
           <div className="space-y-2">
             <Label htmlFor="control-speed">{t('controlProfile.jlinkSpeed')}</Label>

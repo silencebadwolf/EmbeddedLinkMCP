@@ -4,6 +4,8 @@ import type { SessionManager } from '../../core/session/session-manager.js';
 import type { ControlProfile, ControlProfileManager } from '../../core/workspace/index.js';
 import { JLinkError } from '../../jlink/errors.js';
 import type { IJLinkBackend, ProbeConnectOptions, RttChannelInfo } from '../../jlink/types.js';
+import type { JLinkDeviceCatalog } from '../../jlink/device-catalog.js';
+import { resolveJLinkTarget } from '../../jlink/target-resolver.js';
 import { ERROR_CODES, type ErrorCode } from '../../shared/error-codes.js';
 import { normalizeJLinkTargetName } from '../../shared/jlink-target-name.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
@@ -21,13 +23,14 @@ export function registerRttLogSessionIpc(
   sessionManager: SessionManager,
   jlinkBackend: IJLinkBackend,
   controlProfileManager?: ControlProfileManager,
+  jlinkDeviceCatalog?: JLinkDeviceCatalog,
 ): () => void {
   ipcMain.handle(
     IPC_CHANNELS.RTT_LOG_OPEN,
     async (_event, raw: RttLogOpenRequestPayload): Promise<PreloadResult<RttLogOpenSuccess>> => {
       try {
         const input = normalizeRequest(raw);
-        const target = await resolveRttTarget(input, jlinkBackend, controlProfileManager);
+        const target = await resolveRttTarget(input, jlinkBackend, controlProfileManager, jlinkDeviceCatalog);
         const result = await openRttLogSession({
           sessionManager,
           jlinkBackend,
@@ -104,6 +107,7 @@ async function resolveRttTarget(
   input: NormalizedRttLogOpenRequest,
   jlinkBackend: IJLinkBackend,
   controlProfileManager: ControlProfileManager | undefined,
+  jlinkDeviceCatalog: JLinkDeviceCatalog | undefined,
 ): Promise<ResolvedRttTarget> {
   if (input.probeId !== undefined) {
     return { probeId: input.probeId, channelIndex: input.channelIndex };
@@ -118,7 +122,9 @@ async function resolveRttTarget(
   if (profile.rtt?.enabled !== true) {
     throw new InvalidRttLogOpenRequestError('rtt.enabled=true is required in control-profile.json');
   }
-  const probe = await jlinkBackend.probeConnect(buildProbeConnectOptions(profile));
+  const opts = buildProbeConnectOptions(profile);
+  const resolution = await resolveJLinkTarget(opts.target, jlinkDeviceCatalog);
+  const probe = await jlinkBackend.probeConnect({ ...opts, target: resolution.target });
   const rtt = await jlinkBackend.rttConnect(probe.probeId);
   return {
     probeId: probe.probeId,

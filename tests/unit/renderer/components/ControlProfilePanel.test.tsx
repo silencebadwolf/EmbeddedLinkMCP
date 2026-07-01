@@ -124,6 +124,153 @@ describe('ControlProfilePanel', () => {
     expect(await screen.findByText(/Saved:/)).toBeInTheDocument();
   });
 
+  it('selects and saves an exact SEGGER catalog device name', async () => {
+    mock.spies.controlProfile.pickWorkspaceRoot.mockResolvedValueOnce({ success: true, data: { root: 'C:/repo' } });
+    mock.spies.jlinkDevices.search.mockResolvedValue({
+      success: true,
+      data: {
+        available: true,
+        sourceFiles: ['JLinkDevices.xml'],
+        devices: [
+          {
+            name: '-AT32F435RGT7',
+            vendor: 'ArteryTek',
+            core: 'JLINK_CORE_CORTEX_M4',
+            sourceFile: 'JLinkDevices.xml',
+            flashBanks: [],
+          },
+        ],
+      },
+    });
+    mock.spies.controlProfile.save.mockResolvedValueOnce({
+      success: true,
+      data: {
+        path: 'C:/repo/.linkterm/control-profile.json',
+        profile: {
+          schemaVersion: 'linkterm-control/1.0.0',
+          serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' },
+          jlink: { enabled: true, target: '-AT32F435RGT7', interface: 'swd', speedKHz: 'auto' },
+          flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+        },
+      },
+    });
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Browse workspace' }));
+    await waitFor(() => expect(screen.getByLabelText('Workspace root')).toHaveValue('C:/repo'));
+    fireEvent.change(screen.getByLabelText('J-Link device name'), { target: { value: 'AT32F435' } });
+    fireEvent.click(await screen.findByRole('button', { name: /-AT32F435RGT7/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save to workspace' }));
+
+    await waitFor(() =>
+      expect(mock.spies.controlProfile.save).toHaveBeenCalledWith(expect.objectContaining({
+        root: 'C:/repo',
+        profile: expect.objectContaining({
+          jlink: expect.objectContaining({ target: '-AT32F435RGT7' }),
+        }),
+      })),
+    );
+  });
+
+  it('requests a broad enough catalog page for MCU family searches', async () => {
+    mock.spies.jlinkDevices.search.mockResolvedValue({
+      success: true,
+      data: { available: true, sourceFiles: ['JLinkDevices.xml'], devices: [] },
+    });
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
+
+    fireEvent.change(screen.getByLabelText('J-Link device name'), { target: { value: 'STM32' } });
+
+    await waitFor(() =>
+      expect(mock.spies.jlinkDevices.search).toHaveBeenCalledWith({ query: 'STM32', limit: 30 }),
+    );
+  });
+
+  it('allows manual fallback but marks the target as not confirmed by the local catalog', async () => {
+    mock.spies.jlinkDevices.search.mockResolvedValue({
+      success: true,
+      data: { available: true, sourceFiles: ['JLinkDevices.xml'], devices: [] },
+    });
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
+
+    fireEvent.change(screen.getByLabelText('J-Link device name'), { target: { value: 'CUSTOM_DEVICE' } });
+
+    expect(await screen.findByText(/No matching SEGGER device catalog entry was found/i)).toBeInTheDocument();
+  });
+
+  it('does not warn when a normalized STM32 target is found in the SEGGER catalog', async () => {
+    mock.spies.controlProfile.pickWorkspaceRoot.mockResolvedValueOnce({ success: true, data: { root: 'C:/repo' } });
+    mock.spies.jlinkDevices.search.mockResolvedValue({
+      success: true,
+      data: {
+        available: true,
+        sourceFiles: ['JLinkDevices.xml'],
+        queryNormalization: { originalQuery: 'STM32H743IIT6', normalizedQuery: 'STM32H743II' },
+        devices: [
+          {
+            name: 'STM32H743II',
+            vendor: 'ST',
+            core: 'JLINK_CORE_CORTEX_M7',
+            sourceFile: 'JLinkDevices.xml',
+            flashBanks: [],
+          },
+        ],
+      },
+    });
+    mock.spies.controlProfile.save.mockResolvedValueOnce({
+      success: true,
+      data: {
+        path: 'C:/repo/.linkterm/control-profile.json',
+        profile: {
+          schemaVersion: 'linkterm-control/1.0.0',
+          serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' },
+          jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 'auto' },
+          flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+        },
+      },
+    });
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Browse workspace' }));
+    await waitFor(() => expect(screen.getByLabelText('Workspace root')).toHaveValue('C:/repo'));
+    fireEvent.change(screen.getByLabelText('J-Link device name'), { target: { value: 'STM32H743IIT6' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: /STM32H743II/i })).toBeInTheDocument());
+
+    expect(screen.queryByText(/No matching SEGGER device catalog entry was found/i)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save to workspace' }));
+    await waitFor(() =>
+      expect(mock.spies.controlProfile.save).toHaveBeenCalledWith(expect.objectContaining({
+        profile: expect.objectContaining({
+          jlink: expect.objectContaining({ target: 'STM32H743II' }),
+        }),
+      })),
+    );
+  });
+
+  it('does not warn that an STM32 built-in target is missing only because XML/AddOn search has no suggestions', async () => {
+    mock.spies.jlinkDevices.search.mockResolvedValue({
+      success: true,
+      data: {
+        available: true,
+        sourceFiles: ['JLinkDevices.xml'],
+        queryNormalization: { originalQuery: 'STM32H743IIT6', normalizedQuery: 'STM32H743II' },
+        devices: [],
+      },
+    });
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
+
+    fireEvent.change(screen.getByLabelText('J-Link device name'), { target: { value: 'STM32H743IIT6' } });
+    expect(await screen.findByText(/using STM32H743II/i)).toBeInTheDocument();
+
+    expect(screen.queryByText(/No matching SEGGER device catalog entry was found/i)).toBeNull();
+  });
+
   it('renders Chinese labels when locale is zh', () => {
     useAppStore.setState({ locale: 'zh' });
 
@@ -135,7 +282,7 @@ describe('ControlProfilePanel', () => {
     expect(screen.getByRole('button', { name: '保存到工作区' })).toBeInTheDocument();
   });
 
-  it('normalizes STM32 order-code targets before saving from the UI', async () => {
+  it('normalizes STM32 order-code targets only when saving manual fallback from the UI', async () => {
     mock.spies.controlProfile.pickWorkspaceRoot.mockResolvedValueOnce({ success: true, data: { root: 'C:/repo' } });
     mock.spies.controlProfile.save.mockResolvedValueOnce({
       success: true,
@@ -155,7 +302,7 @@ describe('ControlProfilePanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Browse workspace' }));
     await waitFor(() => expect(screen.getByLabelText('Workspace root')).toHaveValue('C:/repo'));
     fireEvent.change(screen.getByLabelText('J-Link device name'), { target: { value: 'STM32H743IIT6' } });
-    await waitFor(() => expect(screen.getByLabelText('J-Link device name')).toHaveValue('STM32H743II'));
+    await waitFor(() => expect(screen.getByLabelText('J-Link device name')).toHaveValue('STM32H743IIT6'));
     expect(screen.getByText(/STM32H743IIT6/)).toBeInTheDocument();
     expect(screen.getByText(/STM32H743II/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Save to workspace' }));

@@ -3,14 +3,20 @@
 import { open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { SessionManager } from '../../../core/session/session-manager.js';
-import type { ControlProfileManager, ControlProfile } from '../../../core/workspace/index.js';
+import {
+  defaultHostPathResolver,
+  type ControlProfileManager,
+  type ControlProfile,
+  type HostPathResolver,
+} from '../../../core/workspace/index.js';
 import type { IJLinkBackend, ProbeConnectOptions, ProbeInfo, RegisterValue } from '../../../jlink/types.js';
+import type { JLinkDeviceCatalog } from '../../../jlink/device-catalog.js';
+import { resolveJLinkTarget, type JLinkTargetResolution } from '../../../jlink/target-resolver.js';
 import {
   JLinkNotImplementedError,
   JLinkOperationError,
 } from '../../../jlink/errors.js';
 import type { SerialSessionConfig, SessionSummary } from '../../../shared/types.js';
-import { classifyJLinkTargetName, normalizeJLinkTargetName } from '../../../shared/jlink-target-name.js';
 import { ERROR_CODES } from '../../../shared/error-codes.js';
 import { MAX_BINARY_BYTES } from '../../limits.js';
 import { ToolError, type ToolErrorCode } from '../../registry.js';
@@ -32,7 +38,9 @@ export interface ControlWorkflowRunnerDeps {
   controlProfileManager: ControlProfileManager;
   sessionManager: SessionManager;
   jlinkBackend: IJLinkBackend;
+  jlinkDeviceCatalog?: JLinkDeviceCatalog;
   openSerial: ControlProfileOpenSerial;
+  hostPathResolver?: HostPathResolver;
 }
 
 /** run_control_workflow 的可选后台 job 集成点。 */
@@ -46,6 +54,7 @@ interface ResolvedFirmware {
   baseAddress: number;
   verify: boolean;
   binary: Buffer;
+  sourcePath: string;
   timeoutMs?: number;
   parameterSources: {
     filePath: 'profile' | 'request';
@@ -76,6 +85,7 @@ interface SpeedPolicyEvidence {
 
 interface WorkflowContext {
   input: RunControlWorkflowInput;
+  hostRoot: string;
   profile: ControlProfile;
   steps: ControlWorkflowStep[];
   blockingReasons: ControlWorkflowBlockingReason[];
@@ -86,6 +96,7 @@ interface WorkflowContext {
   serialSessionId?: string;
   observeStartCursor?: number;
   probe?: Omit<ProbeInfo, 'serialNumber'>;
+  targetResolution?: JLinkTargetResolution;
   signal?: AbortSignal;
   onUpdate?: (data: ControlWorkflowData) => void;
 }
@@ -132,9 +143,11 @@ export async function runControlWorkflow(
   options: ControlWorkflowRunOptions = {},
 ): Promise<ControlWorkflowData> {
   throwIfAborted(options.signal);
-  const profile = await deps.controlProfileManager.load(input.root);
+  const hostRoot = await (deps.hostPathResolver ?? defaultHostPathResolver).toHostPath(input.root);
+  const profile = await deps.controlProfileManager.load(hostRoot);
   const ctx: WorkflowContext = {
     input,
+    hostRoot,
     profile,
     steps: [],
     blockingReasons: [],
@@ -144,14 +157,24 @@ export async function runControlWorkflow(
   if (options.signal !== undefined) ctx.signal = options.signal;
   if (options.onUpdate !== undefined) ctx.onUpdate = options.onUpdate;
 
-  pushStep(ctx, 'load_profile', 'passed', { profileLoaded: true });
+  pushStep(ctx, 'load_profile', 'passed', {
+    profileLoaded: true,
+    root: input.root,
+    hostRoot,
+    rootResolved: hostRoot !== input.root,
+  });
 
   if (requiresHighImpact(input) && input.confirm !== true && input.dryRun !== true) {
     throw new ConfirmationRequiredError('run_control_workflow');
   }
 
   throwIfAborted(ctx.signal);
-  const firmware = await preflight(ctx, deps.jlinkBackend);
+  const firmware = await preflight(
+    ctx,
+    deps.jlinkBackend,
+    deps.jlinkDeviceCatalog,
+    deps.hostPathResolver ?? defaultHostPathResolver,
+  );
   if (ctx.failedStep !== undefined) {
     return toData(ctx);
   }
@@ -212,6 +235,8 @@ export async function runControlWorkflow(
 async function preflight(
   ctx: WorkflowContext,
   jlinkBackend: IJLinkBackend,
+  jlinkDeviceCatalog: JLinkDeviceCatalog | undefined,
+  hostPathResolver: HostPathResolver,
 ): Promise<ResolvedFirmware | undefined> {
   const { input, profile } = ctx;
   if (profile.jlink?.enabled !== true || profile.jlink.target === undefined) {
@@ -228,8 +253,10 @@ async function preflight(
     );
   }
 
+  ctx.targetResolution = await resolveJLinkTarget(profile.jlink.target, jlinkDeviceCatalog);
+
   if (needsFlash(input) && input.dryRun !== true) {
-    const target = normalizeJLinkTargetName(profile.jlink.target);
+    const target = ctx.targetResolution.target;
     const availability = await getCommanderAvailability(jlinkBackend, target);
     if (availability?.available === false) {
       const targetUnsupported = availability.reason === 'target-unsupported';
@@ -259,7 +286,7 @@ async function preflight(
   }
 
   if (input.mode === 'debug-diagnose' && input.dryRun !== true) {
-    const target = normalizeJLinkTargetName(profile.jlink.target);
+    const target = ctx.targetResolution.target;
     const availability = await getGdbServerAvailability(jlinkBackend, target);
     if (availability?.available === false) {
       const targetUnsupported = availability.reason === 'target-unsupported';
@@ -290,13 +317,14 @@ async function preflight(
 
   let firmware: ResolvedFirmware | undefined;
   if (needsFlash(input)) {
-    firmware = await resolveFirmware(input.root, input.firmware, profile);
+    firmware = await resolveFirmware(ctx.hostRoot, input.firmware, profile, hostPathResolver);
   }
 
   pushStep(ctx, 'preflight', 'passed', {
     needsSerial: needsSerial(input),
     needsFlash: needsFlash(input),
     needsDebug: input.mode === 'debug-diagnose',
+    targetResolution: ctx.targetResolution,
   });
   return firmware;
 }
@@ -389,8 +417,8 @@ async function connectProbeStep(ctx: WorkflowContext, jlinkBackend: IJLinkBacken
     if (jlink.speedKHz === undefined) {
       throw new ToolError(ERROR_CODES.INVALID_ARGUMENT, 'jlink.speedKHz is required');
     }
-    const targetClassification = classifyJLinkTargetName(jlink.target);
-    const opts: ProbeConnectOptions = { target: targetClassification.normalizedTarget, interface: jlink.interface };
+    const targetResolution = ctx.targetResolution ?? await resolveJLinkTarget(jlink.target);
+    const opts: ProbeConnectOptions = { target: targetResolution.target, interface: jlink.interface };
     const speedPolicy = resolveSafeSpeedPolicy(ctx);
     const speedKHz = speedPolicy?.resolvedSpeedKHz ?? jlink.speedKHz;
     const probe = await connectProbeWithConfiguredSpeed(jlinkBackend, opts, speedKHz);
@@ -409,13 +437,8 @@ async function connectProbeStep(ctx: WorkflowContext, jlinkBackend: IJLinkBacken
         speedKHz: jlink.speedKHz === undefined ? 'linkterm-default' : 'profile',
       },
     };
-    if (targetClassification.kind === 'stm32-order-code') {
-      evidence.targetNormalization = {
-        originalTarget: targetClassification.originalTarget,
-        normalizedTarget: targetClassification.normalizedTarget,
-        kind: targetClassification.kind,
-        ...(targetClassification.message !== undefined ? { message: targetClassification.message } : {}),
-      };
+    if (targetResolution.normalization !== undefined) {
+      evidence.targetNormalization = targetResolution.normalization;
     }
     if (speedPolicy !== undefined) evidence.speedPolicy = speedPolicy;
     pushStep(ctx, 'connect_probe', 'passed', evidence, started);
@@ -456,6 +479,7 @@ async function flashStep(
       'passed',
       {
         firmwarePath: firmware.absolutePath,
+        sourcePath: firmware.sourcePath,
         bytesWritten: result.bytesWritten,
         verified: result.verified,
         verification: {
@@ -733,6 +757,7 @@ async function resolveFirmware(
   root: string,
   firmwareOverride: RunControlWorkflowInput['firmware'],
   profile: ControlProfile,
+  hostPathResolver: HostPathResolver,
 ): Promise<ResolvedFirmware> {
   const filePathSource = firmwareOverride?.filePath !== undefined ? 'request' : 'profile';
   const baseAddressSource = firmwareOverride?.baseAddress !== undefined ? 'request' : 'profile';
@@ -753,7 +778,7 @@ async function resolveFirmware(
     );
   }
 
-  const pathResolution = await resolveFirmwarePath(root, filePath, filePathSource);
+  const pathResolution = await resolveFirmwarePath(root, filePath, filePathSource, hostPathResolver);
   const firmware = await readFirmwareCapped(pathResolution.path, pathResolution.realRoot);
   const baseAddress = parseHexAddress(baseAddressHex);
   validateFirmwareVectorTable(firmware.binary, baseAddress);
@@ -763,6 +788,7 @@ async function resolveFirmware(
     verify,
     timeoutMs,
     binary: firmware.binary,
+    sourcePath: filePath,
     parameterSources: {
       filePath: filePathSource,
       baseAddress: baseAddressSource,
@@ -793,9 +819,10 @@ async function resolveFirmwarePath(
   root: string,
   filePath: string,
   source: 'profile' | 'request',
+  hostPathResolver: HostPathResolver,
 ): Promise<FirmwarePathResolution> {
   if (source === 'profile' && path.isAbsolute(filePath)) {
-    return { path: path.normalize(filePath) };
+    return { path: path.normalize(await hostPathResolver.toHostPath(filePath)) };
   }
   return {
     path: resolvePathInsideRoot(root, filePath),
@@ -1066,6 +1093,7 @@ function pushDryRunSteps(ctx: WorkflowContext, firmware: ResolvedFirmware | unde
       ...(firmware
         ? {
             firmwarePath: firmware.absolutePath,
+            sourcePath: firmware.sourcePath,
             address: firmware.baseAddress,
             verify: firmware.verify,
             timeoutMs: firmware.timeoutMs,

@@ -53,6 +53,18 @@ function makeManager(): AgentIntegrationManager {
         canInstall: false,
       },
     })),
+    uninstall: vi.fn(async () => ({
+      backupPath: 'settings.json.bak-20260615-080911',
+      status: {
+        id: 'vscode',
+        label: 'VS Code Copilot',
+        configPath: 'settings.json',
+        configKind: 'vscode-settings',
+        status: 'not-configured',
+        configured: false,
+        canInstall: true,
+      },
+    })),
     diagnose: vi.fn(async () => ({
       targetId: 'codex',
       label: 'Codex',
@@ -121,6 +133,21 @@ describe('registerAgentIntegrationsIpc', () => {
     expect(manager.diagnose).toHaveBeenCalledWith('codex');
   });
 
+  it('uninstalls a target by id', async () => {
+    const manager = makeManager();
+    registerAgentIntegrationsIpc(manager);
+
+    const handler = handlers.get(IPC_CHANNELS.AGENT_INTEGRATIONS_UNINSTALL)!;
+    const result = await handler({}, { targetId: 'vscode' }) as {
+      success: boolean;
+      data?: { backupPath?: string };
+    };
+
+    expect(result.success).toBe(true);
+    expect(result.data?.backupPath).toBe('settings.json.bak-20260615-080911');
+    expect(manager.uninstall).toHaveBeenCalledWith('vscode');
+  });
+
   it('rejects invalid install payloads', async () => {
     const manager = makeManager();
     registerAgentIntegrationsIpc(manager);
@@ -138,6 +165,7 @@ describe('registerAgentIntegrationsIpc', () => {
 
     expect(ipcMainMock.removeHandler).toHaveBeenCalledWith(IPC_CHANNELS.AGENT_INTEGRATIONS_LIST);
     expect(ipcMainMock.removeHandler).toHaveBeenCalledWith(IPC_CHANNELS.AGENT_INTEGRATIONS_INSTALL);
+    expect(ipcMainMock.removeHandler).toHaveBeenCalledWith(IPC_CHANNELS.AGENT_INTEGRATIONS_UNINSTALL);
     expect(ipcMainMock.removeHandler).toHaveBeenCalledWith(IPC_CHANNELS.AGENT_INTEGRATIONS_DIAGNOSE);
   });
 });

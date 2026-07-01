@@ -27,7 +27,10 @@ import type {
   SavedConnectionSummary,
   AgentIntegrationStatus,
   AgentIntegrationInstallResult,
+  AgentIntegrationUninstallResult,
   AgentIntegrationDiagnosticResult,
+  JLinkDeviceInfoPayload,
+  JLinkDeviceSearchResultPayload,
   ControlProfileFilePayload,
   RttLogOpenSuccess,
 } from '../shared/preload-api.js';
@@ -119,8 +122,18 @@ const api: PreloadAPI = {
       invoke<ReadonlyArray<AgentIntegrationStatus>>(IPC_CHANNELS.AGENT_INTEGRATIONS_LIST),
     install: (req) =>
       invoke<AgentIntegrationInstallResult>(IPC_CHANNELS.AGENT_INTEGRATIONS_INSTALL, req),
+    uninstall: (req) =>
+      invoke<AgentIntegrationUninstallResult>(IPC_CHANNELS.AGENT_INTEGRATIONS_UNINSTALL, req),
     diagnose: (req) =>
       invoke<AgentIntegrationDiagnosticResult>(IPC_CHANNELS.AGENT_INTEGRATIONS_DIAGNOSE, req),
+  },
+  jlinkDevices: {
+    search: (req) =>
+      invoke<JLinkDeviceSearchResultPayload>(IPC_CHANNELS.JLINK_DEVICES_SEARCH, req),
+    get: (req) =>
+      invoke<{ device?: JLinkDeviceInfoPayload }>(IPC_CHANNELS.JLINK_DEVICES_GET, req),
+    refresh: () =>
+      invoke<{ refreshed: true }>(IPC_CHANNELS.JLINK_DEVICES_REFRESH),
   },
   controlProfile: {
     save: (req) =>

@@ -9,6 +9,7 @@ import { SerialDiscovery } from '@/transports/serial/serial-discovery.js';
 import { createMcpServer } from '@/mcp/index.js';
 import type { LinkTermMcpServer } from '@/mcp/server.js';
 import type { SerialSessionConfig } from '@/shared/types.js';
+import type { JLinkDeviceCatalog } from '@/jlink/device-catalog.js';
 import { createInMemoryMcpTransportPair } from '../../fixtures/mock-mcp-transport.js';
 import { FakeJLinkBackend } from '../../fixtures/fake-jlink-backend.js';
 import { JLinkOperationError } from '@/jlink/errors.js';
@@ -24,7 +25,10 @@ interface Harness {
   openedSerialConfigs: SerialSessionConfig[];
 }
 
-async function setup(): Promise<Harness> {
+async function setup(options: {
+  jlinkDeviceCatalog?: JLinkDeviceCatalog;
+  hostPathResolver?: { toHostPath(inputPath: string): Promise<string> };
+} = {}): Promise<Harness> {
   const root = await mkdtemp(path.join(tmpdir(), 'lt-control-profile-mcp-'));
   const manager = new SessionManager();
   const serialDiscovery = new SerialDiscovery({ listFn: async () => [] });
@@ -37,6 +41,8 @@ async function setup(): Promise<Harness> {
     serialDiscovery,
     controlProfileManager,
     jlinkBackend: fake,
+    jlinkDeviceCatalog: options.jlinkDeviceCatalog,
+    hostPathResolver: options.hostPathResolver,
     controlProfileOpenSerial: async (config) => {
       openedSerialConfigs.push(config);
       return { sessionId: 'sess_control_serial', state: 'open' };
@@ -116,6 +122,35 @@ describe('MCP control profile tools', () => {
     expect(out.success).toBe(true);
     const profile = (out.evidence as { data: { profile: { jlink: { target: string } } } }).data.profile;
     expect(profile.jlink.target).toBe('STM32F407VG');
+  });
+
+  it('get_control_profile resolves WSL Linux roots to the host-readable profile path', async () => {
+    await teardown(h);
+    const linuxRoot = '/home/jianyin/code/FNA1000';
+    const hostRoot = await mkdtemp(path.join(tmpdir(), 'lt-control-profile-wsl-host-'));
+    h = await setup({
+      hostPathResolver: {
+        async toHostPath(inputPath: string): Promise<string> {
+          return inputPath === linuxRoot ? hostRoot : inputPath;
+        },
+      },
+    });
+    await h.controlProfileManager.init(hostRoot, {
+      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+      flash: { binary: 'build/gcc-arm-debug/rtthread.bin', baseAddress: '0x08000000', verify: true },
+    }, { force: true });
+
+    const out = await callTool(h.client, 'get_control_profile', { root: linuxRoot });
+
+    expect(out.success).toBe(true);
+    const data = (out.evidence as {
+      data: { root: string; hostRoot?: string; rootResolved?: boolean; path: string; profile: { jlink: { target: string } } };
+    }).data;
+    expect(data.root).toBe(linuxRoot);
+    expect(data.hostRoot).toBe(hostRoot);
+    expect(data.rootResolved).toBe(true);
+    expect(data.path).toBe(path.join(hostRoot, '.linkterm', 'control-profile.json'));
+    expect(data.profile.jlink.target).toBe('STM32H743II');
   });
 
   it('activate_control_profile opens configured serial and connects J-Link without flashing', async () => {
@@ -274,6 +309,37 @@ describe('MCP control profile tools', () => {
         id: 'jlink-target-name',
         status: 'warn',
         message: expect.stringContaining('STM32H743II'),
+      }),
+    ]));
+  });
+
+  it('inspect_control_profile reports catalog suggestions for unknown J-Link targets', async () => {
+    await teardown(h);
+    h = await setup({
+      jlinkDeviceCatalog: {
+        search: async () => ({
+          available: true,
+          sourceFiles: ['JLinkDevices.xml'],
+          devices: [{ name: 'STM32H743II', vendor: 'ST', sourceFile: 'JLinkDevices.xml', flashBanks: [] }],
+        }),
+        get: async () => undefined,
+        has: async () => false,
+        refresh: async () => undefined,
+      },
+    });
+    await mkdir(path.join(h.root, '.linkterm'), { recursive: true });
+    await writeFile(path.join(h.root, '.linkterm', 'control-profile.json'), JSON.stringify({
+      schemaVersion: 'linkterm-control/1.0.0',
+      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+    }));
+
+    const out = await callTool(h.client, 'inspect_control_profile', { root: h.root });
+    const data = (out.evidence as { data: { diagnostics: Array<{ id: string; suggestions?: Array<{ name: string }> }> } }).data;
+    expect(data.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'jlink-target-catalog',
+        status: 'warn',
+        suggestions: [expect.objectContaining({ name: 'STM32H743II' })],
       }),
     ]));
   });

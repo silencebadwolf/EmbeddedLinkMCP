@@ -13,12 +13,15 @@ import {
   WorkspaceInvalidRootError,
   buildControlProfileQuestion,
   controlProfilePath,
+  defaultHostPathResolver,
   inspectControlProfileCompleteness,
   parseControlProfileAnswer,
   type ControlProfile,
+  type HostPathResolver,
 } from '../../../core/workspace/index.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
 import type { IJLinkBackend, ProbeConnectOptions, ProbeInfo } from '../../../jlink/types.js';
+import type { JLinkDeviceCatalog, JLinkDeviceInfo } from '../../../jlink/device-catalog.js';
 import { JLinkOperationError } from '../../../jlink/errors.js';
 import type { SerialSessionConfig, SessionState } from '../../../shared/types.js';
 import type { SessionCreateRequestConfig } from '../../../shared/preload-api.js';
@@ -63,6 +66,8 @@ export interface ControlProfileToolsDeps {
   controlProfileManager: ControlProfileManager;
   sessionManager: SessionManager;
   jlinkBackend: IJLinkBackend;
+  jlinkDeviceCatalog?: JLinkDeviceCatalog;
+  hostPathResolver?: HostPathResolver;
   controlProfileOpenSerial?: ControlProfileOpenSerial;
 }
 
@@ -74,6 +79,7 @@ interface ControlProfileDiagnostic {
   id: string;
   status: 'pass' | 'warn' | 'fail';
   message: string;
+  suggestions?: JLinkDeviceInfo[];
 }
 
 /**
@@ -87,6 +93,7 @@ export function registerControlProfileTools(
   deps: ControlProfileToolsDeps,
 ): void {
   const openSerial = deps.controlProfileOpenSerial ?? defaultOpenSerial(deps.sessionManager);
+  const hostPathResolver = deps.hostPathResolver ?? defaultHostPathResolver;
 
   registerTool(server, {
     name: 'init_control_profile',
@@ -98,10 +105,11 @@ export function registerControlProfileTools(
     inputSchema: initControlProfileInputSchema,
     handler: async (input: InitControlProfileInput): Promise<ToolHandlerResult> => {
       try {
-        const profile = await deps.controlProfileManager.init(input.root, input.profile, {
+        const rootContext = await resolveControlRoot(input.root, hostPathResolver);
+        const profile = await deps.controlProfileManager.init(rootContext.hostRoot, input.profile, {
           force: input.force ?? false,
         });
-        return successProfile(input.root, profile);
+        return successProfile(rootContext, profile);
       } catch (err) {
         translateControlProfileError(err);
       }
@@ -117,8 +125,9 @@ export function registerControlProfileTools(
     inputSchema: getControlProfileInputSchema,
     handler: async (input: GetControlProfileInput): Promise<ToolHandlerResult> => {
       try {
-        const profile = await deps.controlProfileManager.load(input.root);
-        return successProfile(input.root, profile);
+        const rootContext = await resolveControlRoot(input.root, hostPathResolver);
+        const profile = await deps.controlProfileManager.load(rootContext.hostRoot);
+        return successProfile(rootContext, profile);
       } catch (err) {
         translateControlProfileError(err);
       }
@@ -133,14 +142,15 @@ export function registerControlProfileTools(
     sensitivity: 'read-only',
     inputSchema: inspectControlProfileInputSchema,
     handler: async (input: InspectControlProfileInput): Promise<ToolHandlerResult> => {
-      const { profile, exists } = await loadProfileIfPresent(deps.controlProfileManager, input.root);
+      const rootContext = await resolveControlRoot(input.root, hostPathResolver);
+      const { profile, exists } = await loadProfileIfPresent(deps.controlProfileManager, rootContext.hostRoot);
       const report = inspectControlProfileCompleteness(profile);
-      const diagnostics = await inspectControlProfileDiagnostics(input.root, profile);
+      const diagnostics = await inspectControlProfileDiagnostics(rootContext.hostRoot, profile, deps.jlinkDeviceCatalog);
       return {
         success: true,
         evidence: {
           kind: 'workspace_config',
-          data: { root: input.root, path: controlProfilePath(input.root), exists, ...report, profile, diagnostics },
+          data: { ...rootEvidence(rootContext), exists, ...report, profile, diagnostics },
           cursor: 0,
         },
       };
@@ -154,15 +164,15 @@ export function registerControlProfileTools(
     sensitivity: 'read-only',
     inputSchema: prepareControlProfileQuestionsInputSchema,
     handler: async (input: PrepareControlProfileQuestionsInput): Promise<ToolHandlerResult> => {
-      const { profile, exists } = await loadProfileIfPresent(deps.controlProfileManager, input.root);
+      const rootContext = await resolveControlRoot(input.root, hostPathResolver);
+      const { profile, exists } = await loadProfileIfPresent(deps.controlProfileManager, rootContext.hostRoot);
       const report = inspectControlProfileCompleteness(profile);
       return {
         success: true,
         evidence: {
           kind: 'workspace_config',
           data: {
-            root: input.root,
-            path: controlProfilePath(input.root),
+            ...rootEvidence(rootContext),
             exists,
             ...report,
             question: buildControlProfileQuestion(report),
@@ -182,16 +192,16 @@ export function registerControlProfileTools(
     inputSchema: applyControlProfileAnswerInputSchema,
     handler: async (input: ApplyControlProfileAnswerInput): Promise<ToolHandlerResult> => {
       try {
+        const rootContext = await resolveControlRoot(input.root, hostPathResolver);
         const parsed = parseControlProfileAnswer(input.answer);
-        const profile = await deps.controlProfileManager.init(input.root, parsed.patch, { force: true });
+        const profile = await deps.controlProfileManager.init(rootContext.hostRoot, parsed.patch, { force: true });
         const report = inspectControlProfileCompleteness(profile);
         return {
           success: true,
           evidence: {
             kind: 'workspace_config',
             data: {
-              root: input.root,
-              path: controlProfilePath(input.root),
+              ...rootEvidence(rootContext),
               profile,
               ...report,
               needsClarification: !report.complete || parsed.rejectedFields.length > 0,
@@ -218,7 +228,8 @@ export function registerControlProfileTools(
     inputSchema: activateControlProfileInputSchema,
     handler: async (input: ActivateControlProfileInput): Promise<ToolHandlerResult> => {
       try {
-        const profile = await deps.controlProfileManager.load(input.root);
+        const rootContext = await resolveControlRoot(input.root, hostPathResolver);
+        const profile = await deps.controlProfileManager.load(rootContext.hostRoot);
         const serial = await activateSerial(profile, openSerial);
         const jlink = await activateJLink(profile, deps.jlinkBackend);
         return {
@@ -228,8 +239,7 @@ export function registerControlProfileTools(
           evidence: {
             kind: 'workspace_config',
             data: {
-              root: input.root,
-              path: controlProfilePath(input.root),
+              ...rootEvidence(rootContext),
               serial,
               jlink,
               flash: profile.flash,
@@ -327,6 +337,7 @@ async function activateJLink(
 async function inspectControlProfileDiagnostics(
   root: string,
   profile: ControlProfile | undefined,
+  jlinkDeviceCatalog: JLinkDeviceCatalog | undefined,
 ): Promise<ControlProfileDiagnostic[]> {
   const diagnostics: ControlProfileDiagnostic[] = [];
   const target = profile?.jlink?.target;
@@ -338,6 +349,18 @@ async function inspectControlProfileDiagnostics(
         status: 'warn',
         message: targetClassification.message ?? `Use ${targetClassification.normalizedTarget} as the SEGGER J-Link target name.`,
       });
+    }
+    if (jlinkDeviceCatalog !== undefined) {
+      const targetForCatalog = targetClassification.normalizedTarget;
+      const search = await jlinkDeviceCatalog.search({ query: target, limit: 5 });
+      if (search.available && !(await jlinkDeviceCatalog.has(targetForCatalog))) {
+        diagnostics.push({
+          id: 'jlink-target-catalog',
+          status: 'warn',
+          message: `J-Link target ${targetForCatalog} is not in the installed SEGGER device catalog.`,
+          suggestions: search.devices.slice(0, 5),
+        });
+      }
     }
   }
   if (!profile?.flash?.binary || !profile.flash.baseAddress) return diagnostics;
@@ -418,19 +441,37 @@ function sanitizeProbeForMcp(p: ProbeInfo): Omit<ProbeInfo, 'serialNumber'> {
   return rest;
 }
 
+interface ControlRootContext {
+  root: string;
+  hostRoot: string;
+}
+
+async function resolveControlRoot(root: string, hostPathResolver: HostPathResolver): Promise<ControlRootContext> {
+  return { root, hostRoot: await hostPathResolver.toHostPath(root) };
+}
+
+function rootEvidence(ctx: ControlRootContext): Record<string, unknown> {
+  return {
+    root: ctx.root,
+    path: controlProfilePath(ctx.hostRoot),
+    hostRoot: ctx.hostRoot,
+    rootResolved: ctx.hostRoot !== ctx.root,
+  };
+}
+
 /**
  * 构造控制配置读取/写入成功结果。
  *
- * @param root 工作区根目录
+ * @param rootContext 工作区 root 解析上下文
  * @param profile 控制配置
  * @returns MCP 工具成功结果
  */
-function successProfile(root: string, profile: ControlProfile): ToolHandlerResult {
+function successProfile(rootContext: ControlRootContext, profile: ControlProfile): ToolHandlerResult {
   return {
     success: true,
     evidence: {
       kind: 'workspace_config',
-      data: { root, path: controlProfilePath(root), profile },
+      data: { ...rootEvidence(rootContext), profile },
       cursor: 0,
     },
   };

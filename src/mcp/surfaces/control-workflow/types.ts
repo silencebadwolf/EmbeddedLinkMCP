@@ -42,6 +42,7 @@ export interface ControlWorkflowBlockingReason {
     | 'jlink_gdb_server_unavailable'
     | 'jlink_gdb_server_start_failed'
     | 'jlink_target_unsupported'
+    | 'jlink_target_not_in_catalog'
     | 'serial_open_failed';
   code: ToolErrorCode;
   message: string;

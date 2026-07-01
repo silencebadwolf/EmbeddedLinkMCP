@@ -95,6 +95,55 @@ describe('AgentIntegrationsPanel', () => {
     expect(screen.getByText(/Backup:/)).toBeInTheDocument();
   });
 
+  it('removes selected integration and refreshes row status', async () => {
+    mock.spies.agentIntegrations.list.mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          id: 'codex',
+          label: 'Codex',
+          configPath: 'C:\\Users\\A\\.codex\\config.toml',
+          configKind: 'codex-config-toml',
+          platform: 'windows',
+          locationLabel: 'Windows',
+          transportLabel: 'HTTP',
+          status: 'configured',
+          configured: true,
+          canInstall: false,
+        },
+      ],
+    });
+    mock.spies.agentIntegrations.uninstall.mockResolvedValueOnce({
+      success: true,
+      data: {
+        backupPath: 'C:\\Users\\A\\.codex\\config.toml.bak-20260615-080911',
+        status: {
+          id: 'codex',
+          label: 'Codex',
+          configPath: 'C:\\Users\\A\\.codex\\config.toml',
+          configKind: 'codex-config-toml',
+          platform: 'windows',
+          locationLabel: 'Windows',
+          transportLabel: 'HTTP',
+          status: 'not-configured',
+          configured: false,
+          canInstall: true,
+          backupPath: 'C:\\Users\\A\\.codex\\config.toml.bak-20260615-080911',
+        },
+      },
+    });
+
+    render(<AgentIntegrationsPanel open onOpenChange={onOpenChange} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+
+    await waitFor(() =>
+      expect(mock.spies.agentIntegrations.uninstall).toHaveBeenCalledWith({ targetId: 'codex' }),
+    );
+    expect(await screen.findByText('Not configured')).toBeInTheDocument();
+    expect(screen.getByText(/Backup:/)).toBeInTheDocument();
+  });
+
   it('runs diagnostics for a selected integration', async () => {
     mock.spies.agentIntegrations.list.mockResolvedValueOnce({
       success: true,
@@ -125,7 +174,7 @@ describe('AgentIntegrationsPanel', () => {
             id: 'token-env',
             label: 'LINKTERM_MCP_TOKEN',
             status: 'fail',
-            message: 'LINKTERM_MCP_TOKEN is not available in the current process environment',
+            message: 'LINKTERM_MCP_TOKEN is not visible to LinkTerm right now. Set it before starting LinkTerm and restart Codex so HTTP MCP authentication can inherit it.',
           },
         ],
       },
@@ -139,6 +188,6 @@ describe('AgentIntegrationsPanel', () => {
       expect(mock.spies.agentIntegrations.diagnose).toHaveBeenCalledWith({ targetId: 'codex' }),
     );
     expect(await screen.findByText('LINKTERM_MCP_TOKEN')).toBeInTheDocument();
-    expect(screen.getByText('LINKTERM_MCP_TOKEN is not available in the current process environment')).toBeInTheDocument();
+    expect(screen.getByText('LINKTERM_MCP_TOKEN is not visible to LinkTerm right now. Set it before starting LinkTerm and restart Codex so HTTP MCP authentication can inherit it.')).toBeInTheDocument();
   });
 });

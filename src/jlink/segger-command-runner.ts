@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcessByStdio } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createConnection, type Socket } from 'node:net';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -1180,7 +1181,7 @@ const DEVICE_DATABASE_SCAN_MAX_FILES = 2000;
 /** 在 SEGGER device XML 中精确匹配 `<ChipInfo Name="...">` 或 `<Device><ChipInfo Name="...">` 条目。 */
 function commanderSupportsTarget(commanderPath: string, target: string): boolean {
   const root = path.dirname(commanderPath);
-  const databaseFiles = listJLinkDeviceDatabaseFiles(root);
+  const databaseFiles = listJLinkDeviceDatabaseFiles(root, commanderPath);
 
   // 构建两个精确匹配正则：Name="target" 和 Name="-target"
   const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1201,14 +1202,50 @@ function commanderSupportsTarget(commanderPath: string, target: string): boolean
 }
 
 /** Enumerate SEGGER device database XML files under a J-Link installation root. */
-function listJLinkDeviceDatabaseFiles(root: string): string[] {
+function listJLinkDeviceDatabaseFiles(root: string, commanderPath?: string): string[] {
   const files: string[] = [];
   const rootDatabase = path.join(root, 'JLinkDevices.xml');
   if (existsSync(rootDatabase)) files.push(rootDatabase);
 
   const devicesRoot = path.join(root, 'Devices');
   collectXmlFiles(devicesRoot, files);
+  for (const internalExport of cachedInternalDeviceListPaths(commanderPath)) {
+    if (isFreshCachedInternalDeviceList(internalExport.cachePath, internalExport.toolPath)) {
+      files.push(internalExport.cachePath);
+    }
+  }
   return files.slice(0, DEVICE_DATABASE_SCAN_MAX_FILES);
+}
+
+function cachedInternalDeviceListPaths(toolPath: string | undefined): Array<{ cachePath: string; toolPath: string }> {
+  if (toolPath === undefined) return [];
+  return uniqueStrings([toolPath, siblingCommanderPath(toolPath)].filter((candidate): candidate is string => candidate !== undefined))
+    .filter((candidate) => existsSync(candidate))
+    .map((candidate) => ({
+      cachePath: cachedInternalDeviceListPath(candidate),
+      toolPath: candidate,
+    }));
+}
+
+function cachedInternalDeviceListPath(toolPath: string): string {
+  const hash = createHash('sha256').update(toolPath).digest('hex').slice(0, 16);
+  return path.join(tmpdir(), 'linkterm-jlink-device-catalog', `ExpDevListXML-${hash}.xml`);
+}
+
+function siblingCommanderPath(toolPath: string): string | undefined {
+  const fileName = process.platform === 'win32' ? 'JLink.exe' : 'JLinkExe';
+  const candidate = path.join(path.dirname(toolPath), fileName);
+  return candidate === toolPath ? undefined : candidate;
+}
+
+function isFreshCachedInternalDeviceList(cachePath: string, commanderPath: string): boolean {
+  try {
+    const cache = statSync(cachePath);
+    const commander = statSync(commanderPath);
+    return cache.isFile() && cache.size > 0 && cache.mtimeMs >= commander.mtimeMs;
+  } catch {
+    return false;
+  }
 }
 
 function collectXmlFiles(dir: string, files: string[]): void {

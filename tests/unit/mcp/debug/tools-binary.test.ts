@@ -27,6 +27,7 @@ interface Harness {
 
 async function setup(options: {
   runtimeCodeFresh?: boolean;
+  hostPathResolver?: { toHostPath(inputPath: string): Promise<string> };
 } = {}): Promise<Harness> {
   const manager = new SessionManager();
   const serialDiscovery = new SerialDiscovery({ listFn: async () => [] });
@@ -36,6 +37,7 @@ async function setup(options: {
     sessionManager: manager,
     serialDiscovery,
     jlinkBackend: fake,
+    hostPathResolver: options.hostPathResolver,
     runtimeDiagnostics: () => ({
       identity: { runtimeId: 'test-runtime', pid: 1234, startedAt: '2026-06-29T12:49:36.000Z' },
       transport: { mode: 'in-memory' },
@@ -287,6 +289,37 @@ describe('MCP debug binary tools', () => {
       expect((out.error as { code: string; message: string }).code).toBe('INVALID_ARGUMENT');
       expect((out.error as { message: string }).message).toContain('profile flash base');
       expect(h.fake.callsOf('flashDownload')).toHaveLength(callsBefore);
+    });
+
+    it('accepts WSL Linux profileRoot values for direct flash profile guards', async () => {
+      await teardown(h);
+      const linuxRoot = `/home/linkterm-${Date.now()}/code/FNA1000`;
+      const hostRoot = await writeProfileGuardRoot({
+        target: 'STM32F4',
+        baseAddress: '0x08000000',
+      });
+      h = await setup({
+        hostPathResolver: {
+          async toHostPath(inputPath: string): Promise<string> {
+            return inputPath === linuxRoot ? hostRoot : inputPath;
+          },
+        },
+      });
+
+      const out = await callTool(h.client, 'flash_download', {
+        probeId: h.probeId,
+        binaryBase64: Buffer.from([0x01, 0x02, 0x03, 0x04]).toString('base64'),
+        address: 0x08000000,
+        profileRoot: linuxRoot,
+        confirm: true,
+      });
+
+      expect(out.success).toBe(true);
+      expect(h.fake.callsOf('flashDownload').at(-1)!.args).toMatchObject([
+        expect.any(String),
+        4,
+        { address: 0x08000000, verify: true },
+      ]);
     });
 
     it('reports invalid argument when profileRoot does not contain a control profile', async () => {

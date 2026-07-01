@@ -31,6 +31,7 @@ interface SetupOptions {
   getActiveWindow?: () => CapturableWindow | null;
   controlProfileManager?: ControlProfileManager;
   jlinkBackend?: IJLinkBackend;
+  hostPathResolver?: { toHostPath(inputPath: string): Promise<string> };
 }
 
 async function setup(options: SetupOptions = {}): Promise<Harness> {
@@ -45,6 +46,7 @@ async function setup(options: SetupOptions = {}): Promise<Harness> {
     serialDiscovery,
     ...(includeControlProfileManager ? { controlProfileManager } : {}),
     ...(options.jlinkBackend ? { jlinkBackend: options.jlinkBackend } : {}),
+    hostPathResolver: options.hostPathResolver,
     getActiveWindow: options.getActiveWindow,
     runtimeDiagnostics: () => ({
       identity: {
@@ -607,6 +609,43 @@ describe('MCP agent runbook tool', () => {
       }),
     );
     expect(data.recommendedWorkflows[0]?.arguments).not.toHaveProperty('firmware');
+  });
+
+  it('loads profile summaries from WSL Linux roots without making agents discover host paths', async () => {
+    await teardown(h);
+    const linuxRoot = `/home/linkterm-${Date.now()}/code/FNA1000`;
+    const hostRoot = await mkdtemp(path.join(tmpdir(), 'lt-agent-runbook-wsl-host-'));
+    h = await setup({
+      hostPathResolver: {
+        async toHostPath(inputPath: string): Promise<string> {
+          return inputPath === linuxRoot ? hostRoot : inputPath;
+        },
+      },
+    });
+    await h.controlProfileManager.init(hostRoot, {
+      serial: { enabled: true, port: 'COM6', baudRate: 115200, mode: 'terminal' },
+      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 'auto' },
+      flash: { binary: 'build/gcc-arm-debug/rtthread.bin', baseAddress: '0x08000000', verify: true },
+    }, { force: true });
+
+    const out = await callTool(h.client, 'get_app_status', { root: linuxRoot });
+
+    expect(out.success).toBe(true);
+    const data = (out.evidence as {
+      data: {
+        controlProfile: { status: string; jlink?: { target?: string }; flash?: { binaryConfigured: boolean } };
+        recommendedWorkflows: Array<{ id: string; arguments: { root: string } }>;
+      };
+    }).data;
+    expect(data.controlProfile.status).toBe('loaded');
+    expect(data.controlProfile.jlink?.target).toBe('STM32H743II');
+    expect(data.controlProfile.flash?.binaryConfigured).toBe(true);
+    expect(data.recommendedWorkflows).toContainEqual(
+      expect.objectContaining({
+        id: 'profile_flash_observe',
+        arguments: expect.objectContaining({ root: linuxRoot }),
+      }),
+    );
   });
 
   it('recommends checking J-Link probe visibility before flash workflows when no probe is detected', async () => {

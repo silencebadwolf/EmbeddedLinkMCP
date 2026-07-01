@@ -20,9 +20,11 @@ import type { SerialDiscovery } from '../transports/serial/serial-discovery.js';
 import type {
   ControlProfileManager,
   EvidenceSnapshot,
+  HostPathResolver,
   WorkspaceConfigManager,
 } from '../core/workspace/index.js';
 import type { IJLinkBackend } from '../jlink/types.js';
+import type { JLinkDeviceCatalog } from '../jlink/device-catalog.js';
 import { NullJLinkBackend } from '../jlink/null-backend.js';
 import { APP_NAME } from '../shared/constants.js';
 import {
@@ -44,6 +46,7 @@ import { registerDebugTools } from './surfaces/debug/tools.js';
 import { registerDebugBinaryTools } from './surfaces/debug/tools-binary.js';
 import { registerRttLogSessionTools } from './surfaces/rtt-log-session/tools.js';
 import { registerUiTools } from './surfaces/ui/tools.js';
+import { registerJLinkDeviceCatalogTools } from './surfaces/jlink-device-catalog/tools.js';
 import type { CapturableWindow, UiStoreBridge } from './surfaces/ui/types.js';
 import { getRegisteredToolNames, setRuntimeDiagnosticsProvider } from './registry.js';
 import { buildToolSetDiagnostics } from './tool-set.js';
@@ -72,12 +75,16 @@ export interface CreateMcpServerOptions {
   controlProfileOpenSerial?: ControlProfileOpenSerial;
   /** 控制工作流后台 job 管理器；测试可注入以断言 job 生命周期。 */
   controlWorkflowJobManager?: ControlWorkflowJobManager;
+  /** 把客户端/WSL 路径解析为 LinkTerm 后端所在宿主可读路径；省略时使用默认平台解析。 */
+  hostPathResolver?: HostPathResolver;
   /**
    * J-Link backend（Phase 9）。注入时 server 会注册 28 个 debug 工具；
    * 缺省时使用 NullJLinkBackend，工具仍然注册并对所有调用返回 NO_BACKEND
    * 结构化拒绝（让 AI 客户端始终能看到工具清单与契约性失败）。
    */
   jlinkBackend?: IJLinkBackend;
+  /** 本机 SEGGER J-Link 设备库；注入时暴露只读 catalog search/get 工具并辅助诊断。 */
+  jlinkDeviceCatalog?: JLinkDeviceCatalog;
   /**
    * Phase 10：UI patch 广播桥。注入时 `ui_configure` 调用会把 patch 推送给所有渲染进程；
    * 缺省时 ui 工具仍然注册但全部返回 UI_NOT_AVAILABLE（始终注册策略与 NullJLinkBackend 一致）。
@@ -151,11 +158,15 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
   // Phase 9+: 始终注册 debug 工具；未注入 backend 时挂 NullJLinkBackend，
   // 让所有调用都返回结构化的 NO_BACKEND 拒绝（req §4.6）。
   const jlinkBackend = options.jlinkBackend ?? new NullJLinkBackend();
+  if (options.jlinkDeviceCatalog) {
+    registerJLinkDeviceCatalogTools(server, options.jlinkDeviceCatalog);
+  }
 
   registerAgentRunbookTools(server, {
     sessionManager: options.sessionManager,
     serialDiscovery: options.serialDiscovery,
     controlProfileManager: options.controlProfileManager,
+    hostPathResolver: options.hostPathResolver,
     jlinkBackend,
     getActiveWindow: options.getActiveWindow,
     runtimeDiagnostics,
@@ -179,19 +190,23 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
       controlProfileManager: options.controlProfileManager,
       sessionManager: options.sessionManager,
       jlinkBackend,
+      jlinkDeviceCatalog: options.jlinkDeviceCatalog,
+      hostPathResolver: options.hostPathResolver,
       controlProfileOpenSerial: options.controlProfileOpenSerial,
     });
     registerControlWorkflowTools(server, {
       controlProfileManager: options.controlProfileManager,
       sessionManager: options.sessionManager,
       jlinkBackend,
+      jlinkDeviceCatalog: options.jlinkDeviceCatalog,
+      hostPathResolver: options.hostPathResolver,
       controlProfileOpenSerial: options.controlProfileOpenSerial,
       controlWorkflowJobManager: options.controlWorkflowJobManager,
     });
   }
 
-  registerDebugTools(server, { jlinkBackend });
-  registerDebugBinaryTools(server, { jlinkBackend });
+  registerDebugTools(server, { jlinkBackend, hostPathResolver: options.hostPathResolver });
+  registerDebugBinaryTools(server, { jlinkBackend, hostPathResolver: options.hostPathResolver });
   registerRttLogSessionTools(server, {
     sessionManager: options.sessionManager,
     jlinkBackend,

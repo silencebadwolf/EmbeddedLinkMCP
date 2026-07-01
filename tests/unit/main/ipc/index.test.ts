@@ -107,6 +107,9 @@ vi.mock('../../../../src/main/ipc/session-create-handler.js', () => ({
 vi.mock('../../../../src/main/ipc/rtt-log-session-ipc.js', () => ({
   registerRttLogSessionIpc: vi.fn(() => vi.fn()),
 }));
+vi.mock('../../../../src/main/ipc/jlink-device-catalog-ipc.js', () => ({
+  registerJLinkDeviceCatalogIpc: vi.fn(() => vi.fn()),
+}));
 vi.mock('../../../../src/main/ipc/connection-profiles-ipc.js', () => ({
   registerConnectionProfilesIpc: vi.fn(() => vi.fn()),
 }));

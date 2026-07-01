@@ -16,7 +16,9 @@ import type {
   UiStatePatch,
   AgentIntegrationStatus,
   AgentIntegrationInstallResult,
+  AgentIntegrationUninstallResult,
   AgentIntegrationDiagnosticResult,
+  JLinkDeviceSearchResultPayload,
   ControlProfileFilePayload,
 } from '../../src/shared/preload-api.js';
 import type { TranscriptEventEnvelope } from '../../src/shared/transcript-ipc-types.js';
@@ -64,7 +66,13 @@ export interface MockPreloadAPI {
     agentIntegrations: {
       list: ReturnType<typeof vi.fn>;
       install: ReturnType<typeof vi.fn>;
+      uninstall: ReturnType<typeof vi.fn>;
       diagnose: ReturnType<typeof vi.fn>;
+    };
+    jlinkDevices: {
+      search: ReturnType<typeof vi.fn>;
+      get: ReturnType<typeof vi.fn>;
+      refresh: ReturnType<typeof vi.fn>;
     };
     controlProfile: {
       save: ReturnType<typeof vi.fn>;
@@ -180,6 +188,20 @@ export function createMockPreloadAPI(): MockPreloadAPI {
         },
       }),
   );
+  const agentIntegrationUninstall = vi.fn(
+    async (): Promise<PreloadResult<AgentIntegrationUninstallResult>> =>
+      okEmpty({
+        status: {
+          id: 'vscode',
+          label: 'VS Code Copilot',
+          configPath: 'mcp.json',
+          configKind: 'vscode-mcp-json',
+          status: 'not-configured',
+          configured: false,
+          canInstall: true,
+        },
+      }),
+  );
   const agentIntegrationDiagnose = vi.fn(
     async (): Promise<PreloadResult<AgentIntegrationDiagnosticResult>> =>
       okEmpty({
@@ -189,6 +211,13 @@ export function createMockPreloadAPI(): MockPreloadAPI {
         checks: [{ id: 'config', label: 'Codex MCP config', status: 'pass' }],
       }),
   );
+
+  const jlinkDeviceSearch = vi.fn(
+    async (): Promise<PreloadResult<JLinkDeviceSearchResultPayload>> =>
+      okEmpty({ available: false, reason: 'database-not-found', devices: [], sourceFiles: [] }),
+  );
+  const jlinkDeviceGet = vi.fn(async () => okEmpty({ device: undefined }));
+  const jlinkDeviceRefresh = vi.fn(async () => okEmpty({ refreshed: true as const }));
 
   const defaultControlProfile: ControlProfileFilePayload = {
     schemaVersion: 'linkterm-control/1.0.0',
@@ -238,7 +267,13 @@ export function createMockPreloadAPI(): MockPreloadAPI {
     agentIntegrations: {
       list: agentIntegrationList,
       install: agentIntegrationInstall,
+      uninstall: agentIntegrationUninstall,
       diagnose: agentIntegrationDiagnose,
+    },
+    jlinkDevices: {
+      search: jlinkDeviceSearch,
+      get: jlinkDeviceGet,
+      refresh: jlinkDeviceRefresh,
     },
     controlProfile: {
       save: controlProfileSave,
@@ -279,7 +314,13 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       agentIntegrations: {
         list: agentIntegrationList,
         install: agentIntegrationInstall,
+        uninstall: agentIntegrationUninstall,
         diagnose: agentIntegrationDiagnose,
+      },
+      jlinkDevices: {
+        search: jlinkDeviceSearch,
+        get: jlinkDeviceGet,
+        refresh: jlinkDeviceRefresh,
       },
       controlProfile: {
         save: controlProfileSave,

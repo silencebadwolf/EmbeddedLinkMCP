@@ -7,6 +7,7 @@ import type {
   AgentIntegrationDiagnosticCheck,
   AgentIntegrationDiagnosticResult,
   AgentIntegrationInstallResult,
+  AgentIntegrationUninstallResult,
   AgentIntegrationStatus,
   AgentIntegrationTarget,
   AgentIntegrationTargetId,
@@ -77,7 +78,7 @@ export class AgentIntegrationManager {
   readonly #tokenEnvWriter: AgentIntegrationTokenEnvWriter | undefined;
   readonly #env: NodeJS.ProcessEnv;
   readonly #now: () => Date;
-  readonly #installQueues = new Map<AgentIntegrationTargetId, Promise<unknown>>();
+  readonly #writeQueues = new Map<AgentIntegrationTargetId, Promise<unknown>>();
   #writeCounter = 0;
 
   constructor(options: AgentIntegrationManagerOptions) {
@@ -102,7 +103,12 @@ export class AgentIntegrationManager {
 
   /** Install or repair LinkTerm MCP config for one target, creating a timestamped backup first. */
   async install(targetId: AgentIntegrationTargetId): Promise<AgentIntegrationInstallResult> {
-    return this.#enqueueInstall(targetId, async () => this.#installNow(targetId));
+    return this.#enqueueWrite(targetId, async () => this.#installNow(targetId));
+  }
+
+  /** Remove LinkTerm MCP config for one target, creating a timestamped backup first. */
+  async uninstall(targetId: AgentIntegrationTargetId): Promise<AgentIntegrationUninstallResult> {
+    return this.#enqueueWrite(targetId, async () => this.#uninstallNow(targetId));
   }
 
   async diagnose(targetId: AgentIntegrationTargetId): Promise<AgentIntegrationDiagnosticResult> {
@@ -134,8 +140,8 @@ export class AgentIntegrationManager {
         label: expected.bearerTokenEnvVar,
         status: hasToken ? 'pass' : 'fail',
         message: hasToken
-          ? `${expected.bearerTokenEnvVar} is available in the current process environment`
-          : `${expected.bearerTokenEnvVar} is not available in the current process environment`,
+          ? `${expected.bearerTokenEnvVar} is visible to LinkTerm. HTTP MCP authentication can use it after Codex inherits the environment.`
+          : `${expected.bearerTokenEnvVar} is not visible to LinkTerm right now. Set it before starting LinkTerm and restart Codex so HTTP MCP authentication can inherit it.`,
       });
     }
     return {
@@ -146,15 +152,15 @@ export class AgentIntegrationManager {
     };
   }
 
-  #enqueueInstall(
+  #enqueueWrite<T>(
     targetId: AgentIntegrationTargetId,
-    work: () => Promise<AgentIntegrationInstallResult>,
-  ): Promise<AgentIntegrationInstallResult> {
-    const previous = this.#installQueues.get(targetId) ?? Promise.resolve();
+    work: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.#writeQueues.get(targetId) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(work);
-    this.#installQueues.set(targetId, next);
+    this.#writeQueues.set(targetId, next);
     next.finally(() => {
-      if (this.#installQueues.get(targetId) === next) this.#installQueues.delete(targetId);
+      if (this.#writeQueues.get(targetId) === next) this.#writeQueues.delete(targetId);
     }).catch(() => undefined);
     return next;
   }
@@ -190,6 +196,30 @@ export class AgentIntegrationManager {
         backupPath,
         ...(tokenEnvResult?.message ? { message: tokenEnvResult.message } : {}),
       },
+      ...(backupPath ? { backupPath } : {}),
+    };
+  }
+
+  async #uninstallNow(targetId: AgentIntegrationTargetId): Promise<AgentIntegrationUninstallResult> {
+    const target = this.#requireTarget(targetId);
+    const existing = await this.#readExistingConfig(target);
+    if (existing.kind === 'missing') {
+      return { status: await this.#statusFor(target) };
+    }
+    if (existing.kind === 'invalid') throw new AgentConfigInvalidJsonError(target.configPath);
+
+    const backupPath = await this.#backupIfExists(target, existing.raw);
+    if (target.configKind === 'codex-config-toml') {
+      await this.#writeTargetConfigText(target, removeCodexTomlLinkTermConfig(existing.raw));
+    } else {
+      const current = existing.kind === 'json' ? existing.value : {};
+      await this.#writeConfig(
+        target.configPath,
+        removeLinkTermConfig(current, target),
+      );
+    }
+    return {
+      status: await this.#statusFor(target),
       ...(backupPath ? { backupPath } : {}),
     };
   }
@@ -382,6 +412,36 @@ function mergeLinkTermConfig(
   return next;
 }
 
+function removeLinkTermConfig(
+  current: JsonObject,
+  target: AgentIntegrationTarget,
+): JsonObject {
+  const next = structuredClone(current) as JsonObject;
+  if (target.configKind === 'vscode-settings') {
+    const key = 'chat.mcpServers';
+    if (isPlainObject(next[key])) {
+      const mcpServers = { ...next[key] };
+      delete mcpServers.linkterm;
+      next[key] = mcpServers;
+    }
+    return next;
+  }
+  if (target.configKind === 'vscode-mcp-json') {
+    if (isPlainObject(next.servers)) {
+      const servers = { ...next.servers };
+      delete servers.linkterm;
+      next.servers = servers;
+    }
+    return next;
+  }
+  if (isPlainObject(next.mcpServers)) {
+    const mcpServers = { ...next.mcpServers };
+    delete mcpServers.linkterm;
+    next.mcpServers = mcpServers;
+  }
+  return next;
+}
+
 function readLinkTermConfig(current: JsonObject, target: AgentIntegrationTarget): unknown {
   if (target.configKind === 'vscode-settings') {
     const mcpServers = isPlainObject(current['chat.mcpServers'])
@@ -544,6 +604,12 @@ function mergeCodexTomlConfig(
     .trimEnd();
   const block = renderCodexLinkTermToml(mcpConfig);
   return `${base ? `${base}\n\n` : ''}${block}\n`;
+}
+
+function removeCodexTomlLinkTermConfig(raw: string): string {
+  const base = removeTomlTables(raw, ['mcp_servers.linkterm', 'mcp_servers.linkterm.env'])
+    .trimEnd();
+  return base ? `${base}\n` : '';
 }
 
 function renderCodexLinkTermToml(mcpConfig: ResolvedMcpConfig): string {
