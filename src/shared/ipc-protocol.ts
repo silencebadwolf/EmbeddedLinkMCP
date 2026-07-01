@@ -43,6 +43,10 @@ export const IPC_CHANNELS = {
   JLINK_DEVICES_REFRESH: 'jlinkDevices:refresh',
   CONTROL_PROFILE_SAVE: 'controlProfile:save',
   CONTROL_PROFILE_LOAD: 'controlProfile:load',
+  CONTROL_PROFILE_RECORDS_LIST: 'controlProfileRecords:list',
+  CONTROL_PROFILE_RECORDS_OPEN: 'controlProfileRecords:open',
+  CONTROL_PROFILE_RECORDS_DELETE: 'controlProfileRecords:delete',
+  CONTROL_PROFILE_RUN_DOWNLOAD: 'controlProfile:runDownload',
   CONTROL_PROFILE_PICK_WORKSPACE_ROOT: 'controlProfile:pickWorkspaceRoot',
   CONTROL_PROFILE_PICK_FIRMWARE_FILE: 'controlProfile:pickFirmwareFile',
 } as const;

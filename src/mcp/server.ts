@@ -19,6 +19,7 @@ import type { SessionManager } from '../core/session/session-manager.js';
 import type { SerialDiscovery } from '../transports/serial/serial-discovery.js';
 import type {
   ControlProfileManager,
+  ControlProfileRecordManager,
   EvidenceSnapshot,
   HostPathResolver,
   WorkspaceConfigManager,
@@ -27,10 +28,7 @@ import type { IJLinkBackend } from '../jlink/types.js';
 import type { JLinkDeviceCatalog } from '../jlink/device-catalog.js';
 import { NullJLinkBackend } from '../jlink/null-backend.js';
 import { APP_NAME } from '../shared/constants.js';
-import {
-  defaultStdioTransportFactory,
-  type McpTransportFactory,
-} from './transport.js';
+import { defaultStdioTransportFactory, type McpTransportFactory } from './transport.js';
 import { LINKTERM_MCP_SCHEMA_VERSION } from './versioning/version-check.js';
 import { registerTerminalTools } from './surfaces/terminal/tools.js';
 import { registerWorkspaceTools } from './surfaces/workspace/tools.js';
@@ -71,6 +69,8 @@ export interface CreateMcpServerOptions {
    * 用于显式生成/读取/拉起 `<root>/.linkterm/control-profile.json`。
    */
   controlProfileManager?: ControlProfileManager;
+  /** Global quick-entry records for AI-created workspace control profiles. */
+  controlProfileRecordManager?: ControlProfileRecordManager;
   /** 测试注入用串口激活函数；生产省略时走 SessionManager + buildSession。 */
   controlProfileOpenSerial?: ControlProfileOpenSerial;
   /** 控制工作流后台 job 管理器；测试可注入以断言 job 生命周期。 */
@@ -147,7 +147,8 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
     },
   );
   const runtimeDiagnostics =
-    options.runtimeDiagnostics ?? (() => baseDiagnostics(activeTransport === null ? 'not-started' : 'stdio'));
+    options.runtimeDiagnostics ??
+    (() => baseDiagnostics(activeTransport === null ? 'not-started' : 'stdio'));
   setRuntimeDiagnosticsProvider(server, runtimeDiagnostics);
 
   registerTerminalTools(server, {
@@ -188,6 +189,7 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
   if (options.controlProfileManager) {
     registerControlProfileTools(server, {
       controlProfileManager: options.controlProfileManager,
+      controlProfileRecordManager: options.controlProfileRecordManager,
       sessionManager: options.sessionManager,
       jlinkBackend,
       jlinkDeviceCatalog: options.jlinkDeviceCatalog,

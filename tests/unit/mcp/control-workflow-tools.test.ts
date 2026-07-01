@@ -15,6 +15,7 @@ import { ControlWorkflowJobManager } from '@/mcp/surfaces/control-workflow/job-m
 import type { SerialSessionConfig, SessionState } from '@/shared/types.js';
 import { SerialDiscovery } from '@/transports/serial/serial-discovery.js';
 import { FakeJLinkBackend } from '../../fixtures/fake-jlink-backend.js';
+import { intelHexRecord, intelHexText } from '../../fixtures/intel-hex.js';
 import { createInMemoryMcpTransportPair } from '../../fixtures/mock-mcp-transport.js';
 import { MockTransport } from '../../fixtures/mock-transport.js';
 
@@ -424,6 +425,102 @@ describe('MCP control workflow tool', () => {
       { address: 0x08008000, verify: true },
     ]);
     expect(h.fake.callsOf('cpuReset')).toHaveLength(1);
+  });
+
+  it('decodes Intel HEX firmware before raw flash download', async () => {
+    class CapturingBackend extends FakeJLinkBackend {
+      downloadedBinary: Buffer | undefined;
+
+      override async flashDownload(
+        probeId: string,
+        binary: Buffer,
+        opts?: FlashDownloadOptions,
+        signal?: AbortSignal,
+      ): Promise<{ bytesWritten: number; verified: boolean }> {
+        this.downloadedBinary = Buffer.from(binary);
+        return super.flashDownload(probeId, binary, opts, signal);
+      }
+    }
+    await teardown(h);
+    const backend = new CapturingBackend();
+    h = await setup({ jlinkBackend: backend });
+    const decoded = Buffer.from([
+      0x00, 0x00, 0x00, 0x20,
+      0x11, 0x80, 0x00, 0x08,
+      0xAA, 0xBB, 0xCC, 0xDD,
+      0x10, 0x11, 0x12, 0x13,
+      0x14, 0x15, 0x16, 0x17,
+    ]);
+    await writeFile(
+      path.join(h.root, 'rtthread.hex'),
+      intelHexText([
+        intelHexRecord(0, 0x04, [0x08, 0x00]),
+        intelHexRecord(0x8000, 0x00, Array.from(decoded)),
+        intelHexRecord(0, 0x01, []),
+      ]),
+    );
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        serial: { enabled: false },
+        jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.hex', baseAddress: '0x08008000', verify: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      observe: { serial: false },
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    expect(backend.downloadedBinary).toEqual(decoded);
+    expect(backend.callsOf('flashDownload')[0]!.args).toMatchObject([
+      expect.any(String),
+      decoded.byteLength,
+      { address: 0x08008000, verify: true },
+    ]);
+    const data = (out.evidence as {
+      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+    }).data;
+    expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
+      address: 0x08008000,
+      firmwareFormat: 'intel-hex',
+    });
+  });
+
+  it('rejects Intel HEX firmware when the configured base address differs from the image address', async () => {
+    await writeFile(
+      path.join(h.root, 'rtthread.hex'),
+      intelHexText([
+        intelHexRecord(0, 0x04, [0x08, 0x00]),
+        intelHexRecord(0x8000, 0x00, [0x00, 0x00, 0x00, 0x20, 0x11, 0x80, 0x00, 0x08]),
+        intelHexRecord(0, 0x01, []),
+      ]),
+    );
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        serial: { enabled: false },
+        jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.hex', baseAddress: '0x08000000', verify: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      observe: { serial: false },
+      confirm: true,
+    });
+
+    expect(out.success).toBe(false);
+    expect((out.error as { code: string; message: string }).code).toBe('INVALID_ARGUMENT');
+    expect((out.error as { message: string }).message).toContain('0x08008000');
+    expect(h.fake.callsOf('probeConnect')).toHaveLength(0);
+    expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
   });
 
   it('runs flash-observe-diagnose without serial when RTT debug observation is requested', async () => {

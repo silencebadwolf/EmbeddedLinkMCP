@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SessionManager } from '@/core/session/session-manager.js';
-import { ControlProfileManager } from '@/core/workspace/index.js';
+import {
+  ControlProfileManager,
+  ControlProfileRecordManager,
+  type ControlProfileRecord,
+} from '@/core/workspace/index.js';
 import { SerialDiscovery } from '@/transports/serial/serial-discovery.js';
 import { createMcpServer } from '@/mcp/index.js';
 import type { LinkTermMcpServer } from '@/mcp/server.js';
@@ -13,11 +17,13 @@ import type { JLinkDeviceCatalog } from '@/jlink/device-catalog.js';
 import { createInMemoryMcpTransportPair } from '../../fixtures/mock-mcp-transport.js';
 import { FakeJLinkBackend } from '../../fixtures/fake-jlink-backend.js';
 import { JLinkOperationError } from '@/jlink/errors.js';
+import { intelHexRecord, intelHexText } from '../../fixtures/intel-hex.js';
 
 interface Harness {
   manager: SessionManager;
   serialDiscovery: SerialDiscovery;
   controlProfileManager: ControlProfileManager;
+  controlProfileRecordManager: ControlProfileRecordManager;
   fake: FakeJLinkBackend;
   mcp: LinkTermMcpServer;
   client: Client;
@@ -25,14 +31,19 @@ interface Harness {
   openedSerialConfigs: SerialSessionConfig[];
 }
 
-async function setup(options: {
-  jlinkDeviceCatalog?: JLinkDeviceCatalog;
-  hostPathResolver?: { toHostPath(inputPath: string): Promise<string> };
-} = {}): Promise<Harness> {
+async function setup(
+  options: {
+    jlinkDeviceCatalog?: JLinkDeviceCatalog;
+    hostPathResolver?: { toHostPath(inputPath: string): Promise<string> };
+  } = {},
+): Promise<Harness> {
   const root = await mkdtemp(path.join(tmpdir(), 'lt-control-profile-mcp-'));
   const manager = new SessionManager();
   const serialDiscovery = new SerialDiscovery({ listFn: async () => [] });
   const controlProfileManager = new ControlProfileManager();
+  const controlProfileRecordManager = new ControlProfileRecordManager({
+    filePath: path.join(root, 'control-profiles.json'),
+  });
   const fake = new FakeJLinkBackend();
   const openedSerialConfigs: SerialSessionConfig[] = [];
   const { server: serverTransport, client: clientTransport } = createInMemoryMcpTransportPair();
@@ -40,6 +51,7 @@ async function setup(options: {
     sessionManager: manager,
     serialDiscovery,
     controlProfileManager,
+    controlProfileRecordManager,
     jlinkBackend: fake,
     jlinkDeviceCatalog: options.jlinkDeviceCatalog,
     hostPathResolver: options.hostPathResolver,
@@ -52,7 +64,17 @@ async function setup(options: {
   await mcp.start();
   const client = new Client({ name: 'lt-control-profile-test', version: '0.0.0' });
   await client.connect(clientTransport);
-  return { manager, serialDiscovery, controlProfileManager, fake, mcp, client, root, openedSerialConfigs };
+  return {
+    manager,
+    serialDiscovery,
+    controlProfileManager,
+    controlProfileRecordManager,
+    fake,
+    mcp,
+    client,
+    root,
+    openedSerialConfigs,
+  };
 }
 
 async function teardown(h: Harness): Promise<void> {
@@ -112,6 +134,27 @@ describe('MCP control profile tools', () => {
     expect(JSON.parse(raw)).toMatchObject({ flash: { baseAddress: '0x08000000' } });
   });
 
+  it('records AI-created control profiles for later human reuse', async () => {
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+      },
+    });
+
+    const records = (await h.controlProfileRecordManager.list()) as ControlProfileRecord[];
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      root: h.root,
+      source: 'ai',
+      profile: {
+        jlink: { target: 'STM32H743II' },
+        flash: { baseAddress: '0x08000000' },
+      },
+    });
+  });
+
   it('get_control_profile reads the persisted profile', async () => {
     await callTool(h.client, 'init_control_profile', {
       root: h.root,
@@ -120,7 +163,8 @@ describe('MCP control profile tools', () => {
 
     const out = await callTool(h.client, 'get_control_profile', { root: h.root });
     expect(out.success).toBe(true);
-    const profile = (out.evidence as { data: { profile: { jlink: { target: string } } } }).data.profile;
+    const profile = (out.evidence as { data: { profile: { jlink: { target: string } } } }).data
+      .profile;
     expect(profile.jlink.target).toBe('STM32F407VG');
   });
 
@@ -135,17 +179,33 @@ describe('MCP control profile tools', () => {
         },
       },
     });
-    await h.controlProfileManager.init(hostRoot, {
-      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
-      flash: { binary: 'build/gcc-arm-debug/rtthread.bin', baseAddress: '0x08000000', verify: true },
-    }, { force: true });
+    await h.controlProfileManager.init(
+      hostRoot,
+      {
+        jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+        flash: {
+          binary: 'build/gcc-arm-debug/rtthread.bin',
+          baseAddress: '0x08000000',
+          verify: true,
+        },
+      },
+      { force: true },
+    );
 
     const out = await callTool(h.client, 'get_control_profile', { root: linuxRoot });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: { root: string; hostRoot?: string; rootResolved?: boolean; path: string; profile: { jlink: { target: string } } };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          root: string;
+          hostRoot?: string;
+          rootResolved?: boolean;
+          path: string;
+          profile: { jlink: { target: string } };
+        };
+      }
+    ).data;
     expect(data.root).toBe(linuxRoot);
     expect(data.hostRoot).toBe(hostRoot);
     expect(data.rootResolved).toBe(true);
@@ -167,7 +227,13 @@ describe('MCP control profile tools', () => {
 
     expect(out.success).toBe(true);
     expect(h.openedSerialConfigs).toEqual([
-      { type: 'serial', port: 'COM7', baudRate: 921600, mode: 'terminal', label: 'LinkTerm Control: serial' },
+      {
+        type: 'serial',
+        port: 'COM7',
+        baudRate: 921600,
+        mode: 'terminal',
+        label: 'LinkTerm Control: serial',
+      },
     ]);
     expect(h.fake.callsOf('probeConnect')).toHaveLength(1);
     expect(h.fake.callsOf('probeConnect')[0]!.args[0]).toEqual({
@@ -178,7 +244,12 @@ describe('MCP control profile tools', () => {
     expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
 
     const evidence = out.evidence as {
-      data: { root: string; serial?: { sessionId: string }; jlink?: { probeId: string }; flash?: { baseAddress: string } };
+      data: {
+        root: string;
+        serial?: { sessionId: string };
+        jlink?: { probeId: string };
+        flash?: { baseAddress: string };
+      };
     };
     expect(evidence.data.root).toBe(h.root);
     expect(evidence.data.serial?.sessionId).toBe('sess_control_serial');
@@ -187,7 +258,10 @@ describe('MCP control profile tools', () => {
   });
 
   it('activate_control_profile tries descending J-Link speeds when profile speed is auto', async () => {
-    h.fake.failOnce.set('probeConnect', new JLinkOperationError('speed too high', { operation: 'probeConnect' }));
+    h.fake.failOnce.set(
+      'probeConnect',
+      new JLinkOperationError('speed too high', { operation: 'probeConnect' }),
+    );
     await callTool(h.client, 'init_control_profile', {
       root: h.root,
       profile: {
@@ -251,7 +325,9 @@ describe('MCP control profile tools', () => {
     const out = await callTool(h.client, 'inspect_control_profile', { root: h.root });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as { data: { exists: boolean; complete: boolean; missingFields: string[] } }).data;
+    const data = (
+      out.evidence as { data: { exists: boolean; complete: boolean; missingFields: string[] } }
+    ).data;
     expect(data.exists).toBe(false);
     expect(data.complete).toBe(false);
     expect(data.missingFields).toContain('observation.channel');
@@ -275,42 +351,100 @@ describe('MCP control profile tools', () => {
     const out = await callTool(h.client, 'inspect_control_profile', { root: h.root });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        diagnostics: Array<{ id: string; status: string; message: string }>;
-      };
-    }).data;
-    expect(data.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'firmware-vector-base',
-        status: 'fail',
-        message: expect.stringContaining('0x080a8141'),
-      }),
-    ]));
+    const data = (
+      out.evidence as {
+        data: {
+          diagnostics: Array<{ id: string; status: string; message: string }>;
+        };
+      }
+    ).data;
+    expect(data.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'firmware-vector-base',
+          status: 'fail',
+          message: expect.stringContaining('0x080a8141'),
+        }),
+      ]),
+    );
   });
 
-  it('inspect_control_profile warns when a stale profile contains an STM32 order-code target', async () => {
-    await mkdir(path.join(h.root, '.linkterm'), { recursive: true });
-    await writeFile(path.join(h.root, '.linkterm', 'control-profile.json'), JSON.stringify({
-      schemaVersion: 'linkterm-control/1.0.0',
-      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
-    }, null, 2));
+  it('inspect_control_profile decodes Intel HEX firmware for vector table diagnostics', async () => {
+    await writeFile(
+      path.join(h.root, 'rtthread.hex'),
+      intelHexText([
+        intelHexRecord(0, 0x04, [0x08, 0x00]),
+        intelHexRecord(0x8000, 0x00, [
+          0x00, 0x00, 0x00, 0x20,
+          0x11, 0x80, 0x00, 0x08,
+          0xaa, 0xbb, 0xcc, 0xdd,
+          0x10, 0x11, 0x12, 0x13,
+          0x14, 0x15, 0x16, 0x17,
+        ]),
+        intelHexRecord(0, 0x01, []),
+      ]),
+    );
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.hex', baseAddress: '0x08008000', verify: true },
+      },
+    });
 
     const out = await callTool(h.client, 'inspect_control_profile', { root: h.root });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        diagnostics: Array<{ id: string; status: string; message: string }>;
-      };
-    }).data;
-    expect(data.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'jlink-target-name',
-        status: 'warn',
-        message: expect.stringContaining('STM32H743II'),
-      }),
-    ]));
+    const data = (
+      out.evidence as {
+        data: {
+          diagnostics: Array<{ id: string; status: string; message: string }>;
+        };
+      }
+    ).data;
+    expect(data.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'firmware-vector-base',
+          status: 'pass',
+        }),
+      ]),
+    );
+  });
+
+  it('inspect_control_profile warns when a stale profile contains an STM32 order-code target', async () => {
+    await mkdir(path.join(h.root, '.linkterm'), { recursive: true });
+    await writeFile(
+      path.join(h.root, '.linkterm', 'control-profile.json'),
+      JSON.stringify(
+        {
+          schemaVersion: 'linkterm-control/1.0.0',
+          jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const out = await callTool(h.client, 'inspect_control_profile', { root: h.root });
+
+    expect(out.success).toBe(true);
+    const data = (
+      out.evidence as {
+        data: {
+          diagnostics: Array<{ id: string; status: string; message: string }>;
+        };
+      }
+    ).data;
+    expect(data.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'jlink-target-name',
+          status: 'warn',
+          message: expect.stringContaining('STM32H743II'),
+        }),
+      ]),
+    );
   });
 
   it('inspect_control_profile reports catalog suggestions for unknown J-Link targets', async () => {
@@ -320,7 +454,9 @@ describe('MCP control profile tools', () => {
         search: async () => ({
           available: true,
           sourceFiles: ['JLinkDevices.xml'],
-          devices: [{ name: 'STM32H743II', vendor: 'ST', sourceFile: 'JLinkDevices.xml', flashBanks: [] }],
+          devices: [
+            { name: 'STM32H743II', vendor: 'ST', sourceFile: 'JLinkDevices.xml', flashBanks: [] },
+          ],
         }),
         get: async () => undefined,
         has: async () => false,
@@ -328,20 +464,29 @@ describe('MCP control profile tools', () => {
       },
     });
     await mkdir(path.join(h.root, '.linkterm'), { recursive: true });
-    await writeFile(path.join(h.root, '.linkterm', 'control-profile.json'), JSON.stringify({
-      schemaVersion: 'linkterm-control/1.0.0',
-      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
-    }));
+    await writeFile(
+      path.join(h.root, '.linkterm', 'control-profile.json'),
+      JSON.stringify({
+        schemaVersion: 'linkterm-control/1.0.0',
+        jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+      }),
+    );
 
     const out = await callTool(h.client, 'inspect_control_profile', { root: h.root });
-    const data = (out.evidence as { data: { diagnostics: Array<{ id: string; suggestions?: Array<{ name: string }> }> } }).data;
-    expect(data.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'jlink-target-catalog',
-        status: 'warn',
-        suggestions: [expect.objectContaining({ name: 'STM32H743II' })],
-      }),
-    ]));
+    const data = (
+      out.evidence as {
+        data: { diagnostics: Array<{ id: string; suggestions?: Array<{ name: string }> }> };
+      }
+    ).data;
+    expect(data.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'jlink-target-catalog',
+          status: 'warn',
+          suggestions: [expect.objectContaining({ name: 'STM32H743II' })],
+        }),
+      ]),
+    );
   });
 
   it('prepare_control_profile_questions produces a human-facing question', async () => {
@@ -362,14 +507,20 @@ describe('MCP control profile tools', () => {
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        complete: boolean;
-        needsClarification: boolean;
-        parsedFields: string[];
-        profile: { flash: { baseAddress: string }; serial: { port: string }; jlink: { target: string } };
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          complete: boolean;
+          needsClarification: boolean;
+          parsedFields: string[];
+          profile: {
+            flash: { baseAddress: string };
+            serial: { port: string };
+            jlink: { target: string };
+          };
+        };
+      }
+    ).data;
     expect(data.complete).toBe(true);
     expect(data.needsClarification).toBe(false);
     expect(data.parsedFields).toContain('jlink.target');
@@ -383,5 +534,16 @@ describe('MCP control profile tools', () => {
       jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
       flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
     });
+
+    const records = await h.controlProfileRecordManager.list();
+    expect(records).toEqual([
+      expect.objectContaining({
+        root: h.root,
+        source: 'ai',
+        profile: expect.objectContaining({
+          serial: expect.objectContaining({ port: 'COM7' }),
+        }),
+      }),
+    ]);
   });
 });

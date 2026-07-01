@@ -9,6 +9,12 @@ import {
   type ControlProfile,
   type HostPathResolver,
 } from '../../../core/workspace/index.js';
+import {
+  formatHexAddress,
+  IntelHexParseError,
+  isIntelHexPath,
+  parseIntelHex,
+} from '../../../core/workspace/intel-hex.js';
 import type { IJLinkBackend, ProbeConnectOptions, ProbeInfo, RegisterValue } from '../../../jlink/types.js';
 import type { JLinkDeviceCatalog } from '../../../jlink/device-catalog.js';
 import { resolveJLinkTarget, type JLinkTargetResolution } from '../../../jlink/target-resolver.js';
@@ -55,6 +61,7 @@ interface ResolvedFirmware {
   verify: boolean;
   binary: Buffer;
   sourcePath: string;
+  format: 'raw-binary' | 'intel-hex';
   timeoutMs?: number;
   parameterSources: {
     filePath: 'profile' | 'request';
@@ -490,6 +497,7 @@ async function flashStep(
           postDownloadReadbackRequired: firmware.verify,
         },
         address: firmware.baseAddress,
+        firmwareFormat: firmware.format,
         timeoutMs: firmware.timeoutMs,
         parameterSources: firmware.parameterSources,
       },
@@ -781,6 +789,12 @@ async function resolveFirmware(
   const pathResolution = await resolveFirmwarePath(root, filePath, filePathSource, hostPathResolver);
   const firmware = await readFirmwareCapped(pathResolution.path, pathResolution.realRoot);
   const baseAddress = parseHexAddress(baseAddressHex);
+  if (firmware.baseAddress !== undefined && firmware.baseAddress !== baseAddress) {
+    throw new ToolError(
+      ERROR_CODES.INVALID_ARGUMENT,
+      `Intel HEX image base address ${formatHexAddress(firmware.baseAddress)} does not match configured flash base address ${formatHexAddress(baseAddress)}`,
+    );
+  }
   validateFirmwareVectorTable(firmware.binary, baseAddress);
   return {
     absolutePath: firmware.absolutePath,
@@ -789,6 +803,7 @@ async function resolveFirmware(
     timeoutMs,
     binary: firmware.binary,
     sourcePath: filePath,
+    format: firmware.format,
     parameterSources: {
       filePath: filePathSource,
       baseAddress: baseAddressSource,
@@ -840,7 +855,12 @@ async function resolveFirmwarePath(
 async function readFirmwareCapped(
   filePath: string,
   realRoot?: string,
-): Promise<{ absolutePath: string; binary: Buffer }> {
+): Promise<{
+  absolutePath: string;
+  binary: Buffer;
+  format: 'raw-binary' | 'intel-hex';
+  baseAddress?: number;
+}> {
   const handle = await openFileOrInvalid(filePath);
   const chunks: Buffer[] = [];
   let total = 0;
@@ -875,9 +895,24 @@ async function readFirmwareCapped(
       }
       chunks.push(Buffer.from(scratch.subarray(0, bytesRead)));
     }
-    return { absolutePath: realFirmwarePath, binary: Buffer.concat(chunks, total) };
+    const raw = Buffer.concat(chunks, total);
+    if (!isIntelHexPath(realFirmwarePath)) {
+      return { absolutePath: realFirmwarePath, binary: raw, format: 'raw-binary' };
+    }
+    const image = parseIntelHex(raw, { maxImageBytes: MAX_BINARY_BYTES });
+    return {
+      absolutePath: realFirmwarePath,
+      binary: image.binary,
+      format: 'intel-hex',
+      baseAddress: image.baseAddress,
+    };
   } catch (err) {
     if (err instanceof ToolError) throw err;
+    if (err instanceof IntelHexParseError) {
+      throw new ToolError(ERROR_CODES.INVALID_ARGUMENT, err.message, {
+        field: 'firmware.filePath',
+      });
+    }
     throw new ToolError(ERROR_CODES.INVALID_ARGUMENT, 'Firmware path is not readable', {
       field: 'firmware.filePath',
     });

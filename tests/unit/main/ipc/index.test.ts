@@ -75,9 +75,9 @@ vi.mock('../../../../src/mcp/runtime-metadata.js', async () => {
 });
 
 vi.mock('../../../../src/core/agent-integrations/index.js', async () => {
-  const actual = await vi.importActual<typeof import('../../../../src/core/agent-integrations/index.js')>(
-    '../../../../src/core/agent-integrations/index.js',
-  );
+  const actual = await vi.importActual<
+    typeof import('../../../../src/core/agent-integrations/index.js')
+  >('../../../../src/core/agent-integrations/index.js');
   return {
     ...actual,
     AgentIntegrationManager: vi.fn(function AgentIntegrationManager(options) {
@@ -127,32 +127,51 @@ describe('registerIpcHandlers HTTP MCP wiring', () => {
 
   it('uses stable HTTP settings for the runtime and Codex targets', async () => {
     const { registerIpcHandlers } = await import('../../../../src/main/ipc/index.js');
+    const { registerControlProfileIpc } =
+      await import('../../../../src/main/ipc/control-profile-ipc.js');
 
     const context = await registerIpcHandlers({ autoStartMcp: false });
 
     expect(readOrCreateSettingsMock).toHaveBeenCalledWith(
       'C:\\Users\\A\\AppData\\Roaming\\linkterm-v2\\mcp-http-settings.json',
     );
-    expect(startHttpMock).toHaveBeenCalledWith(expect.objectContaining({
-      metadataPath: 'C:\\Users\\A\\AppData\\Roaming\\linkterm-v2\\mcp-runtime.json',
-      port: 57371,
-      token: 'abcdefghijklmnopqrstuvwxyz1234567890_stable',
-    }));
-    expect(buildTargetsMock).toHaveBeenCalledWith(expect.objectContaining({
-      httpTransport: {
-        url: 'http://localhost:57371/mcp',
-        bearerTokenEnvVar: 'LINKTERM_MCP_TOKEN',
-      },
-    }));
-    expect(agentManagerCtorMock).toHaveBeenCalledWith(expect.objectContaining({
-      tokenEnvWriter: tokenEnvWriterMock,
-    }));
+    expect(startHttpMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadataPath: 'C:\\Users\\A\\AppData\\Roaming\\linkterm-v2\\mcp-runtime.json',
+        port: 57371,
+        token: 'abcdefghijklmnopqrstuvwxyz1234567890_stable',
+        controlProfileRecordManager: context.controlProfileRecordManager,
+      }),
+    );
+    expect(registerControlProfileIpc).toHaveBeenCalledWith(
+      context.controlProfileManager,
+      context.controlProfileRecordManager,
+      expect.objectContaining({
+        sessionManager: context.sessionManager,
+        jlinkBackend: context.jlinkBackend,
+        jlinkDeviceCatalog: context.jlinkDeviceCatalog,
+      }),
+    );
+    expect(buildTargetsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        httpTransport: {
+          url: 'http://localhost:57371/mcp',
+          bearerTokenEnvVar: 'LINKTERM_MCP_TOKEN',
+        },
+      }),
+    );
+    expect(agentManagerCtorMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tokenEnvWriter: tokenEnvWriterMock,
+      }),
+    );
 
     await context.dispose();
   });
 
   it('watches all compiled main runtime JavaScript artifacts in development', async () => {
-    const { runtimeFreshnessArtifactPathsForApp } = await import('../../../../src/main/ipc/index.js');
+    const { runtimeFreshnessArtifactPathsForApp } =
+      await import('../../../../src/main/ipc/index.js');
 
     const artifacts = runtimeFreshnessArtifactPathsForApp({
       appPath: 'C:\\Users\\Admin\\Desktop\\Code\\link-terminal',
@@ -166,10 +185,20 @@ describe('registerIpcHandlers HTTP MCP wiring', () => {
       ],
     });
 
-    expect(artifacts).toContain('C:\\Users\\Admin\\Desktop\\Code\\link-terminal\\dist\\main\\main\\index.js');
-    expect(artifacts).toContain('C:\\Users\\Admin\\Desktop\\Code\\link-terminal\\dist\\main\\jlink\\jlink-adapter.js');
-    expect(artifacts).toContain('C:\\Users\\Admin\\Desktop\\Code\\link-terminal\\dist\\main\\mcp\\surfaces\\debug\\tools-binary.js');
-    expect(artifacts).not.toContain('C:\\Users\\Admin\\Desktop\\Code\\link-terminal\\dist\\renderer\\assets\\index.js');
-    expect(artifacts).not.toContain('C:\\Users\\Admin\\Desktop\\Code\\link-terminal\\src\\jlink\\jlink-adapter.ts');
+    expect(artifacts).toContain(
+      'C:\\Users\\Admin\\Desktop\\Code\\link-terminal\\dist\\main\\main\\index.js',
+    );
+    expect(artifacts).toContain(
+      'C:\\Users\\Admin\\Desktop\\Code\\link-terminal\\dist\\main\\jlink\\jlink-adapter.js',
+    );
+    expect(artifacts).toContain(
+      'C:\\Users\\Admin\\Desktop\\Code\\link-terminal\\dist\\main\\mcp\\surfaces\\debug\\tools-binary.js',
+    );
+    expect(artifacts).not.toContain(
+      'C:\\Users\\Admin\\Desktop\\Code\\link-terminal\\dist\\renderer\\assets\\index.js',
+    );
+    expect(artifacts).not.toContain(
+      'C:\\Users\\Admin\\Desktop\\Code\\link-terminal\\src\\jlink\\jlink-adapter.ts',
+    );
   });
 });

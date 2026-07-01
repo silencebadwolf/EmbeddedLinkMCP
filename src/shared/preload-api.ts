@@ -137,7 +137,9 @@ export interface RttLogOpenSuccess {
 /** session 命名空间下的方法。 */
 export interface SessionNamespace {
   /** 创建并尝试 open；open 失败时仍返回 success=true 但 state='errored'，由 UI 决定后续动作。 */
-  create(req: SessionCreateRequestPayload): Promise<PreloadResult<{ sessionId: SessionId; state: SessionState }>>;
+  create(
+    req: SessionCreateRequestPayload,
+  ): Promise<PreloadResult<{ sessionId: SessionId; state: SessionState }>>;
   /** 写入字节流；origin 在主进程被强制为 'human'。 */
   write(req: SessionWriteRequestPayload): Promise<PreloadResult<{ bytesWritten: number }>>;
   /** 从 cursor 之后读取 transcript；cursor=0 表示从最早可见事件开始。 */
@@ -147,9 +149,15 @@ export interface SessionNamespace {
   /** 列出当前所有活跃 session 摘要，供 renderer 从后台 runtime 水合 tab。 */
   list(): Promise<PreloadResult<{ sessions: ReadonlyArray<SessionSummary> }>>;
   /** 查询 session 的当前 state 与最新 cursor。 */
-  status(req: { sessionId: SessionId }): Promise<PreloadResult<{ sessionId: SessionId; state: SessionState; latestCursor: number }>>;
+  status(req: {
+    sessionId: SessionId;
+  }): Promise<PreloadResult<{ sessionId: SessionId; state: SessionState; latestCursor: number }>>;
   /** 调整 PTY 窗口尺寸；串口 session 静默返回 resized=false。 */
-  resize(req: { sessionId: SessionId; cols: number; rows: number }): Promise<PreloadResult<{ resized: boolean }>>;
+  resize(req: {
+    sessionId: SessionId;
+    cols: number;
+    rows: number;
+  }): Promise<PreloadResult<{ resized: boolean }>>;
   /** 关闭并销毁 session；保留 transcript 直到进程退出。 */
   destroy(req: { sessionId: SessionId }): Promise<PreloadResult<{ destroyed: true }>>;
   /** 订阅 session 生命周期变化，供 UI 在 MCP 新建/销毁会话时同步 tab。 */
@@ -268,17 +276,21 @@ export interface ConnectionsNamespace {
     config: SessionCreateRequestConfig;
     label: string;
     saveCredentials?: boolean;
-  }): Promise<PreloadResult<{
-    profile: SavedConnectionSummary;
-    sessionId: SessionId;
-    state: SessionState;
-  }>>;
+  }): Promise<
+    PreloadResult<{
+      profile: SavedConnectionSummary;
+      sessionId: SessionId;
+      state: SessionState;
+    }>
+  >;
   /** 快捷打开已保存连接；SSH 凭据在主进程解密，不返回 renderer。 */
-  open(req: { profileId: ConnectionProfileId }): Promise<PreloadResult<{
-    profile: SavedConnectionSummary;
-    sessionId: SessionId;
-    state: SessionState;
-  }>>;
+  open(req: { profileId: ConnectionProfileId }): Promise<
+    PreloadResult<{
+      profile: SavedConnectionSummary;
+      sessionId: SessionId;
+      state: SessionState;
+    }>
+  >;
   /** 删除已保存连接。 */
   delete(req: { profileId: ConnectionProfileId }): Promise<PreloadResult<{ deleted: true }>>;
 }
@@ -288,11 +300,17 @@ export interface AgentIntegrationsNamespace {
   /** 检测本机支持的 Agent 配置状态。 */
   list(): Promise<PreloadResult<ReadonlyArray<AgentIntegrationStatus>>>;
   /** 安装或修复一个 Agent 的 LinkTerm MCP 配置；主进程会在写入前备份。 */
-  install(req: { targetId: AgentIntegrationTargetId }): Promise<PreloadResult<AgentIntegrationInstallResult>>;
+  install(req: {
+    targetId: AgentIntegrationTargetId;
+  }): Promise<PreloadResult<AgentIntegrationInstallResult>>;
   /** 移除一个 Agent 配置中的 LinkTerm MCP 配置；主进程会在写入前备份。 */
-  uninstall(req: { targetId: AgentIntegrationTargetId }): Promise<PreloadResult<AgentIntegrationUninstallResult>>;
+  uninstall(req: {
+    targetId: AgentIntegrationTargetId;
+  }): Promise<PreloadResult<AgentIntegrationUninstallResult>>;
   /** 诊断一个 Agent 的 LinkTerm MCP 配置与运行前置条件。 */
-  diagnose(req: { targetId: AgentIntegrationTargetId }): Promise<PreloadResult<AgentIntegrationDiagnosticResult>>;
+  diagnose(req: {
+    targetId: AgentIntegrationTargetId;
+  }): Promise<PreloadResult<AgentIntegrationDiagnosticResult>>;
 }
 
 /** renderer/preload 可见的 SEGGER/J-Link flash bank 元数据。 */
@@ -326,7 +344,11 @@ export interface JLinkDeviceSearchResultPayload {
 /** J-Link 本机设备库命名空间。 */
 export interface JLinkDevicesNamespace {
   /** 搜索本机 SEGGER 设备库中的已注册设备名。 */
-  search(req: { query?: string; vendor?: string; limit?: number }): Promise<PreloadResult<JLinkDeviceSearchResultPayload>>;
+  search(req: {
+    query?: string;
+    vendor?: string;
+    limit?: number;
+  }): Promise<PreloadResult<JLinkDeviceSearchResultPayload>>;
   /** 通过精确注册名读取一个设备库条目。 */
   get(req: { name: string }): Promise<PreloadResult<{ device?: JLinkDeviceInfoPayload }>>;
   /** 清理并重建设备库缓存。 */
@@ -363,16 +385,80 @@ export type ControlProfileFilePayload = ControlProfilePayload & {
   schemaVersion: 'linkterm-control/1.0.0';
 };
 
+export type ControlProfileRecordSourcePayload = 'manual' | 'ai';
+
+export interface SavedControlProfileRecordPayload {
+  id: string;
+  label: string;
+  root: string;
+  source: ControlProfileRecordSourcePayload;
+  profile: ControlProfileFilePayload;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ControlProfileWorkflowStepPayload {
+  id: string;
+  status: 'passed' | 'failed' | 'skipped';
+  durationMs: number;
+  evidence?: unknown;
+  error?: { code: string; message: string; failureCode?: string; details?: unknown };
+}
+
+export interface ControlProfileDownloadResultPayload {
+  mode: 'flash-observe' | 'debug-diagnose' | 'flash-observe-diagnose';
+  root: string;
+  steps: ReadonlyArray<ControlProfileWorkflowStepPayload>;
+  summary: {
+    serialOpened: boolean;
+    probeConnected: boolean;
+    gdbServerStarted: boolean;
+    flashed: boolean;
+    verified: boolean;
+    reset: boolean;
+    serialObserved: boolean;
+    debugCaptured: boolean;
+  };
+  failedStep?: string;
+  failureCode?: string;
+  nextActions: ReadonlyArray<unknown>;
+  blockingReasons?: ReadonlyArray<unknown>;
+}
+
 /** 工作区控制配置命名空间。 */
 export interface ControlProfileNamespace {
   /** 保存/覆盖 `<root>/.linkterm/control-profile.json`。 */
-  save(req: { root: string; profile: ControlProfilePayload }): Promise<PreloadResult<{ path: string; profile: ControlProfileFilePayload }>>;
+  save(req: {
+    root: string;
+    profile: ControlProfilePayload;
+  }): Promise<
+    PreloadResult<{
+      path: string;
+      profile: ControlProfileFilePayload;
+      record?: SavedControlProfileRecordPayload;
+    }>
+  >;
   /** 读取 `<root>/.linkterm/control-profile.json`。 */
-  load(req: { root: string }): Promise<PreloadResult<{ path: string; profile: ControlProfileFilePayload }>>;
+  load(req: {
+    root: string;
+  }): Promise<PreloadResult<{ path: string; profile: ControlProfileFilePayload }>>;
+  /** 列出全局保存的控制配置记录。 */
+  listRecords(): Promise<PreloadResult<ReadonlyArray<SavedControlProfileRecordPayload>>>;
+  /** 打开一套保存的控制配置，并写回它所属工作区的 control-profile.json。 */
+  openRecord(req: {
+    recordId: string;
+  }): Promise<PreloadResult<{ path: string; record: SavedControlProfileRecordPayload }>>;
+  /** 删除一套保存的控制配置记录。 */
+  deleteRecord(req: { recordId: string }): Promise<PreloadResult<{ deleted: true }>>;
+  /** 按当前工作区 control-profile.json 执行人工下载/烧录。 */
+  runDownload(req: {
+    root: string;
+    timeoutMs?: number;
+  }): Promise<PreloadResult<ControlProfileDownloadResultPayload>>;
   /** 选择工作区目录；用户取消时 root 为 null。 */
   pickWorkspaceRoot(): Promise<PreloadResult<{ root: string | null }>>;
-  /** 选择固件文件；用户取消时 path 为 null。 */
-  pickFirmwareFile(): Promise<PreloadResult<{ path: string | null }>>;
+  /** 选择固件文件；用户取消时 path 为 null；Intel HEX 可附带检测出的 baseAddress。 */
+  pickFirmwareFile(): Promise<PreloadResult<{ path: string | null; baseAddress?: string }>>;
 }
 
 /**

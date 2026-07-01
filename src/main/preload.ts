@@ -32,9 +32,17 @@ import type {
   JLinkDeviceInfoPayload,
   JLinkDeviceSearchResultPayload,
   ControlProfileFilePayload,
+  ControlProfileDownloadResultPayload,
+  SavedControlProfileRecordPayload,
   RttLogOpenSuccess,
 } from '../shared/preload-api.js';
-import type { SessionId, SessionLifecycleEvent, SessionState, SessionSummary, SerialPortInfo } from '../shared/types.js';
+import type {
+  SessionId,
+  SessionLifecycleEvent,
+  SessionState,
+  SessionSummary,
+  SerialPortInfo,
+} from '../shared/types.js';
 import type { TranscriptEventEnvelope } from '../shared/transcript-ipc-types.js';
 
 const { contextBridge, ipcRenderer } = electron;
@@ -49,10 +57,7 @@ const invoke = <T>(channel: string, payload?: unknown): Promise<PreloadResult<T>
  * 之所以包装而非直接暴露 `ipcRenderer.on`：renderer 端不应能调用 `removeAllListeners`，
  * 那会清掉同 channel 上其它组件的监听器，导致难以排查的副作用。
  */
-const subscribe = <T>(
-  channel: string,
-  handler: (payload: T) => void,
-): Unsubscribe => {
+const subscribe = <T>(channel: string, handler: (payload: T) => void): Unsubscribe => {
   const listener = (_event: IpcRendererEvent, payload: T): void => handler(payload);
   ipcRenderer.on(channel, listener);
   return () => {
@@ -79,16 +84,13 @@ const api: PreloadAPI = {
     destroy: (req) => invoke<{ destroyed: true }>(IPC_CHANNELS.SESSION_DESTROY, req),
     onLifecycle: (handler) =>
       subscribe<SessionLifecycleEvent>(IPC_CHANNELS.SESSION_LIFECYCLE, handler),
-    subscribe: (req) =>
-      invoke<TranscriptSubscribeSuccess>(IPC_CHANNELS.TRANSCRIPT_SUBSCRIBE, req),
+    subscribe: (req) => invoke<TranscriptSubscribeSuccess>(IPC_CHANNELS.TRANSCRIPT_SUBSCRIBE, req),
   },
   rttLog: {
-    open: (req) =>
-      invoke<RttLogOpenSuccess>(IPC_CHANNELS.RTT_LOG_OPEN, req),
+    open: (req) => invoke<RttLogOpenSuccess>(IPC_CHANNELS.RTT_LOG_OPEN, req),
   },
   serial: {
-    listPorts: () =>
-      invoke<ReadonlyArray<SerialPortInfo>>(IPC_CHANNELS.SERIAL_LIST_PORTS),
+    listPorts: () => invoke<ReadonlyArray<SerialPortInfo>>(IPC_CHANNELS.SERIAL_LIST_PORTS),
     onPortChanged: (handler) =>
       subscribe<ReadonlyArray<SerialPortInfo>>(IPC_CHANNELS.SERIAL_PORT_CHANGED, handler),
   },
@@ -97,12 +99,10 @@ const api: PreloadAPI = {
       subscribe<TranscriptEventEnvelope>(IPC_CHANNELS.TRANSCRIPT_EVENT, handler),
   },
   ui: {
-    onStatePatch: (handler) =>
-      subscribe<UiStatePatch>(IPC_CHANNELS.UI_STATE_PATCH, handler),
+    onStatePatch: (handler) => subscribe<UiStatePatch>(IPC_CHANNELS.UI_STATE_PATCH, handler),
   },
   connections: {
-    list: () =>
-      invoke<ReadonlyArray<SavedConnectionSummary>>(IPC_CHANNELS.CONNECTIONS_LIST),
+    list: () => invoke<ReadonlyArray<SavedConnectionSummary>>(IPC_CHANNELS.CONNECTIONS_LIST),
     saveAndOpen: (req) =>
       invoke<{
         profile: SavedConnectionSummary;
@@ -118,8 +118,7 @@ const api: PreloadAPI = {
     delete: (req) => invoke<{ deleted: true }>(IPC_CHANNELS.CONNECTIONS_DELETE, req),
   },
   agentIntegrations: {
-    list: () =>
-      invoke<ReadonlyArray<AgentIntegrationStatus>>(IPC_CHANNELS.AGENT_INTEGRATIONS_LIST),
+    list: () => invoke<ReadonlyArray<AgentIntegrationStatus>>(IPC_CHANNELS.AGENT_INTEGRATIONS_LIST),
     install: (req) =>
       invoke<AgentIntegrationInstallResult>(IPC_CHANNELS.AGENT_INTEGRATIONS_INSTALL, req),
     uninstall: (req) =>
@@ -128,24 +127,35 @@ const api: PreloadAPI = {
       invoke<AgentIntegrationDiagnosticResult>(IPC_CHANNELS.AGENT_INTEGRATIONS_DIAGNOSE, req),
   },
   jlinkDevices: {
-    search: (req) =>
-      invoke<JLinkDeviceSearchResultPayload>(IPC_CHANNELS.JLINK_DEVICES_SEARCH, req),
-    get: (req) =>
-      invoke<{ device?: JLinkDeviceInfoPayload }>(IPC_CHANNELS.JLINK_DEVICES_GET, req),
-    refresh: () =>
-      invoke<{ refreshed: true }>(IPC_CHANNELS.JLINK_DEVICES_REFRESH),
+    search: (req) => invoke<JLinkDeviceSearchResultPayload>(IPC_CHANNELS.JLINK_DEVICES_SEARCH, req),
+    get: (req) => invoke<{ device?: JLinkDeviceInfoPayload }>(IPC_CHANNELS.JLINK_DEVICES_GET, req),
+    refresh: () => invoke<{ refreshed: true }>(IPC_CHANNELS.JLINK_DEVICES_REFRESH),
   },
   controlProfile: {
     save: (req) =>
-      invoke<{ path: string; profile: ControlProfileFilePayload }>(
-        IPC_CHANNELS.CONTROL_PROFILE_SAVE,
-        req,
-      ),
+      invoke<{
+        path: string;
+        profile: ControlProfileFilePayload;
+        record?: SavedControlProfileRecordPayload;
+      }>(IPC_CHANNELS.CONTROL_PROFILE_SAVE, req),
     load: (req) =>
       invoke<{ path: string; profile: ControlProfileFilePayload }>(
         IPC_CHANNELS.CONTROL_PROFILE_LOAD,
         req,
       ),
+    listRecords: () =>
+      invoke<ReadonlyArray<SavedControlProfileRecordPayload>>(
+        IPC_CHANNELS.CONTROL_PROFILE_RECORDS_LIST,
+      ),
+    openRecord: (req) =>
+      invoke<{ path: string; record: SavedControlProfileRecordPayload }>(
+        IPC_CHANNELS.CONTROL_PROFILE_RECORDS_OPEN,
+        req,
+      ),
+    deleteRecord: (req) =>
+      invoke<{ deleted: true }>(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_DELETE, req),
+    runDownload: (req) =>
+      invoke<ControlProfileDownloadResultPayload>(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD, req),
     pickWorkspaceRoot: () =>
       invoke<{ root: string | null }>(IPC_CHANNELS.CONTROL_PROFILE_PICK_WORKSPACE_ROOT),
     pickFirmwareFile: () =>

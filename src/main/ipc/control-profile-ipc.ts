@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import type { Dirent } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { electron } from '../electron-runtime.js';
@@ -8,29 +8,70 @@ import {
   ControlProfileAlreadyInitializedError,
   ControlProfileManager,
   ControlProfileNotFoundError,
+  ControlProfileRecordManager,
+  ControlProfileRecordNotFoundError,
   ControlProfileSchemaVersionMismatchError,
   ControlProfileTooLargeError,
   WorkspaceInvalidRootError,
   controlProfileBodySchema,
   controlProfilePath,
 } from '../../core/workspace/index.js';
+import { formatHexAddress, isIntelHexPath, parseIntelHex } from '../../core/workspace/intel-hex.js';
+import type { IJLinkBackend, JLinkDeviceCatalog } from '../../jlink/index.js';
+import type { SessionManager } from '../../core/session/session-manager.js';
+import { defaultOpenSerial } from '../../mcp/surfaces/control-profile/tools.js';
+import { runControlWorkflow } from '../../mcp/surfaces/control-workflow/workflow-runner.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
-import type { ControlProfileFilePayload, ControlProfilePayload, PreloadResult } from '../../shared/preload-api.js';
+import type {
+  ControlProfileDownloadResultPayload,
+  ControlProfileFilePayload,
+  ControlProfilePayload,
+  PreloadResult,
+  SavedControlProfileRecordPayload,
+} from '../../shared/preload-api.js';
 
 const { dialog, ipcMain } = electron;
 const execFileAsync = promisify(execFile);
 
 /** 保存/读取工作区控制配置 IPC handler。 */
-export function registerControlProfileIpc(manager: ControlProfileManager): () => void {
+export interface RegisterControlProfileIpcOptions {
+  sessionManager?: SessionManager;
+  jlinkBackend?: IJLinkBackend;
+  jlinkDeviceCatalog?: JLinkDeviceCatalog;
+}
+
+export function registerControlProfileIpc(
+  manager: ControlProfileManager,
+  recordManager?: ControlProfileRecordManager,
+  options: RegisterControlProfileIpcOptions = {},
+): () => void {
   ipcMain.handle(
     IPC_CHANNELS.CONTROL_PROFILE_SAVE,
-    async (_event, raw: unknown): Promise<PreloadResult<{ path: string; profile: ControlProfileFilePayload }>> => {
+    async (
+      _event,
+      raw: unknown,
+    ): Promise<
+      PreloadResult<{
+        path: string;
+        profile: ControlProfileFilePayload;
+        record?: SavedControlProfileRecordPayload;
+      }>
+    > => {
       try {
         const { root, profile } = parseSavePayload(raw);
         const saved = await manager.init(root, profile, { force: true });
+        const record = await recordManager?.save({
+          root,
+          source: 'manual',
+          profile: saved,
+        });
         return {
           success: true,
-          data: { path: controlProfilePath(root), profile: saved as ControlProfileFilePayload },
+          data: {
+            path: controlProfilePath(root),
+            profile: saved as ControlProfileFilePayload,
+            ...(record ? { record: record as SavedControlProfileRecordPayload } : {}),
+          },
         };
       } catch (err) {
         return toIpcError(err);
@@ -39,8 +80,102 @@ export function registerControlProfileIpc(manager: ControlProfileManager): () =>
   );
 
   ipcMain.handle(
+    IPC_CHANNELS.CONTROL_PROFILE_RECORDS_LIST,
+    async (): Promise<PreloadResult<ReadonlyArray<SavedControlProfileRecordPayload>>> => {
+      try {
+        if (!recordManager) throw new Error('Control profile records are unavailable');
+        return {
+          success: true,
+          data: (await recordManager.list()) as ReadonlyArray<SavedControlProfileRecordPayload>,
+        };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTROL_PROFILE_RECORDS_OPEN,
+    async (
+      _event,
+      raw: unknown,
+    ): Promise<PreloadResult<{ path: string; record: SavedControlProfileRecordPayload }>> => {
+      try {
+        if (!recordManager) throw new Error('Control profile records are unavailable');
+        const recordId = parseRecordIdPayload(raw);
+        const record = await recordManager.get(recordId);
+        const saved = await manager.init(record.root, profileFileToBody(record.profile), {
+          force: true,
+        });
+        const savedRecord = await recordManager.save({
+          root: record.root,
+          source: record.source,
+          profile: saved,
+          label: record.label,
+        });
+        return {
+          success: true,
+          data: {
+            path: controlProfilePath(record.root),
+            record: savedRecord as SavedControlProfileRecordPayload,
+          },
+        };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTROL_PROFILE_RECORDS_DELETE,
+    async (_event, raw: unknown): Promise<PreloadResult<{ deleted: true }>> => {
+      try {
+        if (!recordManager) throw new Error('Control profile records are unavailable');
+        await recordManager.delete(parseRecordIdPayload(raw));
+        return { success: true, data: { deleted: true } };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD,
+    async (_event, raw: unknown): Promise<PreloadResult<ControlProfileDownloadResultPayload>> => {
+      try {
+        if (!options.sessionManager || !options.jlinkBackend) {
+          throw new Error('Control workflow runtime is unavailable');
+        }
+        const input = parseRunDownloadPayload(raw);
+        const data = await runControlWorkflow(
+          {
+            controlProfileManager: manager,
+            sessionManager: options.sessionManager,
+            jlinkBackend: options.jlinkBackend,
+            jlinkDeviceCatalog: options.jlinkDeviceCatalog,
+            openSerial: defaultOpenSerial(options.sessionManager),
+          },
+          {
+            root: input.root,
+            mode: 'flash-observe',
+            confirm: true,
+            observe: { serial: false },
+            ...(input.timeoutMs !== undefined ? { firmware: { timeoutMs: input.timeoutMs } } : {}),
+          },
+        );
+        return { success: true, data: data as ControlProfileDownloadResultPayload };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
     IPC_CHANNELS.CONTROL_PROFILE_LOAD,
-    async (_event, raw: unknown): Promise<PreloadResult<{ path: string; profile: ControlProfileFilePayload }>> => {
+    async (
+      _event,
+      raw: unknown,
+    ): Promise<PreloadResult<{ path: string; profile: ControlProfileFilePayload }>> => {
       try {
         const root = parseRootPayload(raw);
         const profile = await manager.load(root);
@@ -61,12 +196,17 @@ export function registerControlProfileIpc(manager: ControlProfileManager): () =>
 
   ipcMain.handle(
     IPC_CHANNELS.CONTROL_PROFILE_PICK_FIRMWARE_FILE,
-    async (): Promise<PreloadResult<{ path: string | null }>> => chooseFirmwareFile(),
+    async (): Promise<PreloadResult<{ path: string | null; baseAddress?: string }>> =>
+      chooseFirmwareFile(),
   );
 
   return () => {
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_SAVE);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_LOAD);
+    ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_LIST);
+    ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_OPEN);
+    ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_DELETE);
+    ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_PICK_WORKSPACE_ROOT);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_PICK_FIRMWARE_FILE);
   };
@@ -84,7 +224,7 @@ async function chooseWorkspaceRoot(): Promise<PreloadResult<{ root: string | nul
     properties: ['openDirectory'],
     ...(defaultPath ? { defaultPath } : {}),
   });
-  return { success: true, data: { root: result.canceled ? null : result.filePaths[0] ?? null } };
+  return { success: true, data: { root: result.canceled ? null : (result.filePaths[0] ?? null) } };
 }
 
 async function resolveWorkspaceDialogDefaultPath(): Promise<string | undefined> {
@@ -117,10 +257,7 @@ async function discoverDefaultWslHomePath(): Promise<string | undefined> {
         ['-d', distroName, '--', 'sh', '-lc', 'printf "%s\\n%s\\n" "$(id -un)" "$HOME"'],
         { windowsHide: true, timeout: 5000 },
       );
-      const [, linuxHomePath] = stdout
-        .split(/\r?\n/u)
-        .map(normalizeWslText)
-        .filter(Boolean);
+      const [, linuxHomePath] = stdout.split(/\r?\n/u).map(normalizeWslText).filter(Boolean);
       if (linuxHomePath) return linuxPathToWslUnc(distroName, linuxHomePath);
     } catch {
       // Ignore unavailable distros and try the next registered one.
@@ -150,7 +287,10 @@ function linuxPathToWslUnc(distroName: string, linuxPath: string): string {
 }
 
 function normalizeWslText(value: string): string {
-  return value.replace(/\u0000/gu, '').replace(/^\uFEFF/u, '').trim();
+  return value
+    .replace(/\u0000/gu, '')
+    .replace(/^\uFEFF/u, '')
+    .trim();
 }
 
 /**
@@ -158,16 +298,29 @@ function normalizeWslText(value: string): string {
  *
  * @returns 成功结果；用户取消时 path 为 null
  */
-async function chooseFirmwareFile(): Promise<PreloadResult<{ path: string | null }>> {
-  const result = await dialog.showOpenDialog({
-    title: 'Select firmware file',
-    properties: ['openFile'],
-    filters: [
-      { name: 'Firmware images', extensions: ['bin', 'hex', 'elf'] },
-      { name: 'All files', extensions: ['*'] },
-    ],
-  });
-  return { success: true, data: { path: result.canceled ? null : result.filePaths[0] ?? null } };
+async function chooseFirmwareFile(): Promise<PreloadResult<{ path: string | null; baseAddress?: string }>> {
+  try {
+    const result = await dialog.showOpenDialog({
+      title: 'Select firmware file',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Firmware images', extensions: ['bin', 'hex', 'elf'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    });
+    const selectedPath = result.canceled ? null : (result.filePaths[0] ?? null);
+    if (selectedPath === null || !isIntelHexPath(selectedPath)) {
+      return { success: true, data: { path: selectedPath } };
+    }
+    const image = parseIntelHex(await readFile(selectedPath));
+    return {
+      success: true,
+      data: { path: selectedPath, baseAddress: formatHexAddress(image.baseAddress) },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: { code: 'INVALID_HEX_FIRMWARE', message } };
+  }
 }
 
 /**
@@ -184,6 +337,16 @@ function parseSavePayload(raw: unknown): { root: string; profile: ControlProfile
   return { root: r.root, profile };
 }
 
+function profileFileToBody(profile: ControlProfileFilePayload): ControlProfilePayload {
+  const body: ControlProfilePayload = {
+    ...(profile.serial ? { serial: profile.serial } : {}),
+    ...(profile.jlink ? { jlink: profile.jlink } : {}),
+    ...(profile.flash ? { flash: profile.flash } : {}),
+    ...(profile.rtt ? { rtt: profile.rtt } : {}),
+  };
+  return controlProfileBodySchema.parse(body) as ControlProfilePayload;
+}
+
 /**
  * 解析读取请求。
  *
@@ -197,6 +360,33 @@ function parseRootPayload(raw: unknown): string {
   return root;
 }
 
+function parseRecordIdPayload(raw: unknown): string {
+  if (typeof raw !== 'object' || raw === null) throw new Error('Invalid payload');
+  const recordId = (raw as { recordId?: unknown }).recordId;
+  if (typeof recordId !== 'string' || recordId.length === 0)
+    throw new Error('recordId is required');
+  return recordId;
+}
+
+function parseRunDownloadPayload(raw: unknown): { root: string; timeoutMs?: number } {
+  if (typeof raw !== 'object' || raw === null) throw new Error('Invalid payload');
+  const root = parseRootPayload(raw);
+  const rawTimeoutMs = (raw as { timeoutMs?: unknown }).timeoutMs;
+  if (
+    rawTimeoutMs !== undefined &&
+    (typeof rawTimeoutMs !== 'number' ||
+      !Number.isInteger(rawTimeoutMs) ||
+      rawTimeoutMs <= 0 ||
+      rawTimeoutMs > 600_000)
+  ) {
+    throw new Error('timeoutMs must be a positive integer no greater than 600000');
+  }
+  return {
+    root,
+    ...(rawTimeoutMs !== undefined ? { timeoutMs: rawTimeoutMs } : {}),
+  };
+}
+
 function toIpcError<T>(err: unknown): PreloadResult<T> {
   if (err instanceof ControlProfileAlreadyInitializedError) {
     return { success: false, error: { code: err.code, message: err.message } };
@@ -208,6 +398,9 @@ function toIpcError<T>(err: unknown): PreloadResult<T> {
     return { success: false, error: { code: err.code, message: err.message } };
   }
   if (err instanceof ControlProfileSchemaVersionMismatchError) {
+    return { success: false, error: { code: err.code, message: err.message } };
+  }
+  if (err instanceof ControlProfileRecordNotFoundError) {
     return { success: false, error: { code: err.code, message: err.message } };
   }
   if (err instanceof WorkspaceInvalidRootError) {

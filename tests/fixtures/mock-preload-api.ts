@@ -20,9 +20,15 @@ import type {
   AgentIntegrationDiagnosticResult,
   JLinkDeviceSearchResultPayload,
   ControlProfileFilePayload,
+  ControlProfileDownloadResultPayload,
+  SavedControlProfileRecordPayload,
 } from '../../src/shared/preload-api.js';
 import type { TranscriptEventEnvelope } from '../../src/shared/transcript-ipc-types.js';
-import type { SerialPortInfo, SessionLifecycleEvent, SessionSummary } from '../../src/shared/types.js';
+import type {
+  SerialPortInfo,
+  SessionLifecycleEvent,
+  SessionSummary,
+} from '../../src/shared/types.js';
 
 /** 可观测的 mock preload API；所有方法都是 vi.fn()。 */
 export interface MockPreloadAPI {
@@ -77,6 +83,10 @@ export interface MockPreloadAPI {
     controlProfile: {
       save: ReturnType<typeof vi.fn>;
       load: ReturnType<typeof vi.fn>;
+      listRecords: ReturnType<typeof vi.fn>;
+      openRecord: ReturnType<typeof vi.fn>;
+      deleteRecord: ReturnType<typeof vi.fn>;
+      runDownload: ReturnType<typeof vi.fn>;
       pickWorkspaceRoot: ReturnType<typeof vi.fn>;
       pickFirmwareFile: ReturnType<typeof vi.fn>;
     };
@@ -231,6 +241,45 @@ export function createMockPreloadAPI(): MockPreloadAPI {
   const controlProfileLoad = vi.fn(async () =>
     okEmpty({ path: 'C:/repo/.linkterm/control-profile.json', profile: defaultControlProfile }),
   );
+  const defaultControlProfileRecord: SavedControlProfileRecordPayload = {
+    id: 'ctrl_test',
+    label: 'repo - Saved control',
+    root: 'C:/repo',
+    source: 'manual',
+    profile: defaultControlProfile,
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  };
+  const controlProfileListRecords = vi.fn(
+    async (): Promise<PreloadResult<ReadonlyArray<SavedControlProfileRecordPayload>>> =>
+      okEmpty([]),
+  );
+  const controlProfileOpenRecord = vi.fn(async () =>
+    okEmpty({
+      path: 'C:/repo/.linkterm/control-profile.json',
+      record: defaultControlProfileRecord,
+    }),
+  );
+  const controlProfileDeleteRecord = vi.fn(async () => okEmpty({ deleted: true as const }));
+  const controlProfileRunDownload = vi.fn(
+    async (): Promise<PreloadResult<ControlProfileDownloadResultPayload>> =>
+      okEmpty({
+        mode: 'flash-observe',
+        root: 'C:/repo',
+        steps: [],
+        summary: {
+          serialOpened: false,
+          probeConnected: true,
+          gdbServerStarted: false,
+          flashed: true,
+          verified: true,
+          reset: false,
+          serialObserved: false,
+          debugCaptured: false,
+        },
+        nextActions: [],
+      }),
+  );
   const controlProfilePickWorkspaceRoot = vi.fn(async () => okEmpty({ root: 'C:/repo' }));
   const controlProfilePickFirmwareFile = vi.fn(async () => okEmpty({ path: 'build/app.bin' }));
 
@@ -278,6 +327,10 @@ export function createMockPreloadAPI(): MockPreloadAPI {
     controlProfile: {
       save: controlProfileSave,
       load: controlProfileLoad,
+      listRecords: controlProfileListRecords,
+      openRecord: controlProfileOpenRecord,
+      deleteRecord: controlProfileDeleteRecord,
+      runDownload: controlProfileRunDownload,
       pickWorkspaceRoot: controlProfilePickWorkspaceRoot,
       pickFirmwareFile: controlProfilePickFirmwareFile,
     },
@@ -325,6 +378,10 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       controlProfile: {
         save: controlProfileSave,
         load: controlProfileLoad,
+        listRecords: controlProfileListRecords,
+        openRecord: controlProfileOpenRecord,
+        deleteRecord: controlProfileDeleteRecord,
+        runDownload: controlProfileRunDownload,
         pickWorkspaceRoot: controlProfilePickWorkspaceRoot,
         pickFirmwareFile: controlProfilePickFirmwareFile,
       },

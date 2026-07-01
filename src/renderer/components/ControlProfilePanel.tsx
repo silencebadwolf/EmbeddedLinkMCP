@@ -14,8 +14,12 @@ import { SerialPortPicker } from './SerialPortPicker.js';
 import { BaudRateInput } from './BaudRateInput.js';
 import { getLinkterm } from '../lib/linkterm-bridge.js';
 import { useT } from '../i18n/index.js';
-import { useAppStore } from '../store/app-store.js';
-import type { ControlProfilePayload, JLinkDeviceInfoPayload } from '../../shared/preload-api.js';
+import type {
+  ControlProfileFilePayload,
+  ControlProfilePayload,
+  JLinkDeviceInfoPayload,
+  SavedControlProfileRecordPayload,
+} from '../../shared/preload-api.js';
 import { classifyJLinkTargetName } from '../../shared/jlink-target-name.js';
 
 interface ControlProfilePanelProps {
@@ -25,7 +29,8 @@ interface ControlProfilePanelProps {
 
 const JLINK_SPEED_OPTIONS = ['auto', '50000', '25000', '10000', '8000', '4000', '1000'] as const;
 const JLINK_DEVICE_SUGGESTION_LIMIT = 30;
-const SELECT_CLASS = 'flex h-9 w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-1 text-sm text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500';
+const SELECT_CLASS =
+  'flex h-9 w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-1 text-sm text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500';
 type ObservationChannel = 'serial' | 'rtt';
 
 /** UI entry for humans to save workspace-local control-profile.json. */
@@ -41,7 +46,9 @@ export function ControlProfilePanel({
   const [serialMode, setSerialMode] = React.useState<'normal' | 'terminal'>('terminal');
   const [target, setTarget] = React.useState('');
   const [targetQuery, setTargetQuery] = React.useState('');
-  const [deviceOptions, setDeviceOptions] = React.useState<ReadonlyArray<JLinkDeviceInfoPayload>>([]);
+  const [deviceOptions, setDeviceOptions] = React.useState<ReadonlyArray<JLinkDeviceInfoPayload>>(
+    [],
+  );
   const [deviceCatalogAvailable, setDeviceCatalogAvailable] = React.useState<boolean | null>(null);
   const [searchingDevices, setSearchingDevices] = React.useState(false);
   const [selectedCatalogTarget, setSelectedCatalogTarget] = React.useState<string | null>(null);
@@ -50,11 +57,29 @@ export function ControlProfilePanel({
   const [binary, setBinary] = React.useState('build/app.bin');
   const [baseAddress, setBaseAddress] = React.useState('0x08000000');
   const [saving, setSaving] = React.useState(false);
-  const [openingRtt, setOpeningRtt] = React.useState(false);
+  const [downloading, setDownloading] = React.useState(false);
+  const [savedRecords, setSavedRecords] = React.useState<
+    ReadonlyArray<SavedControlProfileRecordPayload>
+  >([]);
+  const [openingRecordId, setOpeningRecordId] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [targetHint, setTargetHint] = React.useState<string | null>(null);
   const deviceSearchSequence = React.useRef(0);
+
+  const loadSavedRecords = React.useCallback(async (): Promise<void> => {
+    const api = getLinkterm();
+    if (!api) return;
+    const result = await api.controlProfile.listRecords();
+    if (result.success) {
+      setSavedRecords(result.data);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!open) return;
+    void loadSavedRecords();
+  }, [loadSavedRecords, open]);
 
   const browseWorkspace = async (): Promise<void> => {
     const api = getLinkterm();
@@ -78,7 +103,10 @@ export function ControlProfilePanel({
     }
     const result = await api.controlProfile.pickFirmwareFile();
     if (result.success) {
-      if (result.data.path !== null) setBinary(result.data.path);
+      if (result.data.path !== null) {
+        setBinary(result.data.path);
+        if (result.data.baseAddress !== undefined) setBaseAddress(result.data.baseAddress);
+      }
       return;
     }
     setError(result.error.message);
@@ -102,7 +130,8 @@ export function ControlProfilePanel({
     setError(null);
     setMessage(null);
     try {
-      const normalizedTarget = selectedCatalogTarget ?? classifyJLinkTargetName(targetQuery || target).normalizedTarget;
+      const normalizedTarget =
+        selectedCatalogTarget ?? classifyJLinkTargetName(targetQuery || target).normalizedTarget;
       const profile: ControlProfilePayload = {
         jlink: {
           enabled: true,
@@ -130,6 +159,11 @@ export function ControlProfilePanel({
       };
       const result = await api.controlProfile.save({ root: root.trim(), profile });
       if (result.success) {
+        if (result.data.record) {
+          setSavedRecords((records) => upsertRecord(records, result.data.record!));
+        } else {
+          void loadSavedRecords();
+        }
         setMessage(`${t('controlProfile.saved')} ${result.data.path}`);
       } else {
         setError(result.error.message);
@@ -153,7 +187,10 @@ export function ControlProfilePanel({
     }
 
     setSearchingDevices(true);
-    const result = await api.jlinkDevices.search({ query: trimmedQuery, limit: JLINK_DEVICE_SUGGESTION_LIMIT });
+    const result = await api.jlinkDevices.search({
+      query: trimmedQuery,
+      limit: JLINK_DEVICE_SUGGESTION_LIMIT,
+    });
     if (deviceSearchSequence.current !== sequence) return;
     setSearchingDevices(false);
     if (result.success) {
@@ -170,7 +207,9 @@ export function ControlProfilePanel({
     setTarget(value);
     setTargetQuery(value);
     setSelectedCatalogTarget(null);
-    setTargetHint(classification.kind === 'stm32-order-code' ? classification.message ?? null : null);
+    setTargetHint(
+      classification.kind === 'stm32-order-code' ? (classification.message ?? null) : null,
+    );
     void searchDeviceCatalog(value);
   };
 
@@ -183,15 +222,52 @@ export function ControlProfilePanel({
     setDeviceOptions([]);
   };
 
-  const showManualTargetWarning =
-    deviceCatalogAvailable === true &&
-    targetQuery.trim() !== '' &&
-    selectedCatalogTarget === null &&
-    classifyJLinkTargetName(targetQuery).kind !== 'stm32-order-code' &&
-    deviceOptions.length === 0 &&
-    !searchingDevices;
+  const applyProfileToForm = (recordRoot: string, profile: ControlProfileFilePayload): void => {
+    setRoot(recordRoot);
+    const nextObservationChannel: ObservationChannel =
+      profile.rtt?.enabled === true ? 'rtt' : 'serial';
+    setObservationChannel(nextObservationChannel);
+    if (profile.serial?.port) setSerialPort(profile.serial.port);
+    if (profile.serial?.baudRate !== undefined) setBaudRate(String(profile.serial.baudRate));
+    if (profile.serial?.mode) setSerialMode(profile.serial.mode);
+    const nextTarget = profile.jlink?.target ?? '';
+    setTarget(nextTarget);
+    setTargetQuery(nextTarget);
+    setSelectedCatalogTarget(nextTarget || null);
+    setTargetHint(null);
+    setDeviceOptions([]);
+    if (profile.jlink?.interface) setDebugInterface(profile.jlink.interface);
+    if (profile.jlink?.speedKHz !== undefined)
+      setSpeedKHz(String(profile.jlink.speedKHz) as (typeof JLINK_SPEED_OPTIONS)[number]);
+    if (profile.flash?.binary) setBinary(profile.flash.binary);
+    if (profile.flash?.baseAddress) setBaseAddress(profile.flash.baseAddress);
+  };
 
-  const openRttLog = async (): Promise<void> => {
+  const openSavedRecord = async (recordId: string): Promise<void> => {
+    const api = getLinkterm();
+    if (!api) {
+      setError(t('controlProfile.error.preloadUnavailable'));
+      return;
+    }
+    setOpeningRecordId(recordId);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await api.controlProfile.openRecord({ recordId });
+      if (result.success) {
+        const record = result.data.record;
+        applyProfileToForm(record.root, record.profile);
+        setSavedRecords((records) => upsertRecord(records, record));
+        setMessage(`${t('controlProfile.record.opened')} ${record.label}`);
+      } else {
+        setError(result.error.message);
+      }
+    } finally {
+      setOpeningRecordId(null);
+    }
+  };
+
+  const runDownload = async (): Promise<void> => {
     const api = getLinkterm();
     if (!api) {
       setError(t('controlProfile.error.preloadUnavailable'));
@@ -201,32 +277,32 @@ export function ControlProfilePanel({
       setError(t('controlProfile.error.rootRequired'));
       return;
     }
-
-    setOpeningRtt(true);
+    setDownloading(true);
     setError(null);
     setMessage(null);
     try {
-      const result = await api.rttLog.open({ root: root.trim() });
+      const result = await api.controlProfile.runDownload({ root: root.trim() });
       if (result.success) {
-        const probeId = result.data.probeId ?? '';
-        const channelIndex = result.data.channelIndex ?? 0;
-        const label = `RTT ch${channelIndex}`;
-        useAppStore.getState().addSession({
-          id: result.data.sessionId,
-          label,
-          connectionType: 'rtt-log',
-          state: result.data.state,
-          rttLog: { probeId, channelIndex },
-        });
-        useAppStore.getState().setActive(result.data.sessionId);
-        setMessage(`${result.data.reused ? t('controlProfile.rttLog.reused') : t('controlProfile.rttLog.opened')} ${label}`);
+        const flashed = result.data.summary.flashed;
+        const verified = result.data.summary.verified;
+        setMessage(
+          `${t('controlProfile.download.complete')} ${flashed ? t('controlProfile.download.flashed') : ''}${verified ? ` ${t('controlProfile.download.verified')}` : ''}`.trim(),
+        );
       } else {
         setError(result.error.message);
       }
     } finally {
-      setOpeningRtt(false);
+      setDownloading(false);
     }
   };
+
+  const showManualTargetWarning =
+    deviceCatalogAvailable === true &&
+    targetQuery.trim() !== '' &&
+    selectedCatalogTarget === null &&
+    classifyJLinkTargetName(targetQuery).kind !== 'stm32-order-code' &&
+    deviceOptions.length === 0 &&
+    !searchingDevices;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -237,6 +313,44 @@ export function ControlProfilePanel({
         </DialogHeader>
 
         <div className="grid max-h-[65vh] gap-4 overflow-y-auto py-1 sm:grid-cols-2">
+          {savedRecords.length > 0 ? (
+            <section className="space-y-2 rounded-md border border-gray-800 bg-gray-900/60 p-3 sm:col-span-2">
+              <h3 className="text-sm font-medium text-gray-200">
+                {t('controlProfile.records.title')}
+              </h3>
+              <div className="space-y-2">
+                {savedRecords.map((record) => (
+                  <div
+                    key={record.id}
+                    className="flex items-center justify-between gap-3 rounded border border-gray-800 px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-gray-100">
+                        {record.label}
+                      </div>
+                      <div className="truncate text-xs text-gray-500">
+                        {record.source === 'ai'
+                          ? t('controlProfile.record.source.ai')
+                          : t('controlProfile.record.source.manual')}{' '}
+                        / {record.root}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => void openSavedRecord(record.id)}
+                      disabled={openingRecordId === record.id}
+                    >
+                      {openingRecordId === record.id
+                        ? t('controlProfile.record.opening')
+                        : t('controlProfile.record.open')}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           <div className="space-y-2 sm:col-span-2">
             <Label htmlFor="control-root">{t('controlProfile.workspaceRoot')}</Label>
             <div className="flex gap-2">
@@ -312,9 +426,13 @@ export function ControlProfilePanel({
               onChange={(e) => updateTarget(e.target.value)}
               placeholder={t('controlProfile.target.placeholder')}
             />
-            {searchingDevices ? <p className="text-xs text-gray-400">{t('controlProfile.target.catalogSearching')}</p> : null}
+            {searchingDevices ? (
+              <p className="text-xs text-gray-400">{t('controlProfile.target.catalogSearching')}</p>
+            ) : null}
             {deviceCatalogAvailable === false ? (
-              <p className="text-xs text-gray-400">{t('controlProfile.target.catalogUnavailable')}</p>
+              <p className="text-xs text-gray-400">
+                {t('controlProfile.target.catalogUnavailable')}
+              </p>
             ) : null}
             {deviceOptions.length > 0 ? (
               <div className="max-h-36 overflow-y-auto rounded-md border border-gray-800 bg-gray-900">
@@ -328,10 +446,14 @@ export function ControlProfilePanel({
                     <span className="min-w-0">
                       <span className="block truncate font-medium">{device.name}</span>
                       <span className="block truncate text-gray-500">
-                        {[device.vendor, device.core, ...(device.aliases ?? [])].filter(Boolean).join(' / ') || t('controlProfile.target.source')}
+                        {[device.vendor, device.core, ...(device.aliases ?? [])]
+                          .filter(Boolean)
+                          .join(' / ') || t('controlProfile.target.source')}
                       </span>
                     </span>
-                    <span className="shrink-0 text-gray-500">{t('controlProfile.target.source')}</span>
+                    <span className="shrink-0 text-gray-500">
+                      {t('controlProfile.target.source')}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -381,26 +503,30 @@ export function ControlProfilePanel({
               placeholder="0x08000000"
             />
           </div>
-
-          {observationChannel === 'rtt' ? (
-            <section className="space-y-3 rounded-md border border-gray-800 bg-gray-900/60 p-3 sm:col-span-2">
-              <div>
-                <h3 className="text-sm font-medium text-gray-200">{t('controlProfile.rttLog.title')}</h3>
-                <p className="mt-1 text-xs text-gray-500">{t('controlProfile.rttLog.description')}</p>
-              </div>
-              <Button type="button" variant="secondary" onClick={() => void openRttLog()} disabled={openingRtt}>
-                {openingRtt ? t('controlProfile.rttLog.opening') : t('controlProfile.rttLog.open')}
-              </Button>
-            </section>
-          ) : null}
         </div>
 
-        {error ? <p className="rounded border border-red-900 bg-red-950 px-3 py-2 text-sm text-red-100">{error}</p> : null}
-        {message ? <p className="rounded border border-emerald-900 bg-emerald-950 px-3 py-2 text-sm text-emerald-100">{message}</p> : null}
+        {error ? (
+          <p className="rounded border border-red-900 bg-red-950 px-3 py-2 text-sm text-red-100">
+            {error}
+          </p>
+        ) : null}
+        {message ? (
+          <p className="rounded border border-emerald-900 bg-emerald-950 px-3 py-2 text-sm text-emerald-100">
+            {message}
+          </p>
+        ) : null}
 
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
             {t('controlProfile.close')}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => void runDownload()}
+            disabled={downloading}
+          >
+            {downloading ? t('controlProfile.download.downloading') : t('controlProfile.download')}
           </Button>
           <Button type="button" onClick={() => void save()} disabled={saving}>
             {saving ? t('controlProfile.saving') : t('controlProfile.save')}
@@ -409,4 +535,12 @@ export function ControlProfilePanel({
       </DialogContent>
     </Dialog>
   );
+}
+
+function upsertRecord(
+  records: ReadonlyArray<SavedControlProfileRecordPayload>,
+  next: SavedControlProfileRecordPayload,
+): ReadonlyArray<SavedControlProfileRecordPayload> {
+  const without = records.filter((record) => record.id !== next.id);
+  return [next, ...without].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }

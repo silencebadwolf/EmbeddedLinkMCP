@@ -4,7 +4,11 @@ import path from 'node:path';
 import type { BrowserWindow } from 'electron';
 import { electron } from '../electron-runtime.js';
 import { SessionManager } from '../../core/session/session-manager.js';
-import { ControlProfileManager, WorkspaceConfigManager } from '../../core/workspace/index.js';
+import {
+  ControlProfileManager,
+  ControlProfileRecordManager,
+  WorkspaceConfigManager,
+} from '../../core/workspace/index.js';
 import { ConnectionProfileManager } from '../../core/connections/index.js';
 import {
   AgentIntegrationManager,
@@ -15,7 +19,10 @@ import { createWslAgentConfigFileBridge } from './wsl-agent-config-file-bridge.j
 import { JLinkAdapter, createJLinkDeviceCatalog } from '../../jlink/index.js';
 import type { IJLinkBackend, JLinkDeviceCatalog } from '../../jlink/index.js';
 import { createMcpServer, type LinkTermMcpServer } from '../../mcp/index.js';
-import { startMcpHttpRuntimeServer, type McpHttpRuntimeServer } from '../../mcp/http-runtime-server.js';
+import {
+  startMcpHttpRuntimeServer,
+  type McpHttpRuntimeServer,
+} from '../../mcp/http-runtime-server.js';
 import { createRuntimeDiagnosticsProvider } from '../../mcp/runtime-diagnostics.js';
 import {
   readOrCreateRuntimeHttpSettings,
@@ -55,6 +62,7 @@ export interface MainProcessContext {
   sessionManager: SessionManager;
   workspaceConfigManager: WorkspaceConfigManager;
   controlProfileManager: ControlProfileManager;
+  controlProfileRecordManager: ControlProfileRecordManager;
   connectionProfileManager: ConnectionProfileManager;
   /** 本机 Agent MCP 配置检测与安装管理器。 */
   agentIntegrationManager: AgentIntegrationManager;
@@ -116,6 +124,9 @@ export async function registerIpcHandlers(
     }),
   });
   const controlProfileManager = new ControlProfileManager();
+  const controlProfileRecordManager = new ControlProfileRecordManager({
+    filePath: path.join(app.getPath('userData'), 'control-profiles.json'),
+  });
   const connectionProfileManager = new ConnectionProfileManager({
     filePath: path.join(app.getPath('userData'), 'connections.json'),
     secretCodec: new SafeStorageSecretCodec(),
@@ -176,6 +187,7 @@ export async function registerIpcHandlers(
       serialPorts: await serialDiscovery.listPorts(),
     }),
     controlProfileManager,
+    controlProfileRecordManager,
     controlWorkflowJobManager,
     jlinkBackend,
     jlinkDeviceCatalog,
@@ -192,6 +204,7 @@ export async function registerIpcHandlers(
       serialPorts: await serialDiscovery.listPorts(),
     }),
     controlProfileManager,
+    controlProfileRecordManager,
     controlWorkflowJobManager,
     jlinkBackend,
     jlinkDeviceCatalog,
@@ -216,14 +229,15 @@ export async function registerIpcHandlers(
     sessionManager,
     connectionProfileManager,
   );
-  const unregisterAgentIntegrations = registerAgentIntegrationsIpc(
-    agentIntegrationManager,
+  const unregisterAgentIntegrations = registerAgentIntegrationsIpc(agentIntegrationManager);
+  const unregisterControlProfile = registerControlProfileIpc(
+    controlProfileManager,
+    controlProfileRecordManager,
+    { sessionManager, jlinkBackend, jlinkDeviceCatalog },
   );
-  const unregisterControlProfile = registerControlProfileIpc(controlProfileManager);
   const unregisterJLinkDeviceCatalog = registerJLinkDeviceCatalogIpc(jlinkDeviceCatalog);
 
-  const shouldAutoStart =
-    options.autoStartMcp ?? process.env.LINKTERM_MCP_STDIO === '1';
+  const shouldAutoStart = options.autoStartMcp ?? process.env.LINKTERM_MCP_STDIO === '1';
   if (shouldAutoStart) {
     try {
       await mcpServer.start();
@@ -264,6 +278,7 @@ export async function registerIpcHandlers(
     sessionManager,
     workspaceConfigManager,
     controlProfileManager,
+    controlProfileRecordManager,
     connectionProfileManager,
     agentIntegrationManager,
     jlinkBackend,
@@ -314,7 +329,8 @@ export function runtimeFreshnessArtifactPathsForApp(input: {
   relativeFiles?: readonly string[];
 }): string[] {
   if (input.isPackaged) return [];
-  const relativeFiles = input.relativeFiles ?? listRuntimeArtifactFiles(path.join(input.appPath, 'dist', 'main'));
+  const relativeFiles =
+    input.relativeFiles ?? listRuntimeArtifactFiles(path.join(input.appPath, 'dist', 'main'));
   return relativeFiles
     .filter((filePath) => filePath.startsWith('dist/main/') && filePath.endsWith('.js'))
     .map((filePath) => path.join(input.appPath, ...filePath.split('/')));

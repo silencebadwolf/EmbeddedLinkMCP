@@ -7,6 +7,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   ControlProfileAlreadyInitializedError,
   ControlProfileManager,
+  ControlProfileRecordManager,
   ControlProfileNotFoundError,
   ControlProfileSchemaVersionMismatchError,
   ControlProfileTooLargeError,
@@ -19,6 +20,7 @@ import {
   type ControlProfile,
   type HostPathResolver,
 } from '../../../core/workspace/index.js';
+import { isIntelHexPath, parseIntelHex } from '../../../core/workspace/intel-hex.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
 import type { IJLinkBackend, ProbeConnectOptions, ProbeInfo } from '../../../jlink/types.js';
 import type { JLinkDeviceCatalog, JLinkDeviceInfo } from '../../../jlink/device-catalog.js';
@@ -28,11 +30,7 @@ import type { SessionCreateRequestConfig } from '../../../shared/preload-api.js'
 import { classifyJLinkTargetName } from '../../../shared/jlink-target-name.js';
 import { buildSession } from '../../../core/session/factory.js';
 import { ERROR_CODES } from '../../../shared/error-codes.js';
-import {
-  registerTool,
-  ToolError,
-  type ToolHandlerResult,
-} from '../../registry.js';
+import { registerTool, ToolError, type ToolHandlerResult } from '../../registry.js';
 import { runJLink } from '../debug/error-translate.js';
 import { checkFirmwareVectorTable } from '../debug/firmware-sanity.js';
 import {
@@ -64,6 +62,7 @@ export type ControlProfileOpenSerial = (
 /** registerControlProfileTools 的依赖容器。 */
 export interface ControlProfileToolsDeps {
   controlProfileManager: ControlProfileManager;
+  controlProfileRecordManager?: ControlProfileRecordManager;
   sessionManager: SessionManager;
   jlinkBackend: IJLinkBackend;
   jlinkDeviceCatalog?: JLinkDeviceCatalog;
@@ -109,6 +108,11 @@ export function registerControlProfileTools(
         const profile = await deps.controlProfileManager.init(rootContext.hostRoot, input.profile, {
           force: input.force ?? false,
         });
+        await saveAiControlProfileRecord(
+          deps.controlProfileRecordManager,
+          rootContext.hostRoot,
+          profile,
+        );
         return successProfile(rootContext, profile);
       } catch (err) {
         translateControlProfileError(err);
@@ -143,9 +147,16 @@ export function registerControlProfileTools(
     inputSchema: inspectControlProfileInputSchema,
     handler: async (input: InspectControlProfileInput): Promise<ToolHandlerResult> => {
       const rootContext = await resolveControlRoot(input.root, hostPathResolver);
-      const { profile, exists } = await loadProfileIfPresent(deps.controlProfileManager, rootContext.hostRoot);
+      const { profile, exists } = await loadProfileIfPresent(
+        deps.controlProfileManager,
+        rootContext.hostRoot,
+      );
       const report = inspectControlProfileCompleteness(profile);
-      const diagnostics = await inspectControlProfileDiagnostics(rootContext.hostRoot, profile, deps.jlinkDeviceCatalog);
+      const diagnostics = await inspectControlProfileDiagnostics(
+        rootContext.hostRoot,
+        profile,
+        deps.jlinkDeviceCatalog,
+      );
       return {
         success: true,
         evidence: {
@@ -165,7 +176,10 @@ export function registerControlProfileTools(
     inputSchema: prepareControlProfileQuestionsInputSchema,
     handler: async (input: PrepareControlProfileQuestionsInput): Promise<ToolHandlerResult> => {
       const rootContext = await resolveControlRoot(input.root, hostPathResolver);
-      const { profile, exists } = await loadProfileIfPresent(deps.controlProfileManager, rootContext.hostRoot);
+      const { profile, exists } = await loadProfileIfPresent(
+        deps.controlProfileManager,
+        rootContext.hostRoot,
+      );
       const report = inspectControlProfileCompleteness(profile);
       return {
         success: true,
@@ -194,7 +208,14 @@ export function registerControlProfileTools(
       try {
         const rootContext = await resolveControlRoot(input.root, hostPathResolver);
         const parsed = parseControlProfileAnswer(input.answer);
-        const profile = await deps.controlProfileManager.init(rootContext.hostRoot, parsed.patch, { force: true });
+        const profile = await deps.controlProfileManager.init(rootContext.hostRoot, parsed.patch, {
+          force: true,
+        });
+        await saveAiControlProfileRecord(
+          deps.controlProfileRecordManager,
+          rootContext.hostRoot,
+          profile,
+        );
         const report = inspectControlProfileCompleteness(profile);
         return {
           success: true,
@@ -330,7 +351,9 @@ async function activateJLink(
   const targetClassification = classifyJLinkTargetName(target);
   const opts: ProbeConnectOptions = { target: targetClassification.normalizedTarget };
   if (profile.jlink.interface !== undefined) opts.interface = profile.jlink.interface;
-  const probe = await runJLink(() => connectProbeWithConfiguredSpeed(jlinkBackend, opts, profile.jlink?.speedKHz));
+  const probe = await runJLink(() =>
+    connectProbeWithConfiguredSpeed(jlinkBackend, opts, profile.jlink?.speedKHz),
+  );
   return sanitizeProbeForMcp(probe);
 }
 
@@ -347,7 +370,9 @@ async function inspectControlProfileDiagnostics(
       diagnostics.push({
         id: 'jlink-target-name',
         status: 'warn',
-        message: targetClassification.message ?? `Use ${targetClassification.normalizedTarget} as the SEGGER J-Link target name.`,
+        message:
+          targetClassification.message ??
+          `Use ${targetClassification.normalizedTarget} as the SEGGER J-Link target name.`,
       });
     }
     if (jlinkDeviceCatalog !== undefined) {
@@ -370,8 +395,12 @@ async function inspectControlProfileDiagnostics(
     const firmwarePath = path.isAbsolute(profile.flash.binary)
       ? profile.flash.binary
       : path.join(root, profile.flash.binary);
-    const binary = await readFile(firmwarePath);
-    const check = checkFirmwareVectorTable(binary.subarray(0, FIRMWARE_DIAGNOSTIC_READ_BYTES), baseAddress);
+    const rawFirmware = await readFile(firmwarePath);
+    const binary = isIntelHexPath(firmwarePath) ? parseIntelHex(rawFirmware).binary : rawFirmware;
+    const check = checkFirmwareVectorTable(
+      binary.subarray(0, FIRMWARE_DIAGNOSTIC_READ_BYTES),
+      baseAddress,
+    );
     if (check.status === 'fail') {
       diagnostics.push({
         id: 'firmware-vector-base',
@@ -426,7 +455,12 @@ async function connectProbeWithConfiguredSpeed(
       lastError = err;
     }
   }
-  throw lastError ?? new JLinkOperationError('Unable to connect J-Link with auto speed', { operation: 'probeConnect' });
+  throw (
+    lastError ??
+    new JLinkOperationError('Unable to connect J-Link with auto speed', {
+      operation: 'probeConnect',
+    })
+  );
 }
 
 /**
@@ -446,7 +480,10 @@ interface ControlRootContext {
   hostRoot: string;
 }
 
-async function resolveControlRoot(root: string, hostPathResolver: HostPathResolver): Promise<ControlRootContext> {
+async function resolveControlRoot(
+  root: string,
+  hostPathResolver: HostPathResolver,
+): Promise<ControlRootContext> {
   return { root, hostRoot: await hostPathResolver.toHostPath(root) };
 }
 
@@ -466,7 +503,10 @@ function rootEvidence(ctx: ControlRootContext): Record<string, unknown> {
  * @param profile 控制配置
  * @returns MCP 工具成功结果
  */
-function successProfile(rootContext: ControlRootContext, profile: ControlProfile): ToolHandlerResult {
+function successProfile(
+  rootContext: ControlRootContext,
+  profile: ControlProfile,
+): ToolHandlerResult {
   return {
     success: true,
     evidence: {
@@ -475,6 +515,15 @@ function successProfile(rootContext: ControlRootContext, profile: ControlProfile
       cursor: 0,
     },
   };
+}
+
+async function saveAiControlProfileRecord(
+  manager: ControlProfileRecordManager | undefined,
+  root: string,
+  profile: ControlProfile,
+): Promise<void> {
+  if (!manager) return;
+  await manager.save({ root, source: 'ai', profile });
 }
 
 /**

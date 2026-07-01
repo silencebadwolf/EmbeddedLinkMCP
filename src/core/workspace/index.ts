@@ -30,10 +30,7 @@ export {
   type EvidenceSnapshot,
 } from './conflict-detect.js';
 
-export {
-  defaultFsPrimitives,
-  type FsPrimitives,
-} from './fs-primitives.js';
+export { defaultFsPrimitives, type FsPrimitives } from './fs-primitives.js';
 
 export {
   WorkspaceConfigManager,
@@ -94,3 +91,25 @@ export {
   type ParsedControlProfileAnswer,
   type ControlProfileCompletenessReport,
 } from './control-profile-answer-parser.js';
+
+export {
+  CONTROL_PROFILE_RECORDS_SCHEMA_VERSION,
+  type ControlProfileRecordSource,
+  type ControlProfileRecord,
+  type ControlProfileRecordsFile,
+  type SaveControlProfileRecordInput,
+} from './control-profile-record-types.js';
+
+export {
+  controlProfileRecordSourceSchema,
+  controlProfileRecordSchema,
+  controlProfileRecordsFileSchema,
+  type ControlProfileRecordSchema,
+  type ControlProfileRecordsFileSchema,
+} from './control-profile-record-schema.js';
+
+export {
+  ControlProfileRecordManager,
+  ControlProfileRecordNotFoundError,
+  type ControlProfileRecordManagerOptions,
+} from './control-profile-record-manager.js';
