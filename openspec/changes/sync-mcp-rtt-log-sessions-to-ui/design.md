@@ -31,4 +31,17 @@ RTT log sessions already satisfy the storage and transcript parts. The weaker bo
 
 - Do not change flash/download workflows.
 - Do not infer firmware logging behavior from RTT channel silence; only surface clear next diagnostic action.
-- Do not auto-start additional debug backends beyond existing RTT log session behavior.
+- Do not auto-start destructive or CPU-mutating debug operations from RTT observation. Starting the managed GDB server is allowed only as part of profile/root-based RTT observation because the backend requires it for RTT transport ownership.
+
+## Profile-Based RTT Observation
+
+The previous `open_rtt_log_session` MCP surface only accepted a `probeId`, and the App IPC root/profile path only performed `probeConnect -> rttConnect`. On real J-Link backends, RTT attach requires LinkTerm's managed GDB server with RTT telnet support to be running. That forced agents to call the low-level `gdb_server_start` tool before opening an App-visible RTT log session, which broke the product contract: automatic observation should be expressed as one high-level intent, not as manually chained internal backend steps.
+
+The fix is to make profile/root-based RTT observation the high-level entry point:
+
+- App IPC root/profile open resolves the control profile, connects the probe, starts the managed GDB server, connects RTT, then opens/reuses the shared RTT log session.
+- MCP `open_rtt_log_session` accepts either an existing `probeId` or a workspace `root`. The `probeId` path remains the low-level reuse path and assumes RTT is already connected. The `root` path resolves the control profile, connects the probe, starts the managed GDB server, connects RTT, and creates the App-visible RTT log session.
+- Low-level `gdb_server_start` remains confirmation-gated. High-level profile/root RTT observation owns the internal GDB startup and returns structured evidence that the GDB server and RTT channel were prepared as part of the same request.
+- Agents should prefer the `root` path for continuous RTT logs. They should not manually call `gdb_server_start` solely to satisfy RTT log setup.
+
+The real SEGGER GDB server may report its GDB port as ready before the RTT telnet endpoint accepts connections. `JLinkAdapter.rttConnect` therefore waits with a bounded retry loop for the RTT telnet endpoint when the failure is the known transient endpoint-not-ready error. This keeps the high-level observation request reliable without retrying destructive operations or hiding unrelated J-Link failures.

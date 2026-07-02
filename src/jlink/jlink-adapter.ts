@@ -50,6 +50,7 @@ import {
   type JLinkGdbServerClient,
   type JLinkGdbServerSession,
   type JLinkRttClient,
+  type JLinkRttConnectOptions,
   type JLinkRttSession,
 } from './segger-command-runner.js';
 import { normalizeJLinkTargetName } from '../shared/jlink-target-name.js';
@@ -81,6 +82,8 @@ interface ProbeHandle {
 
 const DEFAULT_PROBE_SELECTION_KEY = 'default-probe-selection';
 const CORTEX_M_FAULT_REGISTERS_BASE = 0xe000_ed28;
+const RTT_TELNET_CONNECT_ATTEMPTS = 25;
+const RTT_TELNET_CONNECT_RETRY_DELAY_MS = 100;
 
 interface CortexMFaultRegisters {
   cfsr: number;
@@ -427,7 +430,10 @@ export class JLinkAdapter implements IJLinkBackend {
       await handle.rttSession.close();
       handle.rttSession = undefined;
     }
-    const session = await this.#rttClient.connect({ host: gdbServer.host, port: gdbServer.rttTelnetPort });
+    const session = await this.#connectRttAfterTelnetReady({
+      host: gdbServer.host,
+      port: gdbServer.rttTelnetPort,
+    });
     handle.rttSession = session;
     return { channels: session.channels };
   }
@@ -661,6 +667,22 @@ export class JLinkAdapter implements IJLinkBackend {
     }
   }
 
+  async #connectRttAfterTelnetReady(opts: JLinkRttConnectOptions): Promise<JLinkRttSession> {
+    for (let attempt = 1; attempt <= RTT_TELNET_CONNECT_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.#rttClient.connect(opts);
+      } catch (err) {
+        if (!isTransientRttTelnetConnectError(err) || attempt === RTT_TELNET_CONNECT_ATTEMPTS) {
+          throw err;
+        }
+        await delay(RTT_TELNET_CONNECT_RETRY_DELAY_MS);
+      }
+    }
+    throw new JLinkOperationError('Failed to connect to J-Link RTT telnet endpoint', {
+      operation: 'rttConnect',
+    });
+  }
+
   /** AbortSignal 已取消时立即抛出统一 J-Link 取消错误。 */
   #throwIfAborted(signal?: AbortSignal): void {
     if (signal?.aborted) {
@@ -677,6 +699,20 @@ export class JLinkAdapter implements IJLinkBackend {
       connected: true,
     };
   }
+}
+
+function isTransientRttTelnetConnectError(err: unknown): boolean {
+  return (
+    err instanceof JLinkOperationError &&
+    err.operation === 'rttConnect' &&
+    /RTT telnet endpoint/iu.test(err.message)
+  );
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function findRegisterValue(registers: RegisterValue[], name: string): number | undefined {

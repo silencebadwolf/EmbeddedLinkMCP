@@ -233,9 +233,16 @@ class FakeRttSession implements JLinkRttSession {
 class FakeRttClient implements JLinkRttClient {
   readonly connectCalls: JLinkRttConnectOptions[] = [];
   session = new FakeRttSession(Buffer.from('hello-rtt'));
+  failuresBeforeSuccess = 0;
 
   async connect(opts: JLinkRttConnectOptions): Promise<JLinkRttSession> {
     this.connectCalls.push(opts);
+    if (this.failuresBeforeSuccess > 0) {
+      this.failuresBeforeSuccess -= 1;
+      throw new JLinkOperationError('Failed to connect to J-Link RTT telnet endpoint', {
+        operation: 'rttConnect',
+      });
+    }
     return this.session;
   }
 }
@@ -764,6 +771,26 @@ describe('RTT operations', () => {
       data: Buffer.from('hello'),
       truncated: true,
     });
+  });
+
+  it('waits for the GDB server RTT telnet endpoint before giving up', async () => {
+    const commander = new FakeCommander();
+    const gdbServer = new FakeGdbServer();
+    const rttClient = new FakeRttClient();
+    rttClient.failuresBeforeSuccess = 2;
+    const adapter = new JLinkAdapter({ commander, gdbServer, rttClient });
+    const probe = await adapter.probeConnect({ target: 'AT32F435RGT7' });
+
+    await adapter.gdbServerStart(probe.probeId, { host: '127.0.0.1', port: 2331 });
+    await expect(adapter.rttConnect(probe.probeId)).resolves.toEqual({
+      channels: [{ index: 0, name: 'Terminal', direction: 'up', bufferSize: 1024 }],
+    });
+
+    expect(rttClient.connectCalls).toEqual([
+      { host: '127.0.0.1', port: 19021 },
+      { host: '127.0.0.1', port: 19021 },
+      { host: '127.0.0.1', port: 19021 },
+    ]);
   });
 
   it('searches without consuming and clears buffered RTT data', async () => {

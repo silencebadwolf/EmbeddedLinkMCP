@@ -1,13 +1,15 @@
 import { electron } from '../electron-runtime.js';
 import { openRttLogSession } from '../../core/session/rtt-log-session-open.js';
+import {
+  prepareProfileRttLogTarget,
+  ProfileRttLogTargetError,
+} from '../../core/session/rtt-log-profile-target.js';
 import type { SessionManager } from '../../core/session/session-manager.js';
-import type { ControlProfile, ControlProfileManager } from '../../core/workspace/index.js';
+import type { ControlProfileManager, HostPathResolver } from '../../core/workspace/index.js';
 import { JLinkError } from '../../jlink/errors.js';
-import type { IJLinkBackend, ProbeConnectOptions, RttChannelInfo } from '../../jlink/types.js';
+import type { IJLinkBackend } from '../../jlink/types.js';
 import type { JLinkDeviceCatalog } from '../../jlink/device-catalog.js';
-import { resolveJLinkTarget } from '../../jlink/target-resolver.js';
 import { ERROR_CODES, type ErrorCode } from '../../shared/error-codes.js';
-import { normalizeJLinkTargetName } from '../../shared/jlink-target-name.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type {
   PreloadFail,
@@ -24,13 +26,20 @@ export function registerRttLogSessionIpc(
   jlinkBackend: IJLinkBackend,
   controlProfileManager?: ControlProfileManager,
   jlinkDeviceCatalog?: JLinkDeviceCatalog,
+  hostPathResolver?: HostPathResolver,
 ): () => void {
   ipcMain.handle(
     IPC_CHANNELS.RTT_LOG_OPEN,
     async (_event, raw: RttLogOpenRequestPayload): Promise<PreloadResult<RttLogOpenSuccess>> => {
       try {
         const input = normalizeRequest(raw);
-        const target = await resolveRttTarget(input, jlinkBackend, controlProfileManager, jlinkDeviceCatalog);
+        const target = await resolveRttTarget(
+          input,
+          jlinkBackend,
+          controlProfileManager,
+          jlinkDeviceCatalog,
+          hostPathResolver,
+        );
         const result = await openRttLogSession({
           sessionManager,
           jlinkBackend,
@@ -108,6 +117,7 @@ async function resolveRttTarget(
   jlinkBackend: IJLinkBackend,
   controlProfileManager: ControlProfileManager | undefined,
   jlinkDeviceCatalog: JLinkDeviceCatalog | undefined,
+  hostPathResolver: HostPathResolver | undefined,
 ): Promise<ResolvedRttTarget> {
   if (input.probeId !== undefined) {
     return { probeId: input.probeId, channelIndex: input.channelIndex };
@@ -118,43 +128,10 @@ async function resolveRttTarget(
   if (input.root === undefined) {
     throw new InvalidRttLogOpenRequestError('root is required');
   }
-  const profile = await controlProfileManager.load(input.root);
-  if (profile.rtt?.enabled !== true) {
-    throw new InvalidRttLogOpenRequestError('rtt.enabled=true is required in control-profile.json');
-  }
-  const opts = buildProbeConnectOptions(profile);
-  const resolution = await resolveJLinkTarget(opts.target, jlinkDeviceCatalog);
-  const probe = await jlinkBackend.probeConnect({ ...opts, target: resolution.target });
-  const rtt = await jlinkBackend.rttConnect(probe.probeId);
-  return {
-    probeId: probe.probeId,
-    channelIndex: selectRttChannel(profile.rtt.channels, rtt.channels, input.channelIndex),
-  };
-}
-
-function buildProbeConnectOptions(profile: ControlProfile): ProbeConnectOptions {
-  if (profile.jlink?.enabled !== true || profile.jlink.target === undefined) {
-    throw new InvalidRttLogOpenRequestError('jlink.enabled=true and jlink.target are required in control-profile.json');
-  }
-  const opts: ProbeConnectOptions = { target: normalizeJLinkTargetName(profile.jlink.target) };
-  if (profile.jlink.interface !== undefined) opts.interface = profile.jlink.interface;
-  if (typeof profile.jlink.speedKHz === 'number') opts.speedKHz = profile.jlink.speedKHz;
-  return opts;
-}
-
-function selectRttChannel(
-  configuredChannels: number[] | undefined,
-  visibleChannels: RttChannelInfo[],
-  fallback: number,
-): number {
-  const upChannels = visibleChannels.filter((channel) => channel.direction === 'up');
-  if (configuredChannels !== undefined) {
-    const configured = configuredChannels.find((index) =>
-      upChannels.some((channel) => channel.index === index),
-    );
-    if (configured !== undefined) return configured;
-  }
-  return upChannels[0]?.index ?? fallback;
+  return prepareProfileRttLogTarget(
+    { root: input.root, channelIndex: input.channelIndex },
+    { controlProfileManager, jlinkBackend, jlinkDeviceCatalog, hostPathResolver },
+  );
 }
 
 function normalizeInteger(
@@ -173,6 +150,7 @@ function normalizeInteger(
 
 function errorCodeOf(err: unknown): ErrorCode {
   if (err instanceof InvalidRttLogOpenRequestError) return ERROR_CODES.INVALID_ARGUMENT;
+  if (err instanceof ProfileRttLogTargetError) return ERROR_CODES.INVALID_ARGUMENT;
   if (err instanceof JLinkError) return err.code;
   return ERROR_CODES.INTERNAL;
 }

@@ -113,7 +113,11 @@ describe('registerRttLogSessionIpc', () => {
           args: [{ target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 }],
         },
       ]);
+      expect(backend.callsOf('gdbServerStart')).toHaveLength(1);
       expect(backend.callsOf('rttConnect')).toHaveLength(1);
+      const methods = backend.calls.map((call) => call.method);
+      expect(methods.indexOf('gdbServerStart')).toBeGreaterThan(methods.indexOf('probeConnect'));
+      expect(methods.indexOf('rttConnect')).toBeGreaterThan(methods.indexOf('gdbServerStart'));
       const summary = sessionManager.listSummaries()[0];
       expect(summary).toEqual(expect.objectContaining({
         connectionType: 'rtt-log',
@@ -154,7 +158,11 @@ describe('registerRttLogSessionIpc', () => {
           args: [{ target: 'STM32H743II', interface: 'swd', speedKHz: 4000 }],
         },
       ]);
+      expect(backend.callsOf('gdbServerStart')).toHaveLength(1);
       expect(backend.callsOf('rttConnect')).toHaveLength(1);
+      const methods = backend.calls.map((call) => call.method);
+      expect(methods.indexOf('gdbServerStart')).toBeGreaterThan(methods.indexOf('probeConnect'));
+      expect(methods.indexOf('rttConnect')).toBeGreaterThan(methods.indexOf('gdbServerStart'));
     } finally {
       await rm(root, { recursive: true, force: true });
     }

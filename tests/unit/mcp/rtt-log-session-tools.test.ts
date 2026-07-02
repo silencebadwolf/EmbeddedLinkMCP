@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SessionManager } from '@/core/session/session-manager.js';
+import { ControlProfileManager } from '@/core/workspace/control-profile-manager.js';
 import { SerialDiscovery } from '@/transports/serial/serial-discovery.js';
 import { createMcpServer, LINKTERM_MCP_SCHEMA_VERSION } from '@/mcp/index.js';
 import type { LinkTermMcpServer } from '@/mcp/server.js';
@@ -10,6 +14,7 @@ import { createInMemoryMcpTransportPair } from '../../fixtures/mock-mcp-transpor
 interface Harness {
   manager: SessionManager;
   serialDiscovery: SerialDiscovery;
+  controlProfileManager: ControlProfileManager;
   fake: FakeJLinkBackend;
   mcp: LinkTermMcpServer;
   client: Client;
@@ -18,11 +23,13 @@ interface Harness {
 async function setupHarness(): Promise<Harness> {
   const manager = new SessionManager();
   const serialDiscovery = new SerialDiscovery({ listFn: async () => [] });
+  const controlProfileManager = new ControlProfileManager();
   const fake = new FakeJLinkBackend();
   const { server: serverTransport, client: clientTransport } = createInMemoryMcpTransportPair();
   const mcp = createMcpServer({
     sessionManager: manager,
     serialDiscovery,
+    controlProfileManager,
     jlinkBackend: fake,
     transportFactory: () => serverTransport,
   });
@@ -30,7 +37,7 @@ async function setupHarness(): Promise<Harness> {
 
   const client = new Client({ name: 'linkterm-rtt-log-test-client', version: '0.0.0' });
   await client.connect(clientTransport);
-  return { manager, serialDiscovery, fake, mcp, client };
+  return { manager, serialDiscovery, controlProfileManager, fake, mcp, client };
 }
 
 async function teardown(h: Harness): Promise<void> {
@@ -101,6 +108,61 @@ describe('MCP RTT log session tools', () => {
     const dataEvent = events.find((event) => event.type === 'data' && event.origin === 'device');
     expect(dataEvent?.origin).toBe('device');
     expect(Buffer.from(dataEvent?.dataBase64 ?? '', 'base64').toString('utf8')).toBe('hello-rtt');
+  });
+
+  it('opens an App-visible RTT log session from a workspace profile without a separate GDB tool call', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lt-rtt-mcp-root-'));
+    try {
+      await harness.controlProfileManager.init(root, {
+        jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+        rtt: { enabled: true, channels: [0] },
+      });
+
+      const out = await callTool(harness.client, 'open_rtt_log_session', {
+        root,
+        label: 'Profile RTT channel 0',
+        pollIntervalMs: 50,
+        maxBytesPerRead: 32,
+      });
+
+      expect(out.success).toBe(true);
+      const evidence = out.evidence as {
+        data: {
+          sessionId: string;
+          connectionType: string;
+          probeId: string;
+          channelIndex: number;
+          reused: boolean;
+          gdbServerStarted?: boolean;
+        };
+      };
+      expect(evidence.data.connectionType).toBe('rtt-log');
+      expect(evidence.data.channelIndex).toBe(0);
+      expect(evidence.data.reused).toBe(false);
+      expect(evidence.data.gdbServerStarted).toBe(true);
+
+      expect(harness.fake.callsOf('probeConnect')).toEqual([
+        {
+          method: 'probeConnect',
+          args: [{ target: 'STM32H743II', interface: 'swd', speedKHz: 4000 }],
+        },
+      ]);
+      expect(harness.fake.callsOf('gdbServerStart')).toHaveLength(1);
+      expect(harness.fake.callsOf('rttConnect')).toHaveLength(1);
+      const methods = harness.fake.calls.map((call) => call.method);
+      expect(methods.indexOf('gdbServerStart')).toBeGreaterThan(methods.indexOf('probeConnect'));
+      expect(methods.indexOf('rttConnect')).toBeGreaterThan(methods.indexOf('gdbServerStart'));
+      expect(harness.manager.listSummaries()).toEqual([
+        expect.objectContaining({
+          sessionId: evidence.data.sessionId,
+          connectionType: 'rtt-log',
+          label: 'Profile RTT channel 0',
+          rttLog: { probeId: evidence.data.probeId, channelIndex: 0 },
+        }),
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('reuses the existing RTT log session for the same probe and channel', async () => {

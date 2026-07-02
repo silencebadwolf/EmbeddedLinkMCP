@@ -221,6 +221,9 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
   registerRttLogSessionTools(server, {
     sessionManager: options.sessionManager,
     jlinkBackend,
+    controlProfileManager: options.controlProfileManager,
+    jlinkDeviceCatalog: options.jlinkDeviceCatalog,
+    hostPathResolver: options.hostPathResolver,
   });
 
   // Phase 10：始终注册 ui_configure / ui_screenshot；未注入 uiBridge / getActiveWindow 时
