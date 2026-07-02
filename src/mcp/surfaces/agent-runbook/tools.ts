@@ -15,6 +15,7 @@ import { registerTool, ToolError, type ToolHandlerResult } from '../../registry.
 import type { ToolSetDiagnostics } from '../../tool-set.js';
 import { LINKTERM_MCP_SCHEMA_VERSION } from '../../versioning/version-check.js';
 import type { RuntimeDiagnostics } from '../../runtime-diagnostics.js';
+import { FIRMWARE_IMAGE_USAGE_GUIDANCE } from '../../firmware-image-guidance.js';
 import type { CapturableWindow } from '../ui/types.js';
 import {
   createAgentRunbook,
@@ -100,7 +101,11 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
     inputSchema: getAgentRunbookInputSchema,
     handler: async (input: GetAgentRunbookInput): Promise<ToolHandlerResult> => {
       try {
-        const profileSummary = await buildProfileSummary(deps.controlProfileManager, input.root, hostPathResolver);
+        const profileSummary = await buildProfileSummary(
+          deps.controlProfileManager,
+          input.root,
+          hostPathResolver,
+        );
         const runbook = createAgentRunbook({
           schemaVersion: LINKTERM_MCP_SCHEMA_VERSION,
           profileSummary,
@@ -166,7 +171,12 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
                 toolSetStatus,
                 runtimeStatus,
               ),
-              recommendedWorkflows: buildRecommendedWorkflows(profileSummary, input.root, toolSetStatus, jlinkStatus),
+              recommendedWorkflows: buildRecommendedWorkflows(
+                profileSummary,
+                input.root,
+                toolSetStatus,
+                jlinkStatus,
+              ),
             },
             cursor: 0,
           },
@@ -188,7 +198,11 @@ async function buildProfileSummary(
     return createProfileStatusSummary('root-not-provided', false);
   }
   if (manager === undefined) {
-    return createProfileStatusSummary('manager-unavailable', true, 'ControlProfileManager is not available in this runtime.');
+    return createProfileStatusSummary(
+      'manager-unavailable',
+      true,
+      'ControlProfileManager is not available in this runtime.',
+    );
   }
   try {
     const hostRoot = await hostPathResolver.toHostPath(root);
@@ -196,19 +210,39 @@ async function buildProfileSummary(
     return sanitizeControlProfileForRunbook(profile, 'loaded');
   } catch (err) {
     if (err instanceof ToolError) throw err;
-    if (err instanceof Error && 'code' in err && (err as { code?: string }).code === 'CONTROL_PROFILE_NOT_FOUND') {
+    if (
+      err instanceof Error &&
+      'code' in err &&
+      (err as { code?: string }).code === 'CONTROL_PROFILE_NOT_FOUND'
+    ) {
       return createProfileStatusSummary('profile-not-found', true, err.message);
     }
-    if (err instanceof Error && 'code' in err && (err as { code?: string }).code === 'CONTROL_PROFILE_SCHEMA_VERSION_MISMATCH') {
+    if (
+      err instanceof Error &&
+      'code' in err &&
+      (err as { code?: string }).code === 'CONTROL_PROFILE_SCHEMA_VERSION_MISMATCH'
+    ) {
       return createProfileStatusSummary('schema-version-mismatch', true, err.message);
     }
-    if (err instanceof Error && 'code' in err && (err as { code?: string }).code === 'CONTROL_PROFILE_TOO_LARGE') {
+    if (
+      err instanceof Error &&
+      'code' in err &&
+      (err as { code?: string }).code === 'CONTROL_PROFILE_TOO_LARGE'
+    ) {
       return createProfileStatusSummary('profile-too-large', true, err.message);
     }
-    if (err instanceof Error && 'code' in err && (err as { code?: string }).code === 'WORKSPACE_INVALID_ROOT') {
+    if (
+      err instanceof Error &&
+      'code' in err &&
+      (err as { code?: string }).code === 'WORKSPACE_INVALID_ROOT'
+    ) {
       return createProfileStatusSummary('invalid-root', true, err.message);
     }
-    return createProfileStatusSummary('invalid-profile', true, err instanceof Error ? err.message : String(err));
+    return createProfileStatusSummary(
+      'invalid-profile',
+      true,
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }
 
@@ -224,7 +258,10 @@ async function buildSerialStatus(serialDiscovery: SerialDiscovery): Promise<{
     return {
       portCount: 0,
       ports: [],
-      error: { code: 'SERIAL_DISCOVERY_FAILED', message: err instanceof Error ? err.message : String(err) },
+      error: {
+        code: 'SERIAL_DISCOVERY_FAILED',
+        message: err instanceof Error ? err.message : String(err),
+      },
     };
   }
 }
@@ -293,12 +330,17 @@ function buildUiStatus(getActiveWindow: (() => CapturableWindow | null) | undefi
     return {
       available: false,
       screenshotCaptured: false,
-      error: { code: 'UI_STATUS_FAILED', message: err instanceof Error ? err.message : String(err) },
+      error: {
+        code: 'UI_STATUS_FAILED',
+        message: err instanceof Error ? err.message : String(err),
+      },
     };
   }
 }
 
-export function buildTerminalCommandToolsStatus(toolSetStatus: ToolSetDiagnostics): TerminalCommandToolsStatus {
+export function buildTerminalCommandToolsStatus(
+  toolSetStatus: ToolSetDiagnostics,
+): TerminalCommandToolsStatus {
   const missingCoreTools = new Set<string>(toolSetStatus.core.missing);
   const missing = TERMINAL_COMMAND_TOOL_NAMES.filter((toolName) => missingCoreTools.has(toolName));
   return {
@@ -317,15 +359,23 @@ function buildRecommendedNextActions(
   runtimeStatus: RuntimeDiagnostics,
 ): string[] {
   if (runtimeStatus.code?.fresh === false) {
-    const staleArtifacts = runtimeStatus.code.staleArtifacts.map((artifact) => artifact.path).join(', ');
+    const staleArtifacts = runtimeStatus.code.staleArtifacts
+      .map((artifact) => artifact.path)
+      .join(', ');
     return [
       `Restart the LinkTerm MCP runtime by calling restart_mcp_runtime with confirm=true, then call get_app_status again after restart before hardware operations; compiled artifacts changed after this process started: ${staleArtifacts}.`,
     ];
   }
   if (!toolSetStatus.core.complete) {
-    return ['Core MCP tools are missing; repair or restart the LinkTerm MCP runtime before terminal, profile, workflow, debug, UI, or hardware operations.'];
+    return [
+      'Core MCP tools are missing; repair or restart the LinkTerm MCP runtime before terminal, profile, workflow, debug, UI, or hardware operations.',
+    ];
   }
-  if (isProfileFlashObserveReady(profileSummary) && jlinkStatus.available && jlinkStatus.probeCount === 0) {
+  if (
+    isProfileFlashObserveReady(profileSummary) &&
+    jlinkStatus.available &&
+    jlinkStatus.probeCount === 0
+  ) {
     return [
       'Check J-Link probe visibility before flash workflows: confirm USB connection, target power, Windows driver access, and J-Link toolchain installation, then call get_app_status again.',
     ];
@@ -333,17 +383,23 @@ function buildRecommendedNextActions(
   if (isProfileFlashObserveReady(profileSummary)) {
     return [
       'For user-requested flash/observe, call run_control_workflow with the recommendedWorkflows profile_flash_observe arguments, add confirm=true, then read the background job evidence.',
+      FIRMWARE_IMAGE_USAGE_GUIDANCE,
       'Use activate_control_profile for non-destructive control activation when needed.',
     ];
   }
   if (profileSummary.status === 'loaded') {
     return ['Use activate_control_profile for non-destructive control activation when needed.'];
   }
-  if (profileSummary.status === 'profile-not-found' || profileSummary.status === 'root-not-provided') {
+  if (
+    profileSummary.status === 'profile-not-found' ||
+    profileSummary.status === 'root-not-provided'
+  ) {
     return ['Use inspect_control_profile before workspace-specific hardware workflows.'];
   }
   if (serialStatus.portCount > 0 || jlinkStatus.probeCount > 0) {
-    return ['Use LinkTerm MCP read-only tools for more targeted evidence before state-affecting operations.'];
+    return [
+      'Use LinkTerm MCP read-only tools for more targeted evidence before state-affecting operations.',
+    ];
   }
   return ['Ask the user for the workspace root or connection target before operating hardware.'];
 }
@@ -375,8 +431,7 @@ function buildRecommendedWorkflows(
       },
       requiresConfirmation: true,
       followUpTools: ['get_control_workflow_job_status', 'read_control_workflow_job'],
-      reason:
-        'control profile has serial, J-Link, and flash facts; use profile.flash.binary by omitting firmware.filePath unless intentionally overriding it.',
+      reason: `control profile has serial, J-Link, and flash facts; use profile.flash.binary by omitting firmware.filePath unless intentionally overriding it. ${FIRMWARE_IMAGE_USAGE_GUIDANCE}`,
     },
   ];
 }

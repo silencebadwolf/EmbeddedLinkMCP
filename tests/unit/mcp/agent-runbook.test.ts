@@ -5,7 +5,10 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SessionManager } from '@/core/session/session-manager.js';
 import { ControlProfileManager, type FsPrimitives } from '@/core/workspace/index.js';
-import { createAgentRunbook, sanitizeControlProfileForRunbook } from '@/mcp/surfaces/agent-runbook/runbook.js';
+import {
+  createAgentRunbook,
+  sanitizeControlProfileForRunbook,
+} from '@/mcp/surfaces/agent-runbook/runbook.js';
 import { buildTerminalCommandToolsStatus } from '@/mcp/surfaces/agent-runbook/tools.js';
 import { createMcpServer } from '@/mcp/index.js';
 import type { ToolSetDiagnostics } from '@/mcp/tool-set.js';
@@ -129,6 +132,14 @@ describe('agent runbook builder', () => {
     expect(runbook.markdown).toContain('get_control_workflow_job_status');
     expect(runbook.markdown).toContain('read_control_workflow_job');
     expect(runbook.markdown).toContain('cancel_control_workflow_job');
+    expect(runbook.markdown).toContain('.bin');
+    expect(runbook.markdown).toContain('.hex');
+    expect(runbook.markdown).toContain('.elf');
+    expect(runbook.markdown).toContain('ELF loadable program segments');
+    expect(runbook.markdown).toContain(
+      'must not treat the ELF file header as a raw Cortex-M vector table',
+    );
+    expect(runbook.markdown).toContain('do not rewrite the profile to a .bin file');
     expect(runbook.markdown).not.toMatch(/nRF52|cmds\.jlink|reference-repos|JLinkMCP\/main\.go/);
 
     expect(runbook.workflows.map((workflow) => workflow.id)).toEqual(
@@ -200,9 +211,23 @@ describe('agent runbook builder', () => {
       flash: true,
       rtt: true,
     });
-    expect(summary.serial).toEqual({ enabled: true, port: 'COM6', baudRate: 115200, mode: 'terminal' });
-    expect(summary.jlink).toEqual({ enabled: true, target: 'AT32F435VGT7', interface: 'swd', speedKHz: 4000 });
-    expect(summary.flash).toEqual({ binaryConfigured: true, baseAddress: '0x08008000', verify: true });
+    expect(summary.serial).toEqual({
+      enabled: true,
+      port: 'COM6',
+      baudRate: 115200,
+      mode: 'terminal',
+    });
+    expect(summary.jlink).toEqual({
+      enabled: true,
+      target: 'AT32F435VGT7',
+      interface: 'swd',
+      speedKHz: 4000,
+    });
+    expect(summary.flash).toEqual({
+      binaryConfigured: true,
+      baseAddress: '0x08008000',
+      verify: true,
+    });
     expect(summary.rtt).toEqual({ enabled: true, channels: [0] });
 
     const serialized = JSON.stringify(summary);
@@ -251,6 +276,9 @@ describe('MCP agent runbook tool', () => {
     expect(instructions).toContain('background job mode');
     expect(instructions).toContain('get_control_workflow_job_status');
     expect(instructions).toContain('read_control_workflow_job');
+    expect(instructions).toContain('.bin/.hex/.elf');
+    expect(instructions).toContain('ELF loadable segments');
+    expect(instructions).toContain('do not change the profile firmware from .elf to .bin');
     expect(instructions).toContain('confirm=true');
     expect(instructions).toContain('get_agent_runbook');
   });
@@ -335,17 +363,27 @@ describe('MCP agent runbook tool', () => {
       startedAt: '2026-06-18T00:00:00.000Z',
     });
     expect(evidence.data.app.runtime.transport).toEqual({ mode: 'in-memory' });
-    expect(evidence.data.app.runtime.metadata).toMatchObject({ available: true, fresh: true, ageMs: 42 });
+    expect(evidence.data.app.runtime.metadata).toMatchObject({
+      available: true,
+      fresh: true,
+      ageMs: 42,
+    });
     expect(evidence.data.app.runtime.metadata.path).toBe(path.join(h.root, 'mcp-runtime.json'));
     expect(evidence.data.app.runtime.toolSet.count).toBeGreaterThan(40);
     expect(evidence.data.app.runtime.toolSet.hash).toMatch(/^[a-f0-9]{64}$/);
     expect(evidence.data.app.runtime.toolSet.core).toMatchObject({ complete: true, missing: [] });
     expect(evidence.data.app.runtime.toolSet.core.expected).toContain('get_app_status');
     expect(evidence.data.app.runtime.toolSet.core.expected).toContain('restart_mcp_runtime');
-    expect(evidence.data.app.runtime.toolSet.core.expected).toContain('get_control_workflow_job_status');
+    expect(evidence.data.app.runtime.toolSet.core.expected).toContain(
+      'get_control_workflow_job_status',
+    );
     expect(evidence.data.app.runtime.toolSet.core.expected).toContain('read_control_workflow_job');
-    expect(evidence.data.app.runtime.toolSet.core.expected).toContain('cancel_control_workflow_job');
-    expect(evidence.data.app.runtime.toolSet.core.expected).toContain('cleanup_control_workflow_jobs');
+    expect(evidence.data.app.runtime.toolSet.core.expected).toContain(
+      'cancel_control_workflow_job',
+    );
+    expect(evidence.data.app.runtime.toolSet.core.expected).toContain(
+      'cleanup_control_workflow_jobs',
+    );
     expect(evidence.data.sessions).toEqual({ count: 0, items: [] });
     expect(evidence.data.serial).toEqual({ portCount: 0, ports: [] });
     expect(evidence.data.controlProfile.status).toBe('profile-not-found');
@@ -360,7 +398,8 @@ describe('MCP agent runbook tool', () => {
       write: 'write_to_session',
       sendAndWait: 'send_and_wait',
       readTranscript: 'read_from_session',
-      commandPath: 'write_to_session/send_and_wait -> SessionManager.write -> WriteQueue -> transport; read_from_session returns transcript evidence.',
+      commandPath:
+        'write_to_session/send_and_wait -> SessionManager.write -> WriteQueue -> transport; read_from_session returns transcript evidence.',
       missing: [],
     });
   });
@@ -384,7 +423,8 @@ describe('MCP agent runbook tool', () => {
       write: 'write_to_session',
       sendAndWait: 'send_and_wait',
       readTranscript: 'read_from_session',
-      commandPath: 'write_to_session/send_and_wait -> SessionManager.write -> WriteQueue -> transport; read_from_session returns transcript evidence.',
+      commandPath:
+        'write_to_session/send_and_wait -> SessionManager.write -> WriteQueue -> transport; read_from_session returns transcript evidence.',
       missing: ['write_to_session', 'send_and_wait'],
     });
   });
@@ -395,18 +435,24 @@ describe('MCP agent runbook tool', () => {
 
     const out = await callTool(h.client, 'get_app_status', { root: h.root });
 
-    const data = (out.evidence as {
-      data: {
-        app: { runtime: { toolSet: { core: { complete: boolean; missing: string[] } } } };
-        recommendedNextActions: string[];
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          app: { runtime: { toolSet: { core: { complete: boolean; missing: string[] } } } };
+          recommendedNextActions: string[];
+        };
+      }
+    ).data;
     expect(data.app.runtime.toolSet.core.complete).toBe(false);
     expect(data.app.runtime.toolSet.core.missing).toEqual(
       expect.arrayContaining(['activate_control_profile', 'run_control_workflow']),
     );
-    expect(data.recommendedNextActions.join('\n')).toContain('repair or restart the LinkTerm MCP runtime');
-    expect(data.recommendedNextActions.join('\n')).not.toMatch(/JLink\.exe|gdb|flash CLI|serial CLI|VS Code task/i);
+    expect(data.recommendedNextActions.join('\n')).toContain(
+      'repair or restart the LinkTerm MCP runtime',
+    );
+    expect(data.recommendedNextActions.join('\n')).not.toMatch(
+      /JLink\.exe|gdb|flash CLI|serial CLI|VS Code task/i,
+    );
   });
 
   it('prioritizes stale runtime restart guidance before hardware workflows', async () => {
@@ -417,7 +463,11 @@ describe('MCP agent runbook tool', () => {
     await h.controlProfileManager.init(h.root, {
       serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
       jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 'auto' },
-      flash: { binary: 'build/gcc-arm-debug/rtthread.bin', baseAddress: '0x08000000', verify: true },
+      flash: {
+        binary: 'build/gcc-arm-debug/rtthread.bin',
+        baseAddress: '0x08000000',
+        verify: true,
+      },
     });
     await h.mcp.stop();
     const { server: serverTransport, client: clientTransport } = createInMemoryMcpTransportPair();
@@ -452,11 +502,13 @@ describe('MCP agent runbook tool', () => {
 
     const out = await callTool(h.client, 'get_app_status', { root: h.root });
 
-    const data = (out.evidence as {
-      data: {
-        recommendedNextActions: string[];
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          recommendedNextActions: string[];
+        };
+      }
+    ).data;
     expect(data.recommendedNextActions[0]).toMatch(/restart the LinkTerm MCP runtime/i);
     expect(data.recommendedNextActions[0]).toContain('restart_mcp_runtime');
     expect(data.recommendedNextActions[0]).toContain('get_app_status');
@@ -483,7 +535,9 @@ describe('MCP agent runbook tool', () => {
 
     const out = await callTool(h.client, 'get_app_status', { root: h.root });
 
-    const data = (out.evidence as { data: { ui: { available: boolean; screenshotCaptured: boolean } } }).data;
+    const data = (
+      out.evidence as { data: { ui: { available: boolean; screenshotCaptured: boolean } } }
+    ).data;
     expect(data.ui).toEqual({ available: true, screenshotCaptured: false });
     expect(captureCalls).toBe(0);
   });
@@ -549,54 +603,68 @@ describe('MCP agent runbook tool', () => {
     await h.controlProfileManager.init(h.root, {
       serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
       jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 'auto' },
-      flash: { binary: 'build/app.bin', baseAddress: '0x08008000', verify: true },
+      flash: { binary: 'build/app.elf', baseAddress: '0x08008000', verify: true },
     });
 
     const out = await callTool(h.client, 'get_agent_runbook', { root: h.root });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        profileSummary: {
-          status: string;
-          serial?: { port: string; baudRate: number; mode: string };
-          jlink?: { target: string; speedKHz: string };
-          flash?: { binaryConfigured: boolean; baseAddress: string };
+    const data = (
+      out.evidence as {
+        data: {
+          profileSummary: {
+            status: string;
+            serial?: { port: string; baudRate: number; mode: string };
+            jlink?: { target: string; speedKHz: string };
+            flash?: { binaryConfigured: boolean; baseAddress: string };
+          };
         };
-      };
-    }).data;
+      }
+    ).data;
     expect(data.profileSummary.status).toBe('loaded');
-    expect(data.profileSummary.serial).toMatchObject({ port: 'COM7', baudRate: 921600, mode: 'terminal' });
+    expect(data.profileSummary.serial).toMatchObject({
+      port: 'COM7',
+      baudRate: 921600,
+      mode: 'terminal',
+    });
     expect(data.profileSummary.jlink).toMatchObject({ target: 'AT32F435RGT7', speedKHz: 'auto' });
-    expect(data.profileSummary.flash).toEqual({ binaryConfigured: true, baseAddress: '0x08008000', verify: true });
-    expect(JSON.stringify(data.profileSummary)).not.toContain('build/app.bin');
+    expect(data.profileSummary.flash).toEqual({
+      binaryConfigured: true,
+      baseAddress: '0x08008000',
+      verify: true,
+    });
+    expect(JSON.stringify(data.profileSummary)).not.toContain('build/app.elf');
   });
 
   it('returns a profile-first executable workflow recommendation in app status', async () => {
     await h.controlProfileManager.init(h.root, {
       serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
       jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
-      flash: { binary: 'build/app.bin', baseAddress: '0x08008000', verify: true },
+      flash: { binary: 'build/app.elf', baseAddress: '0x08008000', verify: true },
     });
 
     const out = await callTool(h.client, 'get_app_status', { root: h.root });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        recommendedNextActions: string[];
-        recommendedWorkflows: Array<{
-          id: string;
-          ready: boolean;
-          tool: string;
-          arguments: Record<string, unknown>;
-          requiresConfirmation: boolean;
-          followUpTools: string[];
-          reason: string;
-        }>;
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          recommendedNextActions: string[];
+          recommendedWorkflows: Array<{
+            id: string;
+            ready: boolean;
+            tool: string;
+            arguments: Record<string, unknown>;
+            requiresConfirmation: boolean;
+            followUpTools: string[];
+            reason: string;
+          }>;
+        };
+      }
+    ).data;
     expect(data.recommendedNextActions.join('\n')).toContain('run_control_workflow');
+    expect(data.recommendedNextActions.join('\n')).toContain('.bin/.hex/.elf');
+    expect(data.recommendedNextActions.join('\n')).toContain('ELF loadable segments');
     expect(data.recommendedWorkflows).toContainEqual(
       expect.objectContaining({
         id: 'profile_flash_observe',
@@ -614,6 +682,11 @@ describe('MCP agent runbook tool', () => {
       }),
     );
     expect(data.recommendedWorkflows[0]?.arguments).not.toHaveProperty('firmware');
+    expect(data.recommendedWorkflows[0]?.reason).toContain('.bin/.hex/.elf');
+    expect(data.recommendedWorkflows[0]?.reason).toContain('ELF loadable segments');
+    expect(data.recommendedWorkflows[0]?.reason).toContain(
+      'do not override an .elf profile with a .bin path',
+    );
   });
 
   it('loads profile summaries from WSL Linux roots without making agents discover host paths', async () => {
@@ -627,21 +700,35 @@ describe('MCP agent runbook tool', () => {
         },
       },
     });
-    await h.controlProfileManager.init(hostRoot, {
-      serial: { enabled: true, port: 'COM6', baudRate: 115200, mode: 'terminal' },
-      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 'auto' },
-      flash: { binary: 'build/gcc-arm-debug/rtthread.bin', baseAddress: '0x08000000', verify: true },
-    }, { force: true });
+    await h.controlProfileManager.init(
+      hostRoot,
+      {
+        serial: { enabled: true, port: 'COM6', baudRate: 115200, mode: 'terminal' },
+        jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 'auto' },
+        flash: {
+          binary: 'build/gcc-arm-debug/rtthread.bin',
+          baseAddress: '0x08000000',
+          verify: true,
+        },
+      },
+      { force: true },
+    );
 
     const out = await callTool(h.client, 'get_app_status', { root: linuxRoot });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        controlProfile: { status: string; jlink?: { target?: string }; flash?: { binaryConfigured: boolean } };
-        recommendedWorkflows: Array<{ id: string; arguments: { root: string } }>;
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          controlProfile: {
+            status: string;
+            jlink?: { target?: string };
+            flash?: { binaryConfigured: boolean };
+          };
+          recommendedWorkflows: Array<{ id: string; arguments: { root: string } }>;
+        };
+      }
+    ).data;
     expect(data.controlProfile.status).toBe('loaded');
     expect(data.controlProfile.jlink?.target).toBe('STM32H743II');
     expect(data.controlProfile.flash?.binaryConfigured).toBe(true);
@@ -659,18 +746,24 @@ describe('MCP agent runbook tool', () => {
     await h.controlProfileManager.init(h.root, {
       serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
       jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 'auto' },
-      flash: { binary: 'build/gcc-arm-debug/rtthread.bin', baseAddress: '0x08008000', verify: true },
+      flash: {
+        binary: 'build/gcc-arm-debug/rtthread.bin',
+        baseAddress: '0x08008000',
+        verify: true,
+      },
     });
 
     const out = await callTool(h.client, 'get_app_status', { root: h.root });
 
-    const data = (out.evidence as {
-      data: {
-        recommendedNextActions: string[];
-        recommendedWorkflows: Array<{ id: string }>;
-        jlink: { available: boolean; probeCount: number };
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          recommendedNextActions: string[];
+          recommendedWorkflows: Array<{ id: string }>;
+          jlink: { available: boolean; probeCount: number };
+        };
+      }
+    ).data;
     expect(data.jlink).toMatchObject({ available: true, probeCount: 0 });
     const guidance = data.recommendedNextActions.join('\n');
     expect(guidance).toMatch(/J-Link probe visibility/i);

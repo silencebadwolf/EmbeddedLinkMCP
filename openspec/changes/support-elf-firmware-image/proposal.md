@@ -10,6 +10,7 @@ ELF is a common output format for embedded builds. LinkTerm should interpret ELF
 - Detect the ELF load base address when the user picks an `.elf` firmware file.
 - Decode ELF bytes before high-level flash workflows call the raw binary J-Link backend.
 - Reuse decoded ELF bytes for profile vector-table diagnostics so inspection matches flash behavior.
+- Teach AI clients through initialize instructions, `get_agent_runbook`, `get_app_status`, and `run_control_workflow` descriptions that `.elf` profile firmware must be decoded by LinkTerm and must not be rewritten to `.bin`.
 - Preserve current `.bin` and `.hex` behavior.
 
 ## Impact
@@ -19,8 +20,11 @@ ELF is a common output format for embedded builds. LinkTerm should interpret ELF
   - `src/main/ipc/control-profile-ipc.ts`
   - `src/mcp/surfaces/control-profile/tools.ts`
   - `src/mcp/surfaces/control-workflow/workflow-runner.ts`
+  - `src/mcp/surfaces/agent-runbook/*`
+  - `src/mcp/surfaces/control-workflow/tools.ts`
   - related unit tests
 - Behavior impact:
   - Additive support for valid embedded ELF firmware images.
   - Safer destructive workflow behavior: ELF files are decoded before vector validation and flashing.
   - Invalid or unsupported ELF files fail during preflight before connecting to the probe.
+  - AI clients receive consistent runtime guidance to keep `profile.flash.binary` authoritative and not replace `.elf` with `.bin` during troubleshooting.

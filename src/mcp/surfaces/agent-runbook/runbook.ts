@@ -1,6 +1,7 @@
 /** Runtime-generated LinkTerm MCP runbook content. */
 
 import type { EvidenceKind } from '../../../shared/types.js';
+import { FIRMWARE_IMAGE_USAGE_GUIDANCE } from '../../firmware-image-guidance.js';
 
 export type RunbookRiskLevel = 'low' | 'medium' | 'high';
 
@@ -99,8 +100,14 @@ export const RUNBOOK_WORKFLOWS: readonly RunbookWorkflow[] = [
   {
     id: 'observe_serial',
     title: 'Observe an existing or configured serial terminal',
-    description: 'Use LinkTerm serial/session tools to open or reuse a terminal session, clear stale output, send commands, and read fresh transcript evidence.',
-    recommendedTools: ['discover_serial_ports', 'open_session', 'read_from_session', 'send_and_wait'],
+    description:
+      'Use LinkTerm serial/session tools to open or reuse a terminal session, clear stale output, send commands, and read fresh transcript evidence.',
+    recommendedTools: [
+      'discover_serial_ports',
+      'open_session',
+      'read_from_session',
+      'send_and_wait',
+    ],
     riskLevel: 'low',
     requiresConfirmation: false,
     expectedEvidenceKind: 'terminal_output',
@@ -108,8 +115,13 @@ export const RUNBOOK_WORKFLOWS: readonly RunbookWorkflow[] = [
   {
     id: 'activate_profile',
     title: 'Bring configured control online without destructive actions',
-    description: 'Use the workspace control profile to open serial and connect J-Link without flashing, erasing, resetting, halting, or starting GDB server.',
-    recommendedTools: ['inspect_control_profile', 'prepare_control_profile_questions', 'activate_control_profile'],
+    description:
+      'Use the workspace control profile to open serial and connect J-Link without flashing, erasing, resetting, halting, or starting GDB server.',
+    recommendedTools: [
+      'inspect_control_profile',
+      'prepare_control_profile_questions',
+      'activate_control_profile',
+    ],
     riskLevel: 'medium',
     requiresConfirmation: false,
     expectedEvidenceKind: 'workspace_config',
@@ -117,7 +129,8 @@ export const RUNBOOK_WORKFLOWS: readonly RunbookWorkflow[] = [
   {
     id: 'flash_then_observe',
     title: 'Flash configured firmware, reset, then observe serial output',
-    description: 'Prefer run_control_workflow; for long flash workflows use background job mode, then poll status and read job evidence instead of retrying hardware operations.',
+    description:
+      'Prefer run_control_workflow; for long flash workflows use background job mode, then poll status and read job evidence instead of retrying hardware operations.',
     recommendedTools: [
       'run_control_workflow',
       'get_control_workflow_job_status',
@@ -132,7 +145,8 @@ export const RUNBOOK_WORKFLOWS: readonly RunbookWorkflow[] = [
   {
     id: 'debug_diagnose',
     title: 'Start managed debug diagnosis',
-    description: 'Use LinkTerm-managed J-Link/GDB/debug evidence instead of direct GDB or SEGGER CLI calls; use background job mode when diagnosis may exceed the host request deadline.',
+    description:
+      'Use LinkTerm-managed J-Link/GDB/debug evidence instead of direct GDB or SEGGER CLI calls; use background job mode when diagnosis may exceed the host request deadline.',
     recommendedTools: [
       'run_control_workflow',
       'get_control_workflow_job_status',
@@ -148,7 +162,8 @@ export const RUNBOOK_WORKFLOWS: readonly RunbookWorkflow[] = [
   {
     id: 'recover_attach',
     title: 'Recover or diagnose target attach problems',
-    description: 'When probe discovery works but CPU/register access fails, stay inside LinkTerm debug tools and collect structured evidence.',
+    description:
+      'When probe discovery works but CPU/register access fails, stay inside LinkTerm debug tools and collect structured evidence.',
     recommendedTools: ['probe_detect', 'probe_status', 'register_list', 'snapshot_capture'],
     riskLevel: 'medium',
     requiresConfirmation: false,
@@ -157,8 +172,16 @@ export const RUNBOOK_WORKFLOWS: readonly RunbookWorkflow[] = [
   {
     id: 'rtt_or_gdb_observe',
     title: 'Use RTT log sessions or managed GDB evidence',
-    description: 'Use open_rtt_log_session plus read_from_session for continuous RTT log observation; use rtt_read/rtt_search/rtt_clear for bounded one-shot debug evidence; do not launch external GDB server processes.',
-    recommendedTools: ['rtt_connect', 'open_rtt_log_session', 'read_from_session', 'rtt_read', 'rtt_search', 'gdb_server_start'],
+    description:
+      'Use open_rtt_log_session plus read_from_session for continuous RTT log observation; use rtt_read/rtt_search/rtt_clear for bounded one-shot debug evidence; do not launch external GDB server processes.',
+    recommendedTools: [
+      'rtt_connect',
+      'open_rtt_log_session',
+      'read_from_session',
+      'rtt_read',
+      'rtt_search',
+      'gdb_server_start',
+    ],
     riskLevel: 'high',
     requiresConfirmation: true,
     expectedEvidenceKind: 'debug_output',
@@ -166,7 +189,8 @@ export const RUNBOOK_WORKFLOWS: readonly RunbookWorkflow[] = [
   {
     id: 'ui_assist',
     title: 'Assist the visible LinkTerm UI',
-    description: 'Use whitelisted UI patching and screenshots for non-sensitive setup help without touching terminal/debug state.',
+    description:
+      'Use whitelisted UI patching and screenshots for non-sensitive setup help without touching terminal/debug state.',
     recommendedTools: ['ui_configure', 'ui_screenshot'],
     riskLevel: 'low',
     requiresConfirmation: false,
@@ -202,6 +226,7 @@ const SAFETY_RULES = [
   'For terminal commands, use write_to_session or send_and_wait to send data and read_from_session to read transcript evidence; do not infer that LinkTerm lacks a send interface from a partial host tool view.',
   'For continuous RTT log observation, use open_rtt_log_session and read_from_session after RTT is connected; use rtt_read, rtt_search, and rtt_clear for bounded one-shot debug evidence.',
   'Prefer the current workspace control profile: inspect or read <root>/.linkterm/control-profile.json first, and omit firmware.filePath when profile.flash.binary already names the firmware.',
+  FIRMWARE_IMAGE_USAGE_GUIDANCE,
   'High-impact J-Link and workflow operations require confirm=true; without it LinkTerm returns CONFIRMATION_REQUIRED and does not invoke the backend.',
   'When runtime diagnostics report stale code, call restart_mcp_runtime with confirm=true, then call get_app_status after restart before hardware operations.',
   'For long flash/observe/debug workflows, use run_control_workflow background job mode and recover with get_control_workflow_job_status plus read_control_workflow_job instead of retrying flash or using external tools.',
@@ -233,6 +258,7 @@ export function createAgentRunbookInstructions(schemaVersion: string): string {
     'For terminal commands, send bytes with write_to_session or send_and_wait, then read transcript evidence with read_from_session; never claim LinkTerm lacks a send interface before checking get_app_status terminalCommandTools.',
     'For continuous RTT log observation, use rtt_connect then open_rtt_log_session and read_from_session; use rtt_read/rtt_search/rtt_clear only for bounded one-shot debug evidence.',
     'Prefer the current workspace control profile: inspect or read <root>/.linkterm/control-profile.json first, and omit firmware.filePath when profile.flash.binary already names the firmware.',
+    FIRMWARE_IMAGE_USAGE_GUIDANCE,
     'Prefer run_control_workflow for supported hardware workflows before manually chaining low-level serial and J-Link tools.',
     'For long-running flash/observe/debug workflows, use run_control_workflow background job mode, then poll get_control_workflow_job_status and read_control_workflow_job; cancel with cancel_control_workflow_job when needed.',
     `Available workflow hints: ${workflowIds}.`,
@@ -305,7 +331,9 @@ export function sanitizeControlProfileForRunbook(
     summary.jlink = {
       enabled: jlink.enabled === true,
       ...(typeof jlink.target === 'string' ? { target: jlink.target } : {}),
-      ...(jlink.interface === 'swd' || jlink.interface === 'jtag' ? { interface: jlink.interface } : {}),
+      ...(jlink.interface === 'swd' || jlink.interface === 'jtag'
+        ? { interface: jlink.interface }
+        : {}),
       ...(typeof jlink.speedKHz === 'number' || jlink.speedKHz === 'auto'
         ? { speedKHz: jlink.speedKHz }
         : {}),
@@ -323,7 +351,8 @@ export function sanitizeControlProfileForRunbook(
   if (rtt) {
     summary.rtt = {
       enabled: rtt.enabled === true,
-      ...(Array.isArray(rtt.channels) && rtt.channels.every((channel) => typeof channel === 'number')
+      ...(Array.isArray(rtt.channels) &&
+      rtt.channels.every((channel) => typeof channel === 'number')
         ? { channels: [...rtt.channels] }
         : {}),
     };
@@ -361,7 +390,10 @@ function renderRunbookMarkdown(payload: Omit<AgentRunbook, 'markdown'>): string 
     )
     .join('\n');
   const highImpactLines = payload.highImpactTools
-    .map((tool) => `- ${tool.name}: requires confirm=true; missing confirmation returns CONFIRMATION_REQUIRED before backend invocation.`)
+    .map(
+      (tool) =>
+        `- ${tool.name}: requires confirm=true; missing confirmation returns CONFIRMATION_REQUIRED before backend invocation.`,
+    )
     .join('\n');
   const workflowModeLines = payload.highImpactControlWorkflowModes
     .map((entry) => `- run_control_workflow mode ${entry.mode}: requires confirm=true.`)

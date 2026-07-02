@@ -15,6 +15,7 @@ import type { IJLinkBackend } from '../../../jlink/types.js';
 import type { JLinkDeviceCatalog } from '../../../jlink/device-catalog.js';
 import { ERROR_CODES } from '../../../shared/error-codes.js';
 import { registerTool, ToolError, type ToolHandlerResult } from '../../registry.js';
+import { FIRMWARE_IMAGE_USAGE_GUIDANCE } from '../../firmware-image-guidance.js';
 import { ConfirmationRequiredError, translateJLinkError } from '../debug/error-translate.js';
 import { defaultOpenSerial, type ControlProfileOpenSerial } from '../control-profile/tools.js';
 import { runControlWorkflow } from './workflow-runner.js';
@@ -62,6 +63,7 @@ export function registerControlWorkflowTools(
       'Run a deterministic high-level hardware control workflow from the current workspace control profile at <root>/.linkterm/control-profile.json. ' +
       'Prefer this high-level tool over manually chaining low-level J-Link/serial tools for supported modes. ' +
       'Modes: flash-observe, debug-diagnose, flash-observe-diagnose. Prefer profile flash.binary and omit firmware.filePath unless intentionally overriding it; request firmware overrides are sandboxed under root. ' +
+      `${FIRMWARE_IMAGE_USAGE_GUIDANCE} ` +
       'Firmware is read server-side, so AI clients must not chunk base64 manually. High-impact modes require confirm=true. ' +
       'Set observe.enabled=false for download-only calls that should flash/verify/reset without serial or RTT observation. ' +
       'For long operations, request execution.mode=background, then poll get_control_workflow_job_status and read_control_workflow_job; cancel with cancel_control_workflow_job if needed. ' +

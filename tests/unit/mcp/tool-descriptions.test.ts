@@ -79,6 +79,11 @@ describe('high-impact MCP tool descriptions', () => {
     expect(descriptions.get('run_control_workflow')).toContain('background');
     expect(descriptions.get('run_control_workflow')).toContain('current workspace control profile');
     expect(descriptions.get('run_control_workflow')).toContain('omit firmware.filePath');
+    expect(descriptions.get('run_control_workflow')).toContain('.bin/.hex/.elf');
+    expect(descriptions.get('run_control_workflow')).toContain('ELF loadable segments');
+    expect(descriptions.get('run_control_workflow')).toContain(
+      'do not override an .elf profile with a .bin path',
+    );
     expect(descriptions.get('run_control_workflow')).toContain('get_control_workflow_job_status');
     expect(descriptions.get('run_control_workflow')).toContain('read_control_workflow_job');
     expect(descriptions.get('cancel_control_workflow_job')).toContain('AbortSignal');
