@@ -121,6 +121,7 @@ describe('agent runbook builder', () => {
     expect(runbook.markdown).toContain('core tool');
     expect(runbook.markdown).toContain('missing core tools');
     expect(runbook.markdown).toContain('repair or restart');
+    expect(runbook.markdown).toContain('restart_mcp_runtime');
     expect(runbook.markdown).toContain('Use ui_screenshot only when visual evidence is needed');
     expect(runbook.markdown).toContain('Commander script orchestration');
     expect(runbook.markdown).toContain('design reference only');
@@ -242,6 +243,7 @@ describe('MCP agent runbook tool', () => {
     expect(instructions).toContain('read-only');
     expect(instructions).toContain('core tool-set diagnostics');
     expect(instructions).toContain('repair or restart the LinkTerm MCP runtime');
+    expect(instructions).toContain('restart_mcp_runtime');
     expect(instructions).toContain('Use ui_screenshot only when visual evidence is needed');
     expect(instructions).toContain('run_control_workflow');
     expect(instructions).toContain('current workspace control profile');
@@ -339,6 +341,7 @@ describe('MCP agent runbook tool', () => {
     expect(evidence.data.app.runtime.toolSet.hash).toMatch(/^[a-f0-9]{64}$/);
     expect(evidence.data.app.runtime.toolSet.core).toMatchObject({ complete: true, missing: [] });
     expect(evidence.data.app.runtime.toolSet.core.expected).toContain('get_app_status');
+    expect(evidence.data.app.runtime.toolSet.core.expected).toContain('restart_mcp_runtime');
     expect(evidence.data.app.runtime.toolSet.core.expected).toContain('get_control_workflow_job_status');
     expect(evidence.data.app.runtime.toolSet.core.expected).toContain('read_control_workflow_job');
     expect(evidence.data.app.runtime.toolSet.core.expected).toContain('cancel_control_workflow_job');
@@ -455,6 +458,8 @@ describe('MCP agent runbook tool', () => {
       };
     }).data;
     expect(data.recommendedNextActions[0]).toMatch(/restart the LinkTerm MCP runtime/i);
+    expect(data.recommendedNextActions[0]).toContain('restart_mcp_runtime');
+    expect(data.recommendedNextActions[0]).toContain('get_app_status');
     expect(data.recommendedNextActions[0]).toContain('segger-command-runner.js');
   });
 

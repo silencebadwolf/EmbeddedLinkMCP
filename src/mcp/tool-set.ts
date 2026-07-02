@@ -11,6 +11,7 @@ const CORE_TOOL_NAMES = [
   'get_session_status',
   'get_agent_runbook',
   'get_app_status',
+  'restart_mcp_runtime',
   'init_control_profile',
   'get_control_profile',
   'inspect_control_profile',

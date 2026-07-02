@@ -145,6 +145,13 @@ export interface ToolDefinition<TSchema extends z.ZodType> {
   inputSchema: TSchema;
   /** Optional runtime freshness provider; stale code blocks state-affecting tools. */
   runtimeDiagnostics?: RuntimeDiagnosticsProvider;
+  /**
+   * Allow this state-affecting tool to run even when compiled runtime artifacts are stale.
+   *
+   * This is intentionally narrow: only runtime-control tools that do not touch hardware,
+   * sessions, flash, reset, GDB, RTT, or UI control should set it.
+   */
+  allowWhenRuntimeStale?: boolean;
   /** 业务 handler，input 是 inputSchema 解析后的类型。 */
   handler: ToolBusinessHandler<z.infer<TSchema>>;
 }
@@ -227,7 +234,11 @@ export function registerTool<TSchema extends z.ZodType<{ correlationId?: string;
       }
 
       const runtimeDiagnostics = def.runtimeDiagnostics ?? runtimeDiagnosticsProviders.get(server);
-      if (def.sensitivity === 'state-affecting' && runtimeDiagnostics !== undefined) {
+      if (
+        def.sensitivity === 'state-affecting' &&
+        def.allowWhenRuntimeStale !== true &&
+        runtimeDiagnostics !== undefined
+      ) {
         const runtimeStatus = await runtimeDiagnostics();
         if (runtimeStatus.code?.fresh === false) {
           const staleArtifacts = runtimeStatus.code.staleArtifacts;

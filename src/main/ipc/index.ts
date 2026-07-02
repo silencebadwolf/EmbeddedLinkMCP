@@ -31,6 +31,10 @@ import {
 } from '../../mcp/runtime-metadata.js';
 import { ControlWorkflowJobManager } from '../../mcp/surfaces/control-workflow/job-manager.js';
 import type { CapturableWindow } from '../../mcp/surfaces/ui/types.js';
+import type {
+  RuntimeRestartRequest,
+  RuntimeRestartScheduler,
+} from '../../mcp/surfaces/runtime-control/tools.js';
 import { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
 import { registerSerialIpc } from './serial-ipc.js';
 import { registerSessionIpc } from './session-ipc.js';
@@ -178,6 +182,7 @@ export async function registerIpcHandlers(
     metadataPath,
     artifactPaths: runtimeFreshnessArtifactPaths(),
   });
+  const runtimeRestartScheduler = createElectronRuntimeRestartScheduler();
 
   const mcpServer = createMcpServer({
     sessionManager,
@@ -194,6 +199,7 @@ export async function registerIpcHandlers(
     uiBridge,
     getActiveWindow,
     runtimeDiagnostics: directStdioRuntimeDiagnostics,
+    runtimeRestartScheduler,
   });
 
   const mcpHttpServer = await startMcpHttpRuntimeServer({
@@ -211,6 +217,7 @@ export async function registerIpcHandlers(
     uiBridge,
     getActiveWindow,
     runtimeDiagnostics: ownerRuntimeDiagnostics,
+    runtimeRestartScheduler,
     metadataPath,
     port: httpSettings.port,
     token: httpSettings.token,
@@ -356,4 +363,33 @@ function listRuntimeArtifactFiles(root: string): string[] {
   };
   visit(root);
   return files;
+}
+
+let runtimeRestartScheduled = false;
+
+function createElectronRuntimeRestartScheduler(): RuntimeRestartScheduler {
+  return (request: RuntimeRestartRequest) => {
+    if (runtimeRestartScheduled) {
+      return {
+        scheduled: true,
+        delayMs: request.delayMs,
+        mode: 'electron-relaunch',
+        alreadyScheduled: true,
+        message: 'A LinkTerm MCP runtime restart is already scheduled.',
+      };
+    }
+
+    runtimeRestartScheduled = true;
+    app.relaunch();
+    const timer = setTimeout(() => app.exit(0), request.delayMs);
+    if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
+      (timer as NodeJS.Timeout).unref();
+    }
+
+    return {
+      scheduled: true,
+      delayMs: request.delayMs,
+      mode: 'electron-relaunch',
+    };
+  };
 }

@@ -46,6 +46,10 @@ import { registerRttLogSessionTools } from './surfaces/rtt-log-session/tools.js'
 import { registerUiTools } from './surfaces/ui/tools.js';
 import { registerJLinkDeviceCatalogTools } from './surfaces/jlink-device-catalog/tools.js';
 import type { CapturableWindow, UiStoreBridge } from './surfaces/ui/types.js';
+import {
+  registerRuntimeControlTools,
+  type RuntimeRestartScheduler,
+} from './surfaces/runtime-control/tools.js';
 import { getRegisteredToolNames, setRuntimeDiagnosticsProvider } from './registry.js';
 import { buildToolSetDiagnostics } from './tool-set.js';
 import { baseDiagnostics, type RuntimeDiagnosticsProvider } from './runtime-diagnostics.js';
@@ -102,6 +106,8 @@ export interface CreateMcpServerOptions {
   serverInfo?: { name: string; version: string };
   /** 只读 runtime 诊断；用于 get_app_status 区分 owner/proxy/stdio 等启动路径。 */
   runtimeDiagnostics?: RuntimeDiagnosticsProvider;
+  /** Runtime restart scheduler used by restart_mcp_runtime; omitted runtimes expose a safe NOT_IMPLEMENTED result. */
+  runtimeRestartScheduler?: RuntimeRestartScheduler;
 }
 
 /** {@link createMcpServer} 返回的句柄；start/stop 操控生命周期。 */
@@ -150,6 +156,9 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
     options.runtimeDiagnostics ??
     (() => baseDiagnostics(activeTransport === null ? 'not-started' : 'stdio'));
   setRuntimeDiagnosticsProvider(server, runtimeDiagnostics);
+  registerRuntimeControlTools(server, {
+    runtimeRestartScheduler: options.runtimeRestartScheduler,
+  });
 
   registerTerminalTools(server, {
     sessionManager: options.sessionManager,

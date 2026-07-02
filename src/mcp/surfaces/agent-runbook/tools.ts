@@ -319,7 +319,7 @@ function buildRecommendedNextActions(
   if (runtimeStatus.code?.fresh === false) {
     const staleArtifacts = runtimeStatus.code.staleArtifacts.map((artifact) => artifact.path).join(', ');
     return [
-      `Restart the LinkTerm MCP runtime before hardware operations; compiled artifacts changed after this process started: ${staleArtifacts}.`,
+      `Restart the LinkTerm MCP runtime by calling restart_mcp_runtime with confirm=true, then call get_app_status again after restart before hardware operations; compiled artifacts changed after this process started: ${staleArtifacts}.`,
     ];
   }
   if (!toolSetStatus.core.complete) {

@@ -217,6 +217,47 @@ describe('MCP tool registry wrapper', () => {
     });
   });
 
+  it('allows explicitly marked state-affecting calls when runtime code is stale', async () => {
+    const { server, tools } = fakeServer();
+    let handlerCalls = 0;
+
+    registerTool(server, {
+      name: 'runtime_control_tool',
+      description: 'runtime control description',
+      sensitivity: 'state-affecting',
+      inputSchema: schema,
+      allowWhenRuntimeStale: true,
+      runtimeDiagnostics: () => ({
+        identity: { runtimeId: 'old-runtime', pid: 1234, startedAt: '2026-06-29T12:49:36.000Z' },
+        transport: { mode: 'http-owner' },
+        metadata: { available: true, fresh: true },
+        code: {
+          fresh: false,
+          staleArtifacts: [
+            {
+              path: 'dist/main/jlink/segger-command-runner.js',
+              modifiedAt: '2026-06-30T00:00:20.000Z',
+            },
+          ],
+        },
+      }),
+      handler: () => {
+        handlerCalls += 1;
+        return { success: true, evidence: { kind: 'app_status', data: { scheduled: true }, cursor: 0 } };
+      },
+    });
+
+    const result = await tools[0]!.callback({});
+    const out = structured(result);
+
+    expect(handlerCalls).toBe(1);
+    expect(result.isError).toBe(false);
+    expect(out).toMatchObject({
+      success: true,
+      evidence: { kind: 'app_status', data: { scheduled: true }, cursor: 0 },
+    });
+  });
+
   it('normalizes ToolError and unexpected exceptions into structured failures', async () => {
     const { server, tools } = fakeServer();
 

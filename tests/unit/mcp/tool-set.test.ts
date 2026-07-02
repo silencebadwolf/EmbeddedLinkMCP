@@ -32,6 +32,10 @@ describe('tool-set diagnostics', () => {
     expect(expectedCoreToolNames()).toContain('open_rtt_log_session');
   });
 
+  it('includes the runtime restart recovery tool in the core diagnostics contract', () => {
+    expect(expectedCoreToolNames()).toContain('restart_mcp_runtime');
+  });
+
   it('reports missing core tools by stable name', () => {
     const partial = expectedCoreToolNames().filter(
       (name) => name !== 'run_control_workflow' && name !== 'get_app_status',
