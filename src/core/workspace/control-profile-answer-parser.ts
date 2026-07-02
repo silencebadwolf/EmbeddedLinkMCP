@@ -163,9 +163,9 @@ export function buildControlProfileQuestion(report: ControlProfileCompletenessRe
     return '当前工作区控制配置已完整，可以直接调用 activate_control_profile 拉起控制。';
   }
   return (
-    '请告诉我这些控制参数：观察通道（串口或 RTT 日志）、芯片型号、SWD/JTAG、J-Link 速度、bin 路径、flash 起始地址。' +
-    '串口模式请提供串口号和波特率，例如：COM3，115200，AT32F435RGT7，SWD，4000kHz，build/app.bin，0x08000000。' +
-    'RTT 模式可以回答：RTT 日志，AT32F435RGT7，SWD，4000kHz，build/app.bin，0x08000000。' +
+    '请告诉我这些控制参数：观察通道（串口或 RTT 日志）、芯片型号、SWD/JTAG、J-Link 速度、bin/hex/elf 路径、flash 起始地址。' +
+    '串口模式请提供串口号和波特率，例如：COM3，115200，AT32F435RGT7，SWD，4000kHz，build/app.elf，0x08000000。' +
+    'RTT 模式可以回答：RTT 日志，AT32F435RGT7，SWD，4000kHz，build/app.elf，0x08000000。' +
     `当前缺失字段：${report.missingFields.join(', ')}`
   );
 }

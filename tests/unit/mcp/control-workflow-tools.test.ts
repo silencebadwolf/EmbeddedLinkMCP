@@ -14,6 +14,7 @@ import type { LinkTermMcpServer } from '@/mcp/server.js';
 import { ControlWorkflowJobManager } from '@/mcp/surfaces/control-workflow/job-manager.js';
 import type { SerialSessionConfig, SessionState } from '@/shared/types.js';
 import { SerialDiscovery } from '@/transports/serial/serial-discovery.js';
+import { cortexMVectorImage, elf32LeImage } from '../../fixtures/elf.js';
 import { FakeJLinkBackend } from '../../fixtures/fake-jlink-backend.js';
 import { intelHexRecord, intelHexText } from '../../fixtures/intel-hex.js';
 import { createInMemoryMcpTransportPair } from '../../fixtures/mock-mcp-transport.js';
@@ -59,26 +60,39 @@ async function setup(options: SetupOptions = {}): Promise<Harness> {
     jlinkBackend: options.jlinkBackend ?? fake,
     jlinkDeviceCatalog: options.jlinkDeviceCatalog,
     controlWorkflowJobManager: jobManager,
-    controlProfileOpenSerial: options.openSerial ?? (async (config) => {
-      openSerialCalls.push(config);
-      const session = await manager.createAndOpen(
-        (id) => new TestSerialSession({ id, transport }),
-        {
-          connectionType: 'serial',
-          label: config.label,
-          createdBy: 'ai',
-          serial: { port: config.port, baudRate: config.baudRate, mode: config.mode },
-        } as unknown as Parameters<SessionManager['createAndOpen']>[1],
-      );
-      return { sessionId: session.id, state: session.state as SessionState };
-    }),
+    controlProfileOpenSerial:
+      options.openSerial ??
+      (async (config) => {
+        openSerialCalls.push(config);
+        const session = await manager.createAndOpen(
+          (id) => new TestSerialSession({ id, transport }),
+          {
+            connectionType: 'serial',
+            label: config.label,
+            createdBy: 'ai',
+            serial: { port: config.port, baudRate: config.baudRate, mode: config.mode },
+          } as unknown as Parameters<SessionManager['createAndOpen']>[1],
+        );
+        return { sessionId: session.id, state: session.state as SessionState };
+      }),
     hostPathResolver: options.hostPathResolver,
     transportFactory: () => serverTransport,
   });
   await mcp.start();
   const client = new Client({ name: 'lt-control-workflow-test', version: '0.0.0' });
   await client.connect(clientTransport);
-  return { manager, serialDiscovery, controlProfileManager, fake, jobManager, mcp, client, root, transport, openSerialCalls };
+  return {
+    manager,
+    serialDiscovery,
+    controlProfileManager,
+    fake,
+    jobManager,
+    mcp,
+    client,
+    root,
+    transport,
+    openSerialCalls,
+  };
 }
 
 async function teardown(h: Harness): Promise<void> {
@@ -109,7 +123,12 @@ async function initProfile(h: Harness, opts: { speedKHz?: number | 'auto' } = {}
     root: h.root,
     profile: {
       serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
-      jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: opts.speedKHz ?? 4000 },
+      jlink: {
+        enabled: true,
+        target: 'AT32F435RGT7',
+        interface: 'swd',
+        speedKHz: opts.speedKHz ?? 4000,
+      },
       flash: { binary: 'rtthread.bin', baseAddress: '0x08008000', verify: true },
     },
   });
@@ -136,7 +155,8 @@ async function waitForJobStep(client: Client, jobId: string, stepId: string): Pr
     const out = await callTool(client, 'read_control_workflow_job', { jobId });
     const data = (out.evidence as { data: { workflow?: { steps: Array<{ id: string }> } } }).data;
     if (data.workflow?.steps.some((step) => step.id === stepId) === true) return;
-    if (Date.now() - started > 2000) throw new Error(`Timed out waiting for job ${jobId} step ${stepId}`);
+    if (Date.now() - started > 2000)
+      throw new Error(`Timed out waiting for job ${jobId} step ${stepId}`);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
@@ -164,13 +184,15 @@ describe('MCP control workflow tool', () => {
     });
 
     expect(out.success).toBe(true);
-    const started = (out.evidence as {
-      data: {
-        jobId: string;
-        state: string;
-        tools: Record<string, string>;
-      };
-    }).data;
+    const started = (
+      out.evidence as {
+        data: {
+          jobId: string;
+          state: string;
+          tools: Record<string, string>;
+        };
+      }
+    ).data;
     expect(started.jobId).toMatch(/^cwjob-/);
     expect(['queued', 'running']).toContain(started.state);
     expect(started.tools).toMatchObject({
@@ -180,8 +202,12 @@ describe('MCP control workflow tool', () => {
       cleanup: 'cleanup_control_workflow_jobs',
     });
 
-    const finalStatus = await waitForJobState(h.client, started.jobId, ['succeeded', 'failed', 'cancelled']);
-    expect(finalStatus).toMatchObject({ state: 'succeeded', currentStepId: 'debug_diagnose' });
+    const finalStatus = await waitForJobState(h.client, started.jobId, [
+      'succeeded',
+      'failed',
+      'cancelled',
+    ]);
+    expect(finalStatus).toMatchObject({ state: 'succeeded', currentStepId: 'gdb_server_stop' });
 
     const sync = await callTool(h.client, 'run_control_workflow', {
       root: h.root,
@@ -227,7 +253,9 @@ describe('MCP control workflow tool', () => {
 
     const active = await callTool(h.client, 'get_control_workflow_job_status', { jobId });
     expect(active.success).toBe(true);
-    expect((active.evidence as { data: { jobId: string; state: string; workflow?: unknown } }).data).toMatchObject({
+    expect(
+      (active.evidence as { data: { jobId: string; state: string; workflow?: unknown } }).data,
+    ).toMatchObject({
       jobId,
       state: expect.stringMatching(/queued|running|succeeded/),
     });
@@ -235,16 +263,20 @@ describe('MCP control workflow tool', () => {
 
     await waitForJobState(h.client, jobId, ['succeeded']);
     const evidence = await callTool(h.client, 'read_control_workflow_job', { jobId });
-    const data = (evidence.evidence as { data: { workflow: { steps: Array<{ id: string }> } } }).data;
+    const data = (evidence.evidence as { data: { workflow: { steps: Array<{ id: string }> } } })
+      .data;
     expect(data.workflow.steps.map((step) => step.id)).toEqual([
       'load_profile',
       'preflight',
       'connect_probe',
       'gdb_server_start',
       'debug_diagnose',
+      'gdb_server_stop',
     ]);
 
-    const missing = await callTool(h.client, 'get_control_workflow_job_status', { jobId: 'missing-job' });
+    const missing = await callTool(h.client, 'get_control_workflow_job_status', {
+      jobId: 'missing-job',
+    });
     expect(missing.success).toBe(false);
     expect((missing.error as { code: string }).code).toBe('NOT_FOUND');
   });
@@ -264,14 +296,66 @@ describe('MCP control workflow tool', () => {
 
     const cancelled = await callTool(h.client, 'cancel_control_workflow_job', { jobId });
     expect(cancelled.success).toBe(true);
-    expect((cancelled.evidence as { data: { cancelRequested: boolean } }).data.cancelRequested).toBe(true);
+    expect(
+      (cancelled.evidence as { data: { cancelRequested: boolean } }).data.cancelRequested,
+    ).toBe(true);
 
     const finalStatus = await waitForJobState(h.client, jobId, ['cancelled']);
     expect(finalStatus.state).toBe('cancelled');
     const evidence = await callTool(h.client, 'read_control_workflow_job', { jobId });
-    const steps = (evidence.evidence as { data: { workflow: { steps: Array<{ id: string; error?: { code: string } }> } } }).data.workflow.steps;
+    const steps = (
+      evidence.evidence as {
+        data: { workflow: { steps: Array<{ id: string; error?: { code: string } }> } };
+      }
+    ).data.workflow.steps;
     expect(steps.map((step) => step.id)).toContain('connect_probe');
     expect(steps.at(-1)).toMatchObject({ id: 'job_cancelled', error: { code: 'ABORTED' } });
+  });
+
+  it('reports flash as the current background step while a download is in progress', async () => {
+    await writeFile(path.join(h.root, 'rtthread.bin'), cortexMVectorImage(0x08008000));
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        serial: { enabled: false },
+        jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.bin', baseAddress: '0x08008000', verify: true },
+      },
+    });
+    h.fake.delayMs = 10_000;
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      observe: { serial: false },
+      execution: { mode: 'background' },
+      confirm: true,
+    });
+    const jobId = (out.evidence as { data: { jobId: string } }).data.jobId;
+    await waitForJobStep(h.client, jobId, 'flash');
+
+    const status = await callTool(h.client, 'get_control_workflow_job_status', { jobId });
+    const data = (
+      status.evidence as {
+        data: {
+          currentStepId?: string;
+        };
+      }
+    ).data;
+    expect(data.currentStepId).toBe('flash');
+    const evidence = await callTool(h.client, 'read_control_workflow_job', { jobId });
+    const workflow = (
+      evidence.evidence as {
+        data: { workflow?: { steps: Array<{ id: string; status: string }> } };
+      }
+    ).data.workflow;
+    expect(workflow?.steps.find((step) => step.id === 'flash')).toMatchObject({
+      status: 'running',
+    });
+
+    const cancelled = await callTool(h.client, 'cancel_control_workflow_job', { jobId });
+    expect(cancelled.success).toBe(true);
+    await waitForJobState(h.client, jobId, ['cancelled']);
   });
 
   it('applies schema version policy to background job tools by sensitivity', async () => {
@@ -291,7 +375,9 @@ describe('MCP control workflow tool', () => {
       clientSchemaVersion: 'linkterm-mcp/0.0.0',
     });
     expect(status.success).toBe(true);
-    expect((status.evidence as { meta?: { warning?: string } }).meta?.warning).toMatch(/schema version mismatch/i);
+    expect((status.evidence as { meta?: { warning?: string } }).meta?.warning).toMatch(
+      /schema version mismatch/i,
+    );
 
     const cleanup = await callTool(h.client, 'cleanup_control_workflow_jobs', {
       jobId,
@@ -326,9 +412,14 @@ describe('MCP control workflow tool', () => {
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: { summary: Record<string, boolean>; steps: Array<{ id: string; status: string; evidence?: Record<string, unknown> }> };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          summary: Record<string, boolean>;
+          steps: Array<{ id: string; status: string; evidence?: Record<string, unknown> }>;
+        };
+      }
+    ).data;
     expect(data.summary).toMatchObject({
       probeConnected: true,
       gdbServerStarted: true,
@@ -340,11 +431,13 @@ describe('MCP control workflow tool', () => {
       'connect_probe',
       'gdb_server_start',
       'debug_diagnose',
+      'gdb_server_stop',
     ]);
     expect(data.steps.find((step) => step.id === 'gdb_server_start')?.evidence).toMatchObject({
       handle: { host: '127.0.0.1', port: 2331 },
     });
     expect(h.fake.callsOf('gdbServerStart')).toHaveLength(1);
+    expect(h.fake.callsOf('gdbServerStop')).toHaveLength(1);
     expect(h.fake.callsOf('registerList')).toHaveLength(1);
   });
 
@@ -366,12 +459,22 @@ describe('MCP control workflow tool', () => {
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: { steps: Array<{ id: string; status: string }>; nextActions: Array<{ tool?: string; message: string }> };
-    }).data;
-    expect(data.steps).toContainEqual(expect.objectContaining({ id: 'gdb_server_start', status: 'skipped' }));
+    const data = (
+      out.evidence as {
+        data: {
+          steps: Array<{ id: string; status: string }>;
+          nextActions: Array<{ tool?: string; message: string }>;
+        };
+      }
+    ).data;
+    expect(data.steps).toContainEqual(
+      expect.objectContaining({ id: 'gdb_server_start', status: 'skipped' }),
+    );
     expect(data.nextActions).toContainEqual(
-      expect.objectContaining({ tool: 'gdb_server_start', message: expect.stringContaining('GDB server') }),
+      expect.objectContaining({
+        tool: 'gdb_server_start',
+        message: expect.stringContaining('GDB server'),
+      }),
     );
     expect(backend.callsOf('registerList')).toHaveLength(1);
   });
@@ -392,7 +495,11 @@ describe('MCP control workflow tool', () => {
     const out = await pending.finally(() => clearInterval(timer));
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as { data: { summary: Record<string, boolean>; steps: Array<{ id: string; status: string }> } }).data;
+    const data = (
+      out.evidence as {
+        data: { summary: Record<string, boolean>; steps: Array<{ id: string; status: string }> };
+      }
+    ).data;
     expect(data.summary).toMatchObject({
       serialOpened: true,
       probeConnected: true,
@@ -445,11 +552,8 @@ describe('MCP control workflow tool', () => {
     const backend = new CapturingBackend();
     h = await setup({ jlinkBackend: backend });
     const decoded = Buffer.from([
-      0x00, 0x00, 0x00, 0x20,
-      0x11, 0x80, 0x00, 0x08,
-      0xAA, 0xBB, 0xCC, 0xDD,
-      0x10, 0x11, 0x12, 0x13,
-      0x14, 0x15, 0x16, 0x17,
+      0x00, 0x00, 0x00, 0x20, 0x11, 0x80, 0x00, 0x08, 0xaa, 0xbb, 0xcc, 0xdd, 0x10, 0x11, 0x12,
+      0x13, 0x14, 0x15, 0x16, 0x17,
     ]);
     await writeFile(
       path.join(h.root, 'rtthread.hex'),
@@ -482,13 +586,101 @@ describe('MCP control workflow tool', () => {
       decoded.byteLength,
       { address: 0x08008000, verify: true },
     ]);
-    const data = (out.evidence as {
-      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+      }
+    ).data;
     expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
       address: 0x08008000,
       firmwareFormat: 'intel-hex',
     });
+  });
+
+  it('decodes ELF firmware before raw flash download', async () => {
+    class CapturingBackend extends FakeJLinkBackend {
+      downloadedBinary: Buffer | undefined;
+
+      override async flashDownload(
+        probeId: string,
+        binary: Buffer,
+        opts?: FlashDownloadOptions,
+        signal?: AbortSignal,
+      ): Promise<{ bytesWritten: number; verified: boolean }> {
+        this.downloadedBinary = Buffer.from(binary);
+        return super.flashDownload(probeId, binary, opts, signal);
+      }
+    }
+    await teardown(h);
+    const backend = new CapturingBackend();
+    h = await setup({ jlinkBackend: backend });
+    const decoded = cortexMVectorImage(0x08008000);
+    await writeFile(
+      path.join(h.root, 'rtthread.elf'),
+      elf32LeImage([{ paddr: 0x08008000, data: decoded }]),
+    );
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        serial: { enabled: false },
+        jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.elf', baseAddress: '0x08008000', verify: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      observe: { serial: false },
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    expect(backend.downloadedBinary).toEqual(decoded);
+    expect(backend.callsOf('flashDownload')[0]!.args).toMatchObject([
+      expect.any(String),
+      decoded.byteLength,
+      { address: 0x08008000, verify: true },
+    ]);
+    const data = (
+      out.evidence as {
+        data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+      }
+    ).data;
+    expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
+      address: 0x08008000,
+      firmwareFormat: 'elf',
+    });
+  });
+
+  it('rejects ELF firmware when the configured base address differs from the image address', async () => {
+    await writeFile(
+      path.join(h.root, 'rtthread.elf'),
+      elf32LeImage([{ paddr: 0x08008000, data: cortexMVectorImage(0x08008000) }]),
+    );
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        serial: { enabled: false },
+        jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.elf', baseAddress: '0x08000000', verify: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      observe: { serial: false },
+      confirm: true,
+    });
+
+    expect(out.success).toBe(false);
+    expect((out.error as { code: string; message: string }).code).toBe('INVALID_ARGUMENT');
+    expect((out.error as { message: string }).message).toContain(
+      'ELF image base address 0x08008000',
+    );
+    expect(h.fake.callsOf('probeConnect')).toHaveLength(0);
+    expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
   });
 
   it('rejects Intel HEX firmware when the configured base address differs from the image address', async () => {
@@ -538,24 +730,27 @@ describe('MCP control workflow tool', () => {
     const out = await callTool(h.client, 'run_control_workflow', {
       root: h.root,
       mode: 'flash-observe-diagnose',
-      observe: { serial: false },
+      observe: { serial: false, markers: ['hello-rtt'], timeoutMs: 100 },
       debug: { readRegisters: true, rttRead: true },
       confirm: true,
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        summary: Record<string, boolean>;
-        steps: Array<{ id: string; status: string; evidence?: Record<string, unknown> }>;
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          summary: Record<string, boolean>;
+          steps: Array<{ id: string; status: string; evidence?: Record<string, unknown> }>;
+        };
+      }
+    ).data;
     expect(data.summary).toMatchObject({
       serialOpened: false,
       probeConnected: true,
       flashed: true,
       verified: true,
       reset: true,
+      rttObserved: true,
       debugCaptured: true,
     });
     expect(data.steps.map((step) => step.id)).toEqual([
@@ -563,13 +758,18 @@ describe('MCP control workflow tool', () => {
       'preflight',
       'connect_probe',
       'flash',
-      'cpu_reset',
       'gdb_server_start',
+      'connect_rtt',
+      'cpu_reset',
+      'observe_rtt',
       'debug_diagnose',
+      'gdb_server_stop',
     ]);
     expect(h.openSerialCalls).toHaveLength(0);
-    expect(h.fake.callsOf('rttConnect')).toHaveLength(1);
-    expect(h.fake.callsOf('rttRead')).toHaveLength(1);
+    expect(h.fake.callsOf('gdbServerStart')).toHaveLength(1);
+    expect(h.fake.callsOf('rttConnect')).toHaveLength(2);
+    expect(h.fake.callsOf('rttClear')).toHaveLength(1);
+    expect(h.fake.callsOf('rttRead').length).toBeGreaterThanOrEqual(2);
     expect(data.steps.find((step) => step.id === 'debug_diagnose')?.evidence).toMatchObject({
       rtt: {
         channelIndex: 0,
@@ -577,6 +777,177 @@ describe('MCP control workflow tool', () => {
         truncated: false,
       },
     });
+  });
+
+  it('does not require serial observation when the profile uses RTT', async () => {
+    await writeFile(path.join(h.root, 'rtthread.bin'), Buffer.from([0x01, 0x02, 0x03, 0x04]));
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.bin', baseAddress: '0x08008000', verify: true },
+        rtt: { enabled: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      observe: { markers: ['hello-rtt'], timeoutMs: 100 },
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    const data = (
+      out.evidence as {
+        data: {
+          summary: Record<string, boolean>;
+          steps: Array<{ id: string; status: string; evidence?: unknown }>;
+        };
+      }
+    ).data;
+    expect(data.summary).toMatchObject({
+      serialOpened: false,
+      probeConnected: true,
+      flashed: true,
+      verified: true,
+      reset: true,
+      serialObserved: false,
+      rttObserved: true,
+    });
+    expect(data.steps.map((step) => step.id)).toEqual([
+      'load_profile',
+      'preflight',
+      'connect_probe',
+      'flash',
+      'gdb_server_start',
+      'connect_rtt',
+      'cpu_reset',
+      'observe_rtt',
+      'gdb_server_stop',
+    ]);
+    expect(data.steps.find((step) => step.id === 'preflight')?.evidence).toMatchObject({
+      needsSerial: false,
+      needsRtt: true,
+      needsFlash: true,
+    });
+    expect(data.steps.find((step) => step.id === 'observe_rtt')?.evidence).toMatchObject({
+      channelIndex: 0,
+      outputPreview: expect.stringContaining('hello-rtt'),
+    });
+    expect(h.openSerialCalls).toHaveLength(0);
+    expect(h.fake.callsOf('gdbServerStart')).toHaveLength(1);
+    expect(h.fake.callsOf('rttConnect')).toHaveLength(1);
+    expect(h.fake.callsOf('rttClear')).toHaveLength(1);
+    expect(h.fake.callsOf('rttRead')).toHaveLength(1);
+  });
+
+  it('can run a verified flash workflow without RTT observation for download-only callers', async () => {
+    await writeFile(path.join(h.root, 'rtthread.bin'), Buffer.from([0x01, 0x02, 0x03, 0x04]));
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.bin', baseAddress: '0x08008000', verify: true },
+        rtt: { enabled: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      observe: { enabled: false },
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    const data = (
+      out.evidence as {
+        data: {
+          summary: Record<string, boolean>;
+          steps: Array<{ id: string; status: string }>;
+        };
+      }
+    ).data;
+    expect(data.summary).toMatchObject({
+      probeConnected: true,
+      flashed: true,
+      verified: true,
+      reset: true,
+      rttObserved: false,
+    });
+    expect(data.steps.map((step) => step.id)).toEqual([
+      'load_profile',
+      'preflight',
+      'connect_probe',
+      'flash',
+      'cpu_reset',
+    ]);
+    expect(h.fake.callsOf('gdbServerStart')).toHaveLength(0);
+    expect(h.fake.callsOf('rttConnect')).toHaveLength(0);
+    expect(h.fake.callsOf('gdbServerStop')).toHaveLength(0);
+  });
+
+  it('classifies RTT connect failures after verified flash and stops the managed GDB server', async () => {
+    await writeFile(path.join(h.root, 'rtthread.bin'), Buffer.from([0x01, 0x02, 0x03, 0x04]));
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.bin', baseAddress: '0x08008000', verify: true },
+        rtt: { enabled: true },
+      },
+    });
+    h.fake.failOnce.set(
+      'rttConnect',
+      new JLinkOperationError('Failed to connect to J-Link RTT telnet endpoint', {
+        operation: 'rttConnect',
+      }),
+    );
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      observe: { markers: ['hello-rtt'], timeoutMs: 100 },
+      confirm: true,
+    });
+
+    expect(out.success).toBe(true);
+    const data = (
+      out.evidence as {
+        data: {
+          failedStep?: string;
+          failureCode?: string;
+          summary: Record<string, boolean>;
+          steps: Array<{ id: string; status: string; error?: { failureCode?: string } }>;
+          nextActions: Array<{ kind: string; tool?: string; requiresConfirm?: boolean }>;
+        };
+      }
+    ).data;
+    expect(data.summary).toMatchObject({
+      flashed: true,
+      verified: true,
+      gdbServerStarted: true,
+      reset: false,
+      rttObserved: false,
+    });
+    expect(data.failedStep).toBe('connect_rtt');
+    expect(data.failureCode).toBe('rtt_connect_failed');
+    expect(data.steps.find((step) => step.id === 'connect_rtt')).toMatchObject({
+      status: 'failed',
+      error: { failureCode: 'rtt_connect_failed' },
+    });
+    expect(data.steps.find((step) => step.id === 'gdb_server_stop')).toMatchObject({
+      status: 'passed',
+    });
+    expect(data.nextActions).toContainEqual(
+      expect.objectContaining({
+        kind: 'diagnose',
+        tool: 'run_control_workflow',
+        requiresConfirm: true,
+      }),
+    );
+    expect(h.fake.callsOf('gdbServerStop')).toHaveLength(1);
   });
 
   it('rejects flash workflows when a Cortex-M vector table reset address does not match the flash base', async () => {
@@ -635,9 +1006,11 @@ describe('MCP control workflow tool', () => {
       2,
       { address: 0x08009000, verify: false },
     ]);
-    const data = (out.evidence as {
-      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+      }
+    ).data;
     expect(data.steps.find((step) => step.id === 'connect_probe')?.evidence).toMatchObject({
       parameterSources: { target: 'profile', interface: 'profile', speedKHz: 'profile' },
     });
@@ -650,12 +1023,19 @@ describe('MCP control workflow tool', () => {
   it('normalizes STM32 order-code targets before workflow preflight and probe connection', async () => {
     await writeFile(path.join(h.root, 'rtthread.bin'), Buffer.from([0x01, 0x02, 0x03, 0x04]));
     await mkdir(path.join(h.root, '.linkterm'), { recursive: true });
-    await writeFile(path.join(h.root, '.linkterm', 'control-profile.json'), JSON.stringify({
-      schemaVersion: 'linkterm-control/1.0.0',
-      serial: { enabled: false },
-      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
-      flash: { binary: 'rtthread.bin', baseAddress: '0x08008000', verify: true },
-    }, null, 2));
+    await writeFile(
+      path.join(h.root, '.linkterm', 'control-profile.json'),
+      JSON.stringify(
+        {
+          schemaVersion: 'linkterm-control/1.0.0',
+          serial: { enabled: false },
+          jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+          flash: { binary: 'rtthread.bin', baseAddress: '0x08008000', verify: true },
+        },
+        null,
+        2,
+      ),
+    );
     await h.controlProfileManager.load(h.root);
 
     const out = await callTool(h.client, 'run_control_workflow', {
@@ -670,9 +1050,11 @@ describe('MCP control workflow tool', () => {
       interface: 'swd',
       speedKHz: 4000,
     });
-    const data = (out.evidence as {
-      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+      }
+    ).data;
     expect(data.steps.find((step) => step.id === 'connect_probe')?.evidence).toMatchObject({
       targetNormalization: {
         originalTarget: 'STM32H743IIT6',
@@ -734,9 +1116,11 @@ describe('MCP control workflow tool', () => {
       4,
       { address: 0x08008000, verify: true },
     ]);
-    const data = (out.evidence as {
-      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+      }
+    ).data;
     expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
       verified: true,
       parameterSources: { verify: 'default' },
@@ -765,9 +1149,11 @@ describe('MCP control workflow tool', () => {
       4,
       { address: 0x08008000, verify: true, timeoutMs: 90_000 },
     ]);
-    const data = (out.evidence as {
-      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+      }
+    ).data;
     expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
       timeoutMs: 90_000,
       parameterSources: { timeoutMs: 'request' },
@@ -795,9 +1181,11 @@ describe('MCP control workflow tool', () => {
       interface: 'swd',
       speedKHz: 4000,
     });
-    const data = (out.evidence as {
-      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+      }
+    ).data;
     expect(data.steps.find((step) => step.id === 'connect_probe')?.evidence).toMatchObject({
       speedPolicy: { profileSpeedKHz: 'auto', resolvedSpeedKHz: 4000, reason: 'safe-raw-flash' },
     });
@@ -830,14 +1218,21 @@ describe('MCP control workflow tool', () => {
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        failedStep?: string;
-        failureCode?: string;
-        steps: Array<{ id: string; status: string; error?: { failureCode?: string } }>;
-        nextActions: Array<{ kind: string; tool?: string; requiresConfirm?: boolean; argsPatch?: Record<string, unknown> }>;
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          failedStep?: string;
+          failureCode?: string;
+          steps: Array<{ id: string; status: string; error?: { failureCode?: string } }>;
+          nextActions: Array<{
+            kind: string;
+            tool?: string;
+            requiresConfirm?: boolean;
+            argsPatch?: Record<string, unknown>;
+          }>;
+        };
+      }
+    ).data;
     expect(data.failedStep).toBe('flash');
     expect(data.failureCode).toBe('flash_ram_preserve_failed');
     expect(data.steps.find((step) => step.id === 'flash')).toMatchObject({
@@ -881,12 +1276,18 @@ describe('MCP control workflow tool', () => {
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        failureCode?: string;
-        nextActions: Array<{ kind: string; message: string; argsPatch?: Record<string, unknown> }>;
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          failureCode?: string;
+          nextActions: Array<{
+            kind: string;
+            message: string;
+            argsPatch?: Record<string, unknown>;
+          }>;
+        };
+      }
+    ).data;
     expect(data.failureCode).toBe('flash_ram_preserve_failed');
     expect(data.nextActions).toContainEqual(
       expect.objectContaining({
@@ -895,7 +1296,9 @@ describe('MCP control workflow tool', () => {
       }),
     );
     expect(data.nextActions).not.toContainEqual(
-      expect.objectContaining({ argsPatch: expect.objectContaining({ jlink: expect.objectContaining({ speedKHz: 4000 }) }) }),
+      expect.objectContaining({
+        argsPatch: expect.objectContaining({ jlink: expect.objectContaining({ speedKHz: 4000 }) }),
+      }),
     );
   });
 
@@ -926,14 +1329,21 @@ describe('MCP control workflow tool', () => {
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        failedStep?: string;
-        failureCode?: string;
-        steps: Array<{ id: string; status: string; error?: { failureCode?: string } }>;
-        nextActions: Array<{ kind: string; tool?: string; message: string; argsPatch?: Record<string, unknown> }>;
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          failedStep?: string;
+          failureCode?: string;
+          steps: Array<{ id: string; status: string; error?: { failureCode?: string } }>;
+          nextActions: Array<{
+            kind: string;
+            tool?: string;
+            message: string;
+            argsPatch?: Record<string, unknown>;
+          }>;
+        };
+      }
+    ).data;
     expect(data.failedStep).toBe('flash');
     expect(data.failureCode).toBe('flash_sector_erase_timeout');
     expect(data.steps.find((step) => step.id === 'flash')).toMatchObject({
@@ -947,7 +1357,9 @@ describe('MCP control workflow tool', () => {
       }),
     );
     expect(data.nextActions).not.toContainEqual(
-      expect.objectContaining({ argsPatch: expect.objectContaining({ jlink: expect.objectContaining({ speedKHz: 4000 }) }) }),
+      expect.objectContaining({
+        argsPatch: expect.objectContaining({ jlink: expect.objectContaining({ speedKHz: 4000 }) }),
+      }),
     );
   });
 
@@ -969,25 +1381,32 @@ describe('MCP control workflow tool', () => {
   it.each([
     ['target', { enabled: true, interface: 'swd' as const, speedKHz: 4000 }, 'jlink.target'],
     ['interface', { enabled: true, target: 'AT32F435RGT7', speedKHz: 4000 }, 'jlink.interface'],
-    ['speed', { enabled: true, target: 'AT32F435RGT7', interface: 'swd' as const }, 'jlink.speedKHz'],
-  ])('rejects missing J-Link %s without applying reference defaults', async (_name, jlink, expectedField) => {
-    await callTool(h.client, 'init_control_profile', {
-      root: h.root,
-      profile: { jlink },
-    });
+    [
+      'speed',
+      { enabled: true, target: 'AT32F435RGT7', interface: 'swd' as const },
+      'jlink.speedKHz',
+    ],
+  ])(
+    'rejects missing J-Link %s without applying reference defaults',
+    async (_name, jlink, expectedField) => {
+      await callTool(h.client, 'init_control_profile', {
+        root: h.root,
+        profile: { jlink },
+      });
 
-    const out = await callTool(h.client, 'run_control_workflow', {
-      root: h.root,
-      mode: 'debug-diagnose',
-      confirm: true,
-    });
+      const out = await callTool(h.client, 'run_control_workflow', {
+        root: h.root,
+        mode: 'debug-diagnose',
+        confirm: true,
+      });
 
-    expect(out.success).toBe(false);
-    expect((out.error as { code: string; message: string }).code).toBe('INVALID_ARGUMENT');
-    expect((out.error as { message: string }).message).toContain(expectedField);
-    expect(h.fake.callsOf('probeConnect')).toHaveLength(0);
-    expect(h.fake.callsOf('gdbServerStart')).toHaveLength(0);
-  });
+      expect(out.success).toBe(false);
+      expect((out.error as { code: string; message: string }).code).toBe('INVALID_ARGUMENT');
+      expect((out.error as { message: string }).message).toContain(expectedField);
+      expect(h.fake.callsOf('probeConnect')).toHaveLength(0);
+      expect(h.fake.callsOf('gdbServerStart')).toHaveLength(0);
+    },
+  );
 
   it('reports missing J-Link Commander as a preflight block without opening serial or touching the probe', async () => {
     class UnavailableCommanderBackend extends FakeJLinkBackend {
@@ -1011,19 +1430,27 @@ describe('MCP control workflow tool', () => {
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        failedStep?: string;
-        blockingReasons?: Array<{ kind: string; code: string }>;
-        nextActions: Array<{ kind: string; message: string }>;
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          failedStep?: string;
+          blockingReasons?: Array<{ kind: string; code: string }>;
+          nextActions: Array<{ kind: string; message: string }>;
+        };
+      }
+    ).data;
     expect(data.failedStep).toBe('preflight');
     expect(data.blockingReasons).toContainEqual(
-      expect.objectContaining({ kind: 'jlink_commander_unavailable', code: 'JLINK_OPERATION_FAILED' }),
+      expect.objectContaining({
+        kind: 'jlink_commander_unavailable',
+        code: 'JLINK_OPERATION_FAILED',
+      }),
     );
     expect(data.nextActions).toContainEqual(
-      expect.objectContaining({ kind: 'user_action', message: expect.stringContaining('J-Link Commander') }),
+      expect.objectContaining({
+        kind: 'user_action',
+        message: expect.stringContaining('J-Link Commander'),
+      }),
     );
     expect(h.openSerialCalls).toHaveLength(0);
     expect(backend.callsOf('probeConnect')).toHaveLength(0);
@@ -1056,13 +1483,15 @@ describe('MCP control workflow tool', () => {
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        failedStep?: string;
-        blockingReasons?: Array<{ kind: string; code: string; details?: { target?: string } }>;
-        nextActions: Array<{ kind: string; message: string }>;
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          failedStep?: string;
+          blockingReasons?: Array<{ kind: string; code: string; details?: { target?: string } }>;
+          nextActions: Array<{ kind: string; message: string }>;
+        };
+      }
+    ).data;
     expect(backend.seenTarget).toBe('AT32F435RGT7');
     expect(data.failedStep).toBe('preflight');
     expect(data.blockingReasons).toContainEqual(
@@ -1073,7 +1502,10 @@ describe('MCP control workflow tool', () => {
       }),
     );
     expect(data.nextActions).toContainEqual(
-      expect.objectContaining({ kind: 'user_action', message: expect.stringContaining('SEGGER device add-on') }),
+      expect.objectContaining({
+        kind: 'user_action',
+        message: expect.stringContaining('SEGGER device add-on'),
+      }),
     );
     expect(h.openSerialCalls).toHaveLength(0);
     expect(backend.callsOf('probeConnect')).toHaveLength(0);
@@ -1089,7 +1521,9 @@ describe('MCP control workflow tool', () => {
         search: async () => ({
           available: true,
           sourceFiles: ['JLinkDevices.xml'],
-          devices: [{ name: 'STM32H743ZI', vendor: 'ST', sourceFile: 'JLinkDevices.xml', flashBanks: [] }],
+          devices: [
+            { name: 'STM32H743ZI', vendor: 'ST', sourceFile: 'JLinkDevices.xml', flashBanks: [] },
+          ],
         }),
         get: async () => undefined,
         has: async () => false,
@@ -1097,10 +1531,14 @@ describe('MCP control workflow tool', () => {
       },
     });
     await writeFile(path.join(h.root, 'rtthread.bin'), Buffer.from([0x01, 0x02, 0x03, 0x04]));
-    await h.controlProfileManager.init(h.root, {
-      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
-      flash: { binary: 'rtthread.bin', baseAddress: '0x08000000', verify: true },
-    }, { force: true });
+    await h.controlProfileManager.init(
+      h.root,
+      {
+        jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.bin', baseAddress: '0x08000000', verify: true },
+      },
+      { force: true },
+    );
 
     const out = await callTool(h.client, 'run_control_workflow', {
       root: h.root,
@@ -1110,13 +1548,15 @@ describe('MCP control workflow tool', () => {
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        failedStep?: string;
-        steps: Array<{ id: string; evidence?: Record<string, unknown> }>;
-        blockingReasons?: unknown[];
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          failedStep?: string;
+          steps: Array<{ id: string; evidence?: Record<string, unknown> }>;
+          blockingReasons?: unknown[];
+        };
+      }
+    ).data;
     expect(data.failedStep).toBeUndefined();
     expect(data.blockingReasons).toBeUndefined();
     expect(data.steps.find((step) => step.id === 'preflight')?.evidence).toMatchObject({
@@ -1152,10 +1592,14 @@ describe('MCP control workflow tool', () => {
       },
     });
     await writeFile(path.join(hostRoot, 'rtthread.bin'), Buffer.from([0x01, 0x02, 0x03, 0x04]));
-    await h.controlProfileManager.init(hostRoot, {
-      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
-      flash: { binary: 'rtthread.bin', baseAddress: '0x08000000', verify: true },
-    }, { force: true });
+    await h.controlProfileManager.init(
+      hostRoot,
+      {
+        jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.bin', baseAddress: '0x08000000', verify: true },
+      },
+      { force: true },
+    );
 
     const out = await callTool(h.client, 'run_control_workflow', {
       root: linuxRoot,
@@ -1165,9 +1609,11 @@ describe('MCP control workflow tool', () => {
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: { root: string; steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: { root: string; steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+      }
+    ).data;
     expect(data.root).toBe(linuxRoot);
     expect(data.steps.map((step) => step.id)).toEqual([
       'load_profile',
@@ -1210,10 +1656,14 @@ describe('MCP control workflow tool', () => {
     });
     await mkdir(path.dirname(hostFirmware), { recursive: true });
     await writeFile(hostFirmware, Buffer.from([0x01, 0x02, 0x03, 0x04]));
-    await h.controlProfileManager.init(hostRoot, {
-      jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
-      flash: { binary: linuxFirmware, baseAddress: '0x08000000', verify: true },
-    }, { force: true });
+    await h.controlProfileManager.init(
+      hostRoot,
+      {
+        jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: linuxFirmware, baseAddress: '0x08000000', verify: true },
+      },
+      { force: true },
+    );
 
     const out = await callTool(h.client, 'run_control_workflow', {
       root: linuxRoot,
@@ -1223,9 +1673,11 @@ describe('MCP control workflow tool', () => {
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+      }
+    ).data;
     expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
       firmwarePath: hostFirmware,
       parameterSources: { filePath: 'profile' },
@@ -1255,13 +1707,19 @@ describe('MCP control workflow tool', () => {
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        failedStep?: string;
-        blockingReasons?: Array<{ kind: string; code: string; details?: Record<string, unknown> }>;
-        nextActions: Array<{ kind: string; message: string }>;
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          failedStep?: string;
+          blockingReasons?: Array<{
+            kind: string;
+            code: string;
+            details?: Record<string, unknown>;
+          }>;
+          nextActions: Array<{ kind: string; message: string }>;
+        };
+      }
+    ).data;
     expect(data.failedStep).toBe('open_serial');
     expect(data.blockingReasons).toContainEqual(
       expect.objectContaining({
@@ -1302,9 +1760,11 @@ describe('MCP control workflow tool', () => {
     const out = await pending.finally(() => clearInterval(timer));
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+      }
+    ).data;
     expect(data.steps.find((step) => step.id === 'open_serial')?.evidence).toMatchObject({
       sessionId: existing.id,
       reused: true,
@@ -1344,9 +1804,11 @@ describe('MCP control workflow tool', () => {
         3,
         { address: 0x08008000, verify: true },
       ]);
-      const data = (out.evidence as {
-        data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
-      }).data;
+      const data = (
+        out.evidence as {
+          data: { steps: Array<{ id: string; evidence?: Record<string, unknown> }> };
+        }
+      ).data;
       expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
         firmwarePath: absoluteFirmware,
         parameterSources: { filePath: 'profile' },
@@ -1469,13 +1931,15 @@ describe('MCP control workflow tool', () => {
     const out = await pending.finally(() => clearInterval(timer));
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: {
-        summary: Record<string, boolean>;
-        steps: Array<{ id: string; status: string }>;
-        nextActions: Array<{ kind: string; tool?: string }>;
-      };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: {
+          summary: Record<string, boolean>;
+          steps: Array<{ id: string; status: string }>;
+          nextActions: Array<{ kind: string; tool?: string }>;
+        };
+      }
+    ).data;
     expect(data.summary.reset).toBe(false);
     expect(data.summary.serialObserved).toBe(true);
     expect(data.steps.find((step) => step.id === 'cpu_reset')?.status).toBe('skipped');
@@ -1494,9 +1958,11 @@ describe('MCP control workflow tool', () => {
     });
 
     expect(out.success).toBe(true);
-    const data = (out.evidence as {
-      data: { steps: Array<{ id: string; status: string; evidence?: Record<string, unknown> }> };
-    }).data;
+    const data = (
+      out.evidence as {
+        data: { steps: Array<{ id: string; status: string; evidence?: Record<string, unknown> }> };
+      }
+    ).data;
     expect(data.steps.find((step) => step.id === 'flash')?.status).toBe('skipped');
     expect(data.steps.find((step) => step.id === 'flash')?.evidence).toMatchObject({
       dryRun: true,

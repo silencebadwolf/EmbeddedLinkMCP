@@ -417,6 +417,7 @@ export interface ControlProfileDownloadResultPayload {
     verified: boolean;
     reset: boolean;
     serialObserved: boolean;
+    rttObserved: boolean;
     debugCaptured: boolean;
   };
   failedStep?: string;
@@ -457,7 +458,7 @@ export interface ControlProfileNamespace {
   }): Promise<PreloadResult<ControlProfileDownloadResultPayload>>;
   /** 选择工作区目录；用户取消时 root 为 null。 */
   pickWorkspaceRoot(): Promise<PreloadResult<{ root: string | null }>>;
-  /** 选择固件文件；用户取消时 path 为 null；Intel HEX 可附带检测出的 baseAddress。 */
+  /** 选择固件文件；用户取消时 path 为 null；Intel HEX/ELF 可附带检测出的 baseAddress。 */
   pickFirmwareFile(): Promise<PreloadResult<{ path: string | null; baseAddress?: string }>>;
 }
 

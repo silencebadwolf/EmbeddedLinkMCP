@@ -48,6 +48,7 @@ export const runControlWorkflowInputSchema = z
       .optional(),
     observe: z
       .object({
+        enabled: z.boolean().optional(),
         serial: z.boolean().optional(),
         timeoutMs: z.number().int().positive().max(120_000).optional(),
         markers: z.array(z.string().min(1).max(256)).max(16).optional(),

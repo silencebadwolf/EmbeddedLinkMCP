@@ -17,6 +17,7 @@ import type { JLinkDeviceCatalog } from '@/jlink/device-catalog.js';
 import { createInMemoryMcpTransportPair } from '../../fixtures/mock-mcp-transport.js';
 import { FakeJLinkBackend } from '../../fixtures/fake-jlink-backend.js';
 import { JLinkOperationError } from '@/jlink/errors.js';
+import { cortexMVectorImage, elf32LeImage } from '../../fixtures/elf.js';
 import { intelHexRecord, intelHexText } from '../../fixtures/intel-hex.js';
 
 interface Harness {
@@ -374,13 +375,14 @@ describe('MCP control profile tools', () => {
       path.join(h.root, 'rtthread.hex'),
       intelHexText([
         intelHexRecord(0, 0x04, [0x08, 0x00]),
-        intelHexRecord(0x8000, 0x00, [
-          0x00, 0x00, 0x00, 0x20,
-          0x11, 0x80, 0x00, 0x08,
-          0xaa, 0xbb, 0xcc, 0xdd,
-          0x10, 0x11, 0x12, 0x13,
-          0x14, 0x15, 0x16, 0x17,
-        ]),
+        intelHexRecord(
+          0x8000,
+          0x00,
+          [
+            0x00, 0x00, 0x00, 0x20, 0x11, 0x80, 0x00, 0x08, 0xaa, 0xbb, 0xcc, 0xdd, 0x10, 0x11,
+            0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+          ],
+        ),
         intelHexRecord(0, 0x01, []),
       ]),
     );
@@ -389,6 +391,39 @@ describe('MCP control profile tools', () => {
       profile: {
         jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 4000 },
         flash: { binary: 'rtthread.hex', baseAddress: '0x08008000', verify: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'inspect_control_profile', { root: h.root });
+
+    expect(out.success).toBe(true);
+    const data = (
+      out.evidence as {
+        data: {
+          diagnostics: Array<{ id: string; status: string; message: string }>;
+        };
+      }
+    ).data;
+    expect(data.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'firmware-vector-base',
+          status: 'pass',
+        }),
+      ]),
+    );
+  });
+
+  it('inspect_control_profile decodes ELF firmware for vector table diagnostics', async () => {
+    await writeFile(
+      path.join(h.root, 'rtthread.elf'),
+      elf32LeImage([{ paddr: 0x08008000, data: cortexMVectorImage(0x08008000) }]),
+    );
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.elf', baseAddress: '0x08008000', verify: true },
       },
     });
 

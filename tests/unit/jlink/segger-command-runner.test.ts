@@ -472,6 +472,22 @@ describe('DefaultJLinkCommanderClient', () => {
     expect(runner.requests[0]!.timeoutMs).toBe(90_000);
   });
 
+  it('uses the per-download timeout for the independent readback verify step', async () => {
+    const runner = new FakeProcessRunner();
+    runner.result = { exitCode: 0, signal: null, stdout: 'Downloading\nVerify successful\n', stderr: '' };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    await client.download(
+      { target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+      Buffer.from([0x01, 0x02]),
+      { address: 0x08008000, verify: true, timeoutMs: 90_000 },
+    );
+
+    expect(runner.requests).toHaveLength(2);
+    expect(runner.requests[0]!.timeoutMs).toBe(90_000);
+    expect(runner.requests[1]!.timeoutMs).toBe(90_000);
+  });
+
   it('scales the default download timeout for large raw binaries', async () => {
     const runner = new FakeProcessRunner();
     runner.result = { exitCode: 0, signal: null, stdout: 'Downloading\n', stderr: '' };

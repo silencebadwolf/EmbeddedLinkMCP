@@ -350,7 +350,7 @@ export class JLinkAdapter implements IJLinkBackend {
         const verifyResult = await this.#commander.verify(
           this.#toCommanderContext(handle),
           binary,
-          { address },
+          { address, timeoutMs: opts.timeoutMs },
           signal,
         );
         if (!verifyResult.ok) {
@@ -386,7 +386,7 @@ export class JLinkAdapter implements IJLinkBackend {
   async flashVerify(
     probeId: string,
     binary: Buffer,
-    opts?: { address?: number },
+    opts?: { address?: number; timeoutMs?: number },
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; mismatchAt?: number }> {
     this.#throwIfAborted(signal);
@@ -403,7 +403,7 @@ export class JLinkAdapter implements IJLinkBackend {
       return this.#commander.verify(
         this.#toCommanderContext(handle),
         binary,
-        { address },
+        { address, timeoutMs: opts?.timeoutMs },
         signal,
       );
     });

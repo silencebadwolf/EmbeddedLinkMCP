@@ -237,7 +237,7 @@ export interface IJLinkBackend {
   flashVerify(
     probeId: string,
     binary: Buffer,
-    opts?: { address?: number },
+    opts?: { address?: number; timeoutMs?: number },
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; mismatchAt?: number }>;
 

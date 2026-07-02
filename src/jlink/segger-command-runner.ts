@@ -96,7 +96,7 @@ export interface JLinkCommanderClient {
   verify(
     probe: CommanderProbeContext,
     binary: Buffer,
-    opts: { address: number },
+    opts: { address: number; timeoutMs?: number },
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; mismatchAt?: number }>;
 
@@ -756,7 +756,12 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
       }
     });
     if (opts.verify === true) {
-      const verifyResult = await this.verify(probe, binary, { address: opts.address }, signal);
+      const verifyResult = await this.verify(
+        probe,
+        binary,
+        { address: opts.address, timeoutMs },
+        signal,
+      );
       if (!verifyResult.ok) {
         const mismatch = verifyResult.mismatchAt === undefined
           ? 'unknown'
@@ -773,7 +778,7 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
   async verify(
     probe: CommanderProbeContext,
     binary: Buffer,
-    opts: { address: number },
+    opts: { address: number; timeoutMs?: number },
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; mismatchAt?: number }> {
     if (signal?.aborted) throw new JLinkAbortedError();
@@ -789,6 +794,7 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
           `savebin ${quoteCommanderPath(files.readbackPath)}, ${formatAddress(opts.address)}, ${formatAddress(binary.byteLength)}`,
         ],
         signal,
+        opts.timeoutMs,
       );
       const mismatch = classifyVerifyMismatch(result);
       if (mismatch !== undefined) {

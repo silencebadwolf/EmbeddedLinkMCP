@@ -254,7 +254,7 @@ export class FakeJLinkBackend implements IJLinkBackend {
   async flashVerify(
     probeId: string,
     binary: Buffer,
-    opts?: { address?: number },
+    opts?: { address?: number; timeoutMs?: number },
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; mismatchAt?: number }> {
     this.#record('flashVerify', probeId, binary.byteLength, opts);

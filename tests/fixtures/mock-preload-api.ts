@@ -275,6 +275,7 @@ export function createMockPreloadAPI(): MockPreloadAPI {
           verified: true,
           reset: false,
           serialObserved: false,
+          rttObserved: false,
           debugCaptured: false,
         },
         nextActions: [],

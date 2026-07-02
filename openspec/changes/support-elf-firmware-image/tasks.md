@@ -1,0 +1,9 @@
+- [x] 1.1 Add OpenSpec delta requirements for ELF firmware selection and decoded flashing.
+- [x] 1.2 Add unit coverage for ELF parsing.
+- [x] 1.3 Add main IPC coverage for `.elf` firmware selection returning a detected base address.
+- [x] 1.4 Add MCP workflow coverage proving `.elf` files are decoded before `flashDownload`.
+- [x] 1.5 Add MCP profile inspection coverage for ELF vector-table diagnostics.
+- [x] 2.1 Implement shared ELF parsing and firmware image helpers.
+- [x] 2.2 Wire the firmware picker to return optional detected ELF base addresses.
+- [x] 2.3 Wire workflow and inspection paths to decode ELF consistently.
+- [x] 3.1 Run targeted tests, build/lint checks, OpenSpec validation, diff check, and GitNexus detect_changes.

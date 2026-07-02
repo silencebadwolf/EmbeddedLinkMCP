@@ -16,7 +16,11 @@ import {
   controlProfileBodySchema,
   controlProfilePath,
 } from '../../core/workspace/index.js';
-import { formatHexAddress, isIntelHexPath, parseIntelHex } from '../../core/workspace/intel-hex.js';
+import {
+  decodeFirmwareImageByPath,
+  isSelfDescribingFirmwareImagePath,
+} from '../../core/workspace/firmware-image.js';
+import { formatHexAddress } from '../../core/workspace/intel-hex.js';
 import type { IJLinkBackend, JLinkDeviceCatalog } from '../../jlink/index.js';
 import type { SessionManager } from '../../core/session/session-manager.js';
 import { defaultOpenSerial } from '../../mcp/surfaces/control-profile/tools.js';
@@ -159,7 +163,7 @@ export function registerControlProfileIpc(
             root: input.root,
             mode: 'flash-observe',
             confirm: true,
-            observe: { serial: false },
+            observe: { enabled: false, serial: false },
             ...(input.timeoutMs !== undefined ? { firmware: { timeoutMs: input.timeoutMs } } : {}),
           },
         );
@@ -298,7 +302,9 @@ function normalizeWslText(value: string): string {
  *
  * @returns 成功结果；用户取消时 path 为 null
  */
-async function chooseFirmwareFile(): Promise<PreloadResult<{ path: string | null; baseAddress?: string }>> {
+async function chooseFirmwareFile(): Promise<
+  PreloadResult<{ path: string | null; baseAddress?: string }>
+> {
   try {
     const result = await dialog.showOpenDialog({
       title: 'Select firmware file',
@@ -309,17 +315,22 @@ async function chooseFirmwareFile(): Promise<PreloadResult<{ path: string | null
       ],
     });
     const selectedPath = result.canceled ? null : (result.filePaths[0] ?? null);
-    if (selectedPath === null || !isIntelHexPath(selectedPath)) {
+    if (selectedPath === null || !isSelfDescribingFirmwareImagePath(selectedPath)) {
       return { success: true, data: { path: selectedPath } };
     }
-    const image = parseIntelHex(await readFile(selectedPath));
+    const image = decodeFirmwareImageByPath(selectedPath, await readFile(selectedPath));
     return {
       success: true,
-      data: { path: selectedPath, baseAddress: formatHexAddress(image.baseAddress) },
+      data: {
+        path: selectedPath,
+        ...(image.baseAddress !== undefined
+          ? { baseAddress: formatHexAddress(image.baseAddress) }
+          : {}),
+      },
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: { code: 'INVALID_HEX_FIRMWARE', message } };
+    return { success: false, error: { code: 'INVALID_FIRMWARE_IMAGE', message } };
   }
 }
 

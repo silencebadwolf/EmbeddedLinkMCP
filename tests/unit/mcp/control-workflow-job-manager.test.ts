@@ -21,6 +21,7 @@ function data(root = 'C:/workspace', steps: Array<{ id: string; status: 'passed'
       verified: false,
       reset: false,
       serialObserved: false,
+      rttObserved: false,
       debugCaptured: false,
     },
     nextActions: [],

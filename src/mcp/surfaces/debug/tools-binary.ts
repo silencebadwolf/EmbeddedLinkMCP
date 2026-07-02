@@ -192,7 +192,10 @@ export function registerDebugBinaryTools(server: McpServer, deps: DebugToolsDeps
       return runJLink(async () => {
         if (input.confirm !== true) throw new ConfirmationRequiredError('flash_download');
         const binary = decodeBase64Capped(input.binaryBase64, 'binaryBase64');
-        const opts: { address?: number; verify?: boolean } = { verify: input.verify ?? true };
+        const opts: { address?: number; verify?: boolean; timeoutMs?: number } = {
+          verify: input.verify ?? true,
+          ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+        };
         if (input.address !== undefined) {
           validateFirmwareVectorTable(binary, input.address);
           opts.address = input.address;
@@ -261,7 +264,9 @@ export function registerDebugBinaryTools(server: McpServer, deps: DebugToolsDeps
     handler: async (input: FlashVerifyInput): Promise<ToolHandlerResult> => {
       return runJLink(async () => {
         const binary = decodeBase64Capped(input.binaryBase64, 'binaryBase64');
-        const opts: { address?: number } = {};
+        const opts: { address?: number; timeoutMs?: number } = {
+          ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+        };
         if (input.address !== undefined) {
           validateFirmwareVectorTable(binary, input.address);
           opts.address = input.address;

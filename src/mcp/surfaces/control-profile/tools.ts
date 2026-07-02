@@ -20,7 +20,7 @@ import {
   type ControlProfile,
   type HostPathResolver,
 } from '../../../core/workspace/index.js';
-import { isIntelHexPath, parseIntelHex } from '../../../core/workspace/intel-hex.js';
+import { decodeFirmwareImageByPath } from '../../../core/workspace/firmware-image.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
 import type { IJLinkBackend, ProbeConnectOptions, ProbeInfo } from '../../../jlink/types.js';
 import type { JLinkDeviceCatalog, JLinkDeviceInfo } from '../../../jlink/device-catalog.js';
@@ -395,10 +395,9 @@ async function inspectControlProfileDiagnostics(
     const firmwarePath = path.isAbsolute(profile.flash.binary)
       ? profile.flash.binary
       : path.join(root, profile.flash.binary);
-    const rawFirmware = await readFile(firmwarePath);
-    const binary = isIntelHexPath(firmwarePath) ? parseIntelHex(rawFirmware).binary : rawFirmware;
+    const image = decodeFirmwareImageByPath(firmwarePath, await readFile(firmwarePath));
     const check = checkFirmwareVectorTable(
-      binary.subarray(0, FIRMWARE_DIAGNOSTIC_READ_BYTES),
+      image.binary.subarray(0, FIRMWARE_DIAGNOSTIC_READ_BYTES),
       baseAddress,
     );
     if (check.status === 'fail') {

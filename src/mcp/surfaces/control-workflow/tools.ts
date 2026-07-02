@@ -30,10 +30,7 @@ import {
   type ControlWorkflowJobStatusInput,
   type RunControlWorkflowInput,
 } from './schemas.js';
-import {
-  ControlWorkflowJobManager,
-  type ControlWorkflowJobSnapshot,
-} from './job-manager.js';
+import { ControlWorkflowJobManager, type ControlWorkflowJobSnapshot } from './job-manager.js';
 
 /** registerControlWorkflowTools 的依赖容器。 */
 export interface ControlWorkflowToolsDeps {
@@ -66,6 +63,7 @@ export function registerControlWorkflowTools(
       'Prefer this high-level tool over manually chaining low-level J-Link/serial tools for supported modes. ' +
       'Modes: flash-observe, debug-diagnose, flash-observe-diagnose. Prefer profile flash.binary and omit firmware.filePath unless intentionally overriding it; request firmware overrides are sandboxed under root. ' +
       'Firmware is read server-side, so AI clients must not chunk base64 manually. High-impact modes require confirm=true. ' +
+      'Set observe.enabled=false for download-only calls that should flash/verify/reset without serial or RTT observation. ' +
       'For long operations, request execution.mode=background, then poll get_control_workflow_job_status and read_control_workflow_job; cancel with cancel_control_workflow_job if needed. ' +
       'Known SEGGER/J-Link failures are returned with workflow failureCode and machine-readable nextActions. ' +
       'No external CLI fallback.',
@@ -235,9 +233,13 @@ function translateControlWorkflowError(err: unknown): never {
     throw err;
   }
   if (err instanceof ConfirmationRequiredError) {
-    throw new ToolError(ERROR_CODES.CONFIRMATION_REQUIRED, 'Confirmation required for high-impact workflow', {
-      tool: err.toolName,
-    });
+    throw new ToolError(
+      ERROR_CODES.CONFIRMATION_REQUIRED,
+      'Confirmation required for high-impact workflow',
+      {
+        tool: err.toolName,
+      },
+    );
   }
   if (err instanceof ControlProfileNotFoundError) {
     throw new ToolError(ERROR_CODES.CONTROL_PROFILE_NOT_FOUND, err.message, { root: err.root });

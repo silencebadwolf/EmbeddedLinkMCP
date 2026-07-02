@@ -1,6 +1,7 @@
 /** Control profile IPC handler tests. */
 
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cortexMVectorImage, elf32LeImage } from '../../../fixtures/elf.js';
 import { intelHexRecord, intelHexText } from '../../../fixtures/intel-hex.js';
 
 const {
@@ -11,30 +12,29 @@ const {
   execFileAsyncMock,
   readFileMock,
   readdirMock,
-} =
-  vi.hoisted(() => {
-    const map = new Map<string, (event: unknown, payload: unknown) => unknown>();
-    const execFile = vi.fn();
-    const execFileAsync = vi.fn();
-    (execFile as unknown as Record<symbol, unknown>)[Symbol.for('nodejs.util.promisify.custom')] =
-      execFileAsync;
-    return {
-      handlers: map,
-      ipcMainMock: {
-        handle: vi.fn((channel: string, fn: (event: unknown, payload: unknown) => unknown) => {
-          map.set(channel, fn);
-        }),
-        removeHandler: vi.fn((channel: string) => {
-          map.delete(channel);
-        }),
-      },
-      showOpenDialogMock: vi.fn(),
-      execFileMock: execFile,
-      execFileAsyncMock: execFileAsync,
-      readFileMock: vi.fn(),
-      readdirMock: vi.fn(),
-    };
-  });
+} = vi.hoisted(() => {
+  const map = new Map<string, (event: unknown, payload: unknown) => unknown>();
+  const execFile = vi.fn();
+  const execFileAsync = vi.fn();
+  (execFile as unknown as Record<symbol, unknown>)[Symbol.for('nodejs.util.promisify.custom')] =
+    execFileAsync;
+  return {
+    handlers: map,
+    ipcMainMock: {
+      handle: vi.fn((channel: string, fn: (event: unknown, payload: unknown) => unknown) => {
+        map.set(channel, fn);
+      }),
+      removeHandler: vi.fn((channel: string) => {
+        map.delete(channel);
+      }),
+    },
+    showOpenDialogMock: vi.fn(),
+    execFileMock: execFile,
+    execFileAsyncMock: execFileAsync,
+    readFileMock: vi.fn(),
+    readdirMock: vi.fn(),
+  };
+});
 
 const electronMock = {
   app: {},
@@ -150,6 +150,23 @@ describe('registerControlProfileIpc', () => {
     expect(result).toEqual({
       success: true,
       data: { path: hexPath, baseAddress: '0x08008000' },
+    });
+  });
+
+  it('detects the lowest ELF load address when picking firmware', async () => {
+    const elfPath = 'C:/repo/build/app.elf';
+    showOpenDialogMock.mockResolvedValueOnce({ canceled: false, filePaths: [elfPath] });
+    readFileMock.mockResolvedValueOnce(
+      elf32LeImage([{ paddr: 0x08008000, data: cortexMVectorImage(0x08008000) }]),
+    );
+    registerControlProfileIpc({} as ControlProfileManager);
+
+    const handler = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_PICK_FIRMWARE_FILE)!;
+    const result = await handler({}, undefined);
+
+    expect(result).toEqual({
+      success: true,
+      data: { path: elfPath, baseAddress: '0x08008000' },
     });
   });
 

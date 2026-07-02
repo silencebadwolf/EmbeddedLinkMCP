@@ -397,6 +397,7 @@ function emptyWorkflow(input: RunControlWorkflowInput): ControlWorkflowData {
       verified: false,
       reset: false,
       serialObserved: false,
+      rttObserved: false,
       debugCaptured: false,
     },
     nextActions: [],

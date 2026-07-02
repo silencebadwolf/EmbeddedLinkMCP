@@ -1,0 +1,7 @@
+- [x] 1.1 Add OpenSpec delta requirements for RTT profile workflow observation.
+- [x] 1.2 Add workflow test coverage proving RTT profile flash-observe does not open serial and does read RTT.
+- [x] 1.3 Implement RTT observation steps and summary evidence in `run_control_workflow`.
+- [x] 1.4 Update shared workflow payload typings and mocks for `rttObserved`.
+- [x] 1.5 Add a download-only observation disable switch for flash workflows.
+- [x] 1.6 Stop workflow-managed GDB servers after RTT/debug workflows and classify RTT connect failures.
+- [x] 2.1 Run targeted tests, build/lint checks, OpenSpec validation, and GitNexus detect_changes.

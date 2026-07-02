@@ -8,7 +8,7 @@ import type { controlWorkflowModeSchema } from './schemas.js';
 export type ControlWorkflowMode = z.infer<typeof controlWorkflowModeSchema>;
 
 /** 单个工作流步骤的状态。 */
-export type ControlWorkflowStepStatus = 'passed' | 'failed' | 'skipped';
+export type ControlWorkflowStepStatus = 'running' | 'passed' | 'failed' | 'skipped';
 
 /** 工作流内部用于减少 AI 文本推理的稳定失败分类。 */
 export type ControlWorkflowFailureCode =
@@ -16,6 +16,7 @@ export type ControlWorkflowFailureCode =
   | 'flash_sector_erase_timeout'
   | 'flash_verify_failed'
   | 'probe_not_found'
+  | 'rtt_connect_failed'
   | 'target_rejected'
   | 'command_timeout'
   | 'capability_not_implemented'
@@ -67,6 +68,7 @@ export interface ControlWorkflowSummary {
   verified: boolean;
   reset: boolean;
   serialObserved: boolean;
+  rttObserved: boolean;
   debugCaptured: boolean;
 }
 

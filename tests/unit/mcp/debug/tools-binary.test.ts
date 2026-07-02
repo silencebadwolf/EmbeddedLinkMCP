@@ -322,6 +322,24 @@ describe('MCP debug binary tools', () => {
       ]);
     });
 
+    it('passes timeoutMs through to the backend flash options', async () => {
+      const binary = Buffer.from([0x01, 0x02, 0x03, 0x04]);
+
+      const out = await callTool(h.client, 'flash_download', {
+        probeId: h.probeId,
+        binaryBase64: binary.toString('base64'),
+        timeoutMs: 300_000,
+        confirm: true,
+      });
+
+      expect(out.success).toBe(true);
+      expect(h.fake.callsOf('flashDownload').at(-1)?.args).toMatchObject([
+        h.probeId,
+        binary.byteLength,
+        { verify: true, timeoutMs: 300_000 },
+      ]);
+    });
+
     it('reports invalid argument when profileRoot does not contain a control profile', async () => {
       const profileRoot = path.join(tmpdir(), `lt-profile-missing-${Date.now()}-${Math.random()}`);
       const callsBefore = h.fake.callsOf('flashDownload').length;
