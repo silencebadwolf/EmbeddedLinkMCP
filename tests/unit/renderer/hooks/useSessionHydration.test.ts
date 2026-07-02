@@ -181,4 +181,55 @@ describe('useSessionHydration', () => {
       rttLog: { probeId: 'probe-1', channelIndex: 0 },
     });
   });
+
+  it('selects an AI-created RTT log session so MCP observation is immediately visible', async () => {
+    mock.spies.session.list.mockResolvedValueOnce({
+      success: true,
+      data: {
+        sessions: [
+          {
+            sessionId: 'sess_serial_active',
+            label: 'COM6',
+            connectionType: 'serial',
+            state: 'open',
+          },
+        ],
+      },
+    } as never);
+
+    const { useSessionHydration } = await import(
+      '../../../../src/renderer/hooks/useSessionHydration.js'
+    );
+
+    renderHook(() => useSessionHydration());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(useAppStore.getState().activeSessionId).toBe('sess_serial_active');
+
+    act(() => {
+      mock.emitSessionLifecycle({
+        type: 'created',
+        session: {
+          sessionId: 'sess_ai_rtt',
+          label: 'RTT ch0',
+          connectionType: 'rtt-log',
+          state: 'open',
+          createdBy: 'ai',
+          rttLog: { probeId: 'probe-1', channelIndex: 0 },
+        },
+      });
+    });
+
+    expect(useAppStore.getState().sessions.get('sess_ai_rtt')).toEqual({
+      id: 'sess_ai_rtt',
+      label: 'RTT ch0',
+      connectionType: 'rtt-log',
+      state: 'open',
+      rttLog: { probeId: 'probe-1', channelIndex: 0 },
+    });
+    expect(useAppStore.getState().activeSessionId).toBe('sess_ai_rtt');
+  });
 });

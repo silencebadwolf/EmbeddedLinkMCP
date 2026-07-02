@@ -1,0 +1,5 @@
+- [x] 1.1 Add OpenSpec delta requirements for MCP/App RTT log session synchronization.
+- [x] 1.2 Add a failing main IPC test proving manager `session:state` events reach App lifecycle listeners.
+- [x] 1.3 Implement lifecycle forwarding from `session:state` in `registerSessionIpc`.
+- [x] 1.4 Verify MCP RTT log sessions remain visible through normal session summaries and metadata.
+- [x] 1.5 Run targeted tests, OpenSpec validation, and GitNexus `detect_changes`.

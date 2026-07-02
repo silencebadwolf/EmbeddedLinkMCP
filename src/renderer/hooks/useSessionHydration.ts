@@ -15,6 +15,7 @@ import { useAppStore } from '../store/app-store.js';
 export function useSessionHydration(): void {
   const addSession = useAppStore((s) => s.addSession);
   const removeSession = useAppStore((s) => s.removeSession);
+  const setActive = useAppStore((s) => s.setActive);
 
   React.useEffect(() => {
     const api = getLinkterm();
@@ -34,6 +35,9 @@ export function useSessionHydration(): void {
     const unsubscribeLifecycle = api.session.onLifecycle((event) => {
       if (event.type === 'created' || event.type === 'stateChanged') {
         upsertSummary(event.session);
+        if (event.type === 'created' && event.session.createdBy === 'ai') {
+          setActive(event.session.sessionId);
+        }
         return;
       }
       removeSession(event.sessionId);
@@ -53,5 +57,5 @@ export function useSessionHydration(): void {
       cancelled = true;
       unsubscribeLifecycle();
     };
-  }, [addSession, removeSession]);
+  }, [addSession, removeSession, setActive]);
 }

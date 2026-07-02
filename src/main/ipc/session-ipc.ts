@@ -92,16 +92,18 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
   };
 
   const onSessionEvent = (sessionId: SessionId, event: TranscriptEvent): void => {
-    if (event.type === 'state') {
-      const summary = sessionManager.summaryOf(sessionId);
-      if (summary) broadcastSessionLifecycle({ type: 'stateChanged', session: summary });
-    }
     const serialized = serializeTranscriptEvent(event);
     for (const wc of subscribers.values()) {
       sendToWebContents(wc, IPC_CHANNELS.TRANSCRIPT_EVENT, { sessionId, event: serialized });
     }
   };
   sessionManager.on('session:event', onSessionEvent);
+
+  const onSessionState = (sessionId: SessionId): void => {
+    const summary = sessionManager.summaryOf(sessionId);
+    if (summary) broadcastSessionLifecycle({ type: 'stateChanged', session: summary });
+  };
+  sessionManager.on('session:state', onSessionState);
 
   const onSessionCreated = (sessionId: SessionId): void => {
     const summary = sessionManager.summaryOf(sessionId);
@@ -297,6 +299,7 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
     ipcMain.removeHandler(IPC_CHANNELS.SESSION_DESTROY);
     ipcMain.removeHandler(IPC_CHANNELS.TRANSCRIPT_SUBSCRIBE);
     sessionManager.off('session:event', onSessionEvent);
+    sessionManager.off('session:state', onSessionState);
     sessionManager.off('session:created', onSessionCreated);
     sessionManager.off('session:destroyed', onSessionDestroyed);
     subscribers.clear();
