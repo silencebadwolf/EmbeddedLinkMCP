@@ -55,6 +55,7 @@ export const zh: TranslationTable = {
   'controlProfile.firmwarePath.placeholder': 'build/app.bin',
   'controlProfile.browseFirmware': '选择固件',
   'controlProfile.flashBaseAddress': 'Flash 起始地址',
+  'controlProfile.rttControlBlockAddress': 'RTT 控制块地址',
   'controlProfile.rttLog.title': 'RTT 日志终端',
   'controlProfile.rttLog.description':
     '根据工作区控制配置自动连接 J-Link 并打开只读 RTT 日志标签页。',

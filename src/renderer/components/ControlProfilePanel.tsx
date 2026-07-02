@@ -56,6 +56,7 @@ export function ControlProfilePanel({
   const [speedKHz, setSpeedKHz] = React.useState<(typeof JLINK_SPEED_OPTIONS)[number]>('auto');
   const [binary, setBinary] = React.useState('build/app.bin');
   const [baseAddress, setBaseAddress] = React.useState('0x08000000');
+  const [rttControlBlockAddress, setRttControlBlockAddress] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [downloading, setDownloading] = React.useState(false);
   const [savedRecords, setSavedRecords] = React.useState<
@@ -133,6 +134,10 @@ export function ControlProfilePanel({
     try {
       const normalizedTarget =
         selectedCatalogTarget ?? classifyJLinkTargetName(targetQuery || target).normalizedTarget;
+      const rttProfile =
+        rttControlBlockAddress.trim() === ''
+          ? { enabled: true }
+          : { enabled: true, controlBlockAddress: rttControlBlockAddress.trim() };
       const profile: ControlProfilePayload = {
         jlink: {
           enabled: true,
@@ -155,7 +160,7 @@ export function ControlProfilePanel({
               },
             }
           : {
-              rtt: { enabled: true },
+              rtt: rttProfile,
             }),
       };
       const result = await api.controlProfile.save({ root: root.trim(), profile });
@@ -242,6 +247,7 @@ export function ControlProfilePanel({
       setSpeedKHz(String(profile.jlink.speedKHz) as (typeof JLINK_SPEED_OPTIONS)[number]);
     if (profile.flash?.binary) setBinary(profile.flash.binary);
     if (profile.flash?.baseAddress) setBaseAddress(profile.flash.baseAddress);
+    setRttControlBlockAddress(profile.rtt?.controlBlockAddress ?? '');
   };
 
   const openSavedRecord = async (recordId: string): Promise<void> => {
@@ -539,6 +545,20 @@ export function ControlProfilePanel({
               placeholder="0x08000000"
             />
           </div>
+
+          {observationChannel === 'rtt' ? (
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="control-rtt-control-block">
+                {t('controlProfile.rttControlBlockAddress')}
+              </Label>
+              <Input
+                id="control-rtt-control-block"
+                value={rttControlBlockAddress}
+                onChange={(e) => setRttControlBlockAddress(e.target.value)}
+                placeholder="0x24005310"
+              />
+            </div>
+          ) : null}
         </div>
 
         {error ? (

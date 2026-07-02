@@ -377,6 +377,7 @@ export interface ControlProfilePayload {
   rtt?: {
     enabled: boolean;
     channels?: number[];
+    controlBlockAddress?: string;
   };
 }
 

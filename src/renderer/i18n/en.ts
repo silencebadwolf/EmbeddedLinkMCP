@@ -59,6 +59,7 @@ export const en = {
   'controlProfile.firmwarePath.placeholder': 'build/app.bin',
   'controlProfile.browseFirmware': 'Browse firmware',
   'controlProfile.flashBaseAddress': 'Flash base address',
+  'controlProfile.rttControlBlockAddress': 'RTT control block address',
   'controlProfile.rttLog.title': 'RTT log terminal',
   'controlProfile.rttLog.description':
     'Open a read-only RTT log tab by auto-connecting J-Link from the workspace control profile.',

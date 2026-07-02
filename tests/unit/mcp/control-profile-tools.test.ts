@@ -169,6 +169,44 @@ describe('MCP control profile tools', () => {
     expect(profile.jlink.target).toBe('STM32F407VG');
   });
 
+  it('get and inspect preserve an RTT control block address', async () => {
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 'auto' },
+        flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+        rtt: { enabled: true, channels: [0], controlBlockAddress: '0x24005310' },
+      },
+    });
+
+    const getOut = await callTool(h.client, 'get_control_profile', { root: h.root });
+    const getProfile = (
+      getOut.evidence as {
+        data: { profile: { rtt: { channels?: number[]; controlBlockAddress?: string } } };
+      }
+    ).data.profile;
+    expect(getProfile.rtt).toMatchObject({
+      channels: [0],
+      controlBlockAddress: '0x24005310',
+    });
+
+    const inspectOut = await callTool(h.client, 'inspect_control_profile', { root: h.root });
+    const inspectProfile = (
+      inspectOut.evidence as {
+        data: { profile: { rtt: { channels?: number[]; controlBlockAddress?: string } } };
+      }
+    ).data.profile;
+    expect(inspectProfile.rtt).toMatchObject({
+      channels: [0],
+      controlBlockAddress: '0x24005310',
+    });
+
+    const raw = await readFile(path.join(h.root, '.linkterm', 'control-profile.json'), 'utf-8');
+    expect(JSON.parse(raw)).toMatchObject({
+      rtt: { enabled: true, channels: [0], controlBlockAddress: '0x24005310' },
+    });
+  });
+
   it('get_control_profile resolves WSL Linux roots to the host-readable profile path', async () => {
     await teardown(h);
     const linuxRoot = '/home/jianyin/code/FNA1000';
@@ -580,5 +618,56 @@ describe('MCP control profile tools', () => {
         }),
       }),
     ]);
+  });
+
+  it('apply_control_profile_answer merges RTT control block answers into an existing profile', async () => {
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd', speedKHz: 'auto' },
+        flash: { binary: 'build/rtthread.bin', baseAddress: '0x08000000', verify: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'apply_control_profile_answer', {
+      root: h.root,
+      answer: 'RTT 日志，_SEGGER_RTT=0x24005310',
+    });
+
+    expect(out.success).toBe(true);
+    const data = (
+      out.evidence as {
+        data: {
+          complete: boolean;
+          parsedFields: string[];
+          profile: {
+            serial?: unknown;
+            jlink: { target: string };
+            flash: { binary: string; baseAddress: string };
+            rtt: { channels?: number[]; controlBlockAddress?: string };
+          };
+        };
+      }
+    ).data;
+    expect(data.complete).toBe(true);
+    expect(data.parsedFields).toEqual(['rtt.enabled', 'rtt.controlBlockAddress']);
+    expect(data.profile.serial).toBeUndefined();
+    expect(data.profile.jlink.target).toBe('STM32H743II');
+    expect(data.profile.flash).toMatchObject({
+      binary: 'build/rtthread.bin',
+      baseAddress: '0x08000000',
+    });
+    expect(data.profile.rtt).toMatchObject({
+      channels: [0],
+      controlBlockAddress: '0x24005310',
+    });
+
+    const raw = await readFile(path.join(h.root, '.linkterm', 'control-profile.json'), 'utf-8');
+    expect(JSON.parse(raw)).toMatchObject({
+      jlink: { target: 'STM32H743II' },
+      flash: { binary: 'build/rtthread.bin', baseAddress: '0x08000000' },
+      rtt: { enabled: true, channels: [0], controlBlockAddress: '0x24005310' },
+    });
   });
 });

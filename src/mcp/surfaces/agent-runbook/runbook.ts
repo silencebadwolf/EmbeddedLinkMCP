@@ -67,6 +67,7 @@ export interface RunbookProfileSummary {
   rtt?: {
     enabled: boolean;
     channels?: number[];
+    controlBlockAddress?: string;
   };
   issue?: {
     code: RunbookProfileStatus;
@@ -224,7 +225,7 @@ const SAFETY_RULES = [
   'All terminal writes must go through LinkTerm MCP session tools so human and AI input share the same WriteQueue and transcript.',
   'For terminal commands, use write_to_session or send_and_wait to send data and read_from_session to read transcript evidence; do not infer that LinkTerm lacks a send interface from a partial host tool view.',
   'For continuous RTT log observation, prefer open_rtt_log_session with root/profile so LinkTerm starts the managed GDB server, connects RTT, and opens the App-visible session in one high-level operation; use probeId only to reuse an already prepared RTT backend.',
-  'If a continuous RTT log session is silent or only shows a SEGGER banner, call diagnose_rtt_log_session and treat it as a firmware-output/channel/control-block diagnosis; do not repeat flash solely because RTT is silent.',
+  'If a continuous RTT log session is silent or only shows a SEGGER banner, call diagnose_rtt_log_session and treat it as a firmware-output/channel/control-block diagnosis; when the firmware exposes a known _SEGGER_RTT address, save it as profile.rtt.controlBlockAddress and reopen the root/profile RTT log path instead of repeating flash.',
   'Prefer the current workspace control profile: inspect or read <root>/.linkterm/control-profile.json first, and omit firmware.filePath when profile.flash.binary already names the firmware.',
   FIRMWARE_IMAGE_USAGE_GUIDANCE,
   'High-impact J-Link and workflow operations require confirm=true; without it LinkTerm returns CONFIRMATION_REQUIRED and does not invoke the backend.',
@@ -256,7 +257,7 @@ export function createAgentRunbookInstructions(schemaVersion: string): string {
     'LinkTerm MCP tools are the required path for J-Link, debug, flash, and serial operations exposed through the LinkTerm runtime.',
     'All terminal writes must use LinkTerm MCP session tools so AI and human input share the same WriteQueue and transcript.',
     'For terminal commands, send bytes with write_to_session or send_and_wait, then read transcript evidence with read_from_session; never claim LinkTerm lacks a send interface before checking get_app_status terminalCommandTools.',
-    'For continuous RTT log observation, call open_rtt_log_session with root/profile and then read_from_session; this high-level path owns managed GDB server startup and RTT connect internally. If the session is silent or only shows a SEGGER banner, call diagnose_rtt_log_session before considering flash/reset/debug recovery. Use probeId only to reuse an already prepared RTT backend; use rtt_read/rtt_search/rtt_clear only for bounded one-shot debug evidence.',
+    'For continuous RTT log observation, call open_rtt_log_session with root/profile and then read_from_session; this high-level path owns managed GDB server startup and RTT connect internally. If the session is silent or only shows a SEGGER banner, call diagnose_rtt_log_session before considering flash/reset/debug recovery; when _SEGGER_RTT is known, persist it as profile.rtt.controlBlockAddress so LinkTerm configures SEGGER RTT Telnet with that control block. Use probeId only to reuse an already prepared RTT backend; use rtt_read/rtt_search/rtt_clear only for bounded one-shot debug evidence.',
     'Prefer the current workspace control profile: inspect or read <root>/.linkterm/control-profile.json first, and omit firmware.filePath when profile.flash.binary already names the firmware.',
     FIRMWARE_IMAGE_USAGE_GUIDANCE,
     'Prefer run_control_workflow for supported hardware workflows before manually chaining low-level serial and J-Link tools.',
@@ -354,6 +355,9 @@ export function sanitizeControlProfileForRunbook(
       ...(Array.isArray(rtt.channels) &&
       rtt.channels.every((channel) => typeof channel === 'number')
         ? { channels: [...rtt.channels] }
+        : {}),
+      ...(typeof rtt.controlBlockAddress === 'string'
+        ? { controlBlockAddress: rtt.controlBlockAddress }
         : {}),
     };
   }

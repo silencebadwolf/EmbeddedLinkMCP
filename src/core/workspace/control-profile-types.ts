@@ -30,6 +30,7 @@ export interface ControlFlashProfile {
 export interface ControlRttProfile {
   enabled: boolean;
   channels?: number[];
+  controlBlockAddress?: string;
 }
 
 /** 工作区本地控制配置。 */

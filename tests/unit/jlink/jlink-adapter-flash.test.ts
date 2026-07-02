@@ -773,6 +773,21 @@ describe('RTT operations', () => {
     });
   });
 
+  it('passes an explicit RTT control block address to the RTT transport client', async () => {
+    const commander = new FakeCommander();
+    const gdbServer = new FakeGdbServer();
+    const rttClient = new FakeRttClient();
+    const adapter = new JLinkAdapter({ commander, gdbServer, rttClient });
+    const probe = await adapter.probeConnect({ target: 'AT32F435RGT7' });
+
+    await adapter.gdbServerStart(probe.probeId, { host: '127.0.0.1', port: 2331 });
+    await adapter.rttConnect(probe.probeId, { controlBlockAddress: 0x24005310 });
+
+    expect(rttClient.connectCalls).toEqual([
+      { host: '127.0.0.1', port: 19021, controlBlockAddress: 0x24005310 },
+    ]);
+  });
+
   it('waits for the GDB server RTT telnet endpoint before giving up', async () => {
     const commander = new FakeCommander();
     const gdbServer = new FakeGdbServer();

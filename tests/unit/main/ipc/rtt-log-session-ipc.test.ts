@@ -88,8 +88,8 @@ describe('registerRttLogSessionIpc', () => {
       const controlProfileManager = new ControlProfileManager();
       await controlProfileManager.init(root, {
         jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
-        rtt: { enabled: true, channels: [0] },
-      });
+        rtt: { enabled: true, channels: [0], controlBlockAddress: '0x24005310' },
+      } as Parameters<ControlProfileManager['init']>[1]);
       registerRttLogSessionIpc(sessionManager, backend, controlProfileManager);
       const handler = handlers.get(IPC_CHANNELS.RTT_LOG_OPEN)!;
 
@@ -114,7 +114,13 @@ describe('registerRttLogSessionIpc', () => {
         },
       ]);
       expect(backend.callsOf('gdbServerStart')).toHaveLength(1);
-      expect(backend.callsOf('rttConnect')).toHaveLength(1);
+      const rttConnect = backend.callsOf('rttConnect');
+      expect(rttConnect).toEqual([
+        {
+          method: 'rttConnect',
+          args: [expect.any(String), { controlBlockAddress: 0x24005310 }],
+        },
+      ]);
       const methods = backend.calls.map((call) => call.method);
       expect(methods.indexOf('gdbServerStart')).toBeGreaterThan(methods.indexOf('probeConnect'));
       expect(methods.indexOf('rttConnect')).toBeGreaterThan(methods.indexOf('gdbServerStart'));

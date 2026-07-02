@@ -4,12 +4,14 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createServer, type AddressInfo, type Socket } from 'node:net';
 import { JLinkAbortedError, JLinkOperationError } from '@/jlink/index.js';
 import {
   buildDefaultCommanderCandidates,
   buildDefaultGdbServerCandidates,
   DefaultJLinkCommanderClient,
   DefaultJLinkGdbServerClient,
+  NetJLinkRttClient,
   NodeSeggerManagedProcessRunner,
   NodeSeggerProcessRunner,
   type SeggerGdbServerProcessHandle,
@@ -942,6 +944,68 @@ describe('DefaultJLinkCommanderClient', () => {
     expect(runner.requests).toHaveLength(0);
   });
 });
+
+describe('NetJLinkRttClient', () => {
+  it('sends a SEGGER RTT Telnet config string when a control block address is supplied', async () => {
+    const chunks: Buffer[] = [];
+    let acceptedSocket: Socket | undefined;
+    const server = createServer((socket) => {
+      acceptedSocket = socket;
+      socket.on('data', (chunk: Buffer) => {
+        chunks.push(Buffer.from(chunk));
+      });
+    });
+    await listen(server);
+    try {
+      const address = server.address() as AddressInfo;
+      const client = new NetJLinkRttClient();
+      const opts = {
+        host: '127.0.0.1',
+        port: address.port,
+        controlBlockAddress: 0x24005310,
+      };
+
+      const session = await client.connect(opts);
+      await waitForSocketData();
+
+      expect(session.channels).toEqual([
+        { index: 0, name: 'Terminal', direction: 'up', bufferSize: 0 },
+      ]);
+      expect(Buffer.concat(chunks).toString('utf8')).toBe(
+        '$$SEGGER_TELNET_ConfigStr=SetRTTAddr;0x24005310$$',
+      );
+      await session.close();
+    } finally {
+      acceptedSocket?.destroy();
+      await closeServer(server);
+    }
+  });
+});
+
+function listen(server: ReturnType<typeof createServer>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+}
+
+function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+async function waitForSocketData(): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, 20);
+  });
+}
 
 describe('DefaultJLinkGdbServerClient', () => {
   let root: string;

@@ -69,6 +69,7 @@ export interface RttChannelInfo {
   name: string;
   /** up = target → host；down = host → target。 */
   direction: 'up' | 'down';
+  /** 目标 RTT buffer 容量；0 表示当前 transport 未报告真实目标容量。 */
   bufferSize: number;
 }
 

@@ -63,6 +63,28 @@ describe('ControlProfileManager (real fs)', () => {
     ).rejects.toThrow();
   });
 
+  it('persists a hexadecimal RTT control block address unchanged', async () => {
+    const manager = new ControlProfileManager();
+    const profile = await manager.init(root, {
+      rtt: { enabled: true, channels: [0], controlBlockAddress: '0x24005310' },
+    } as Parameters<ControlProfileManager['init']>[1]);
+
+    expect(profile.rtt?.controlBlockAddress).toBe('0x24005310');
+    const raw = await readFile(path.join(root, '.linkterm', 'control-profile.json'), 'utf-8');
+    expect(JSON.parse(raw)).toMatchObject({
+      rtt: { enabled: true, channels: [0], controlBlockAddress: '0x24005310' },
+    });
+  });
+
+  it('rejects decimal RTT control block addresses', async () => {
+    const manager = new ControlProfileManager();
+    await expect(
+      manager.init(root, {
+        rtt: { enabled: true, controlBlockAddress: '604001040' },
+      } as never),
+    ).rejects.toThrow();
+  });
+
   it('normalizes STM32 order-code jlink targets before persisting', async () => {
     const manager = new ControlProfileManager();
     const profile = await manager.init(root, {

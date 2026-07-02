@@ -416,7 +416,7 @@ export class JLinkAdapter implements IJLinkBackend {
 
   async rttConnect(
     probeId: string,
-    _opts?: { controlBlockAddress?: number },
+    opts?: { controlBlockAddress?: number },
   ): Promise<{ channels: RttChannelInfo[] }> {
     const handle = this.#requireProbe(probeId);
     const gdbServer = handle.gdbServer;
@@ -433,6 +433,7 @@ export class JLinkAdapter implements IJLinkBackend {
     const session = await this.#connectRttAfterTelnetReady({
       host: gdbServer.host,
       port: gdbServer.rttTelnetPort,
+      ...(opts?.controlBlockAddress !== undefined ? { controlBlockAddress: opts.controlBlockAddress } : {}),
     });
     handle.rttSession = session;
     return { channels: session.channels };

@@ -202,7 +202,12 @@ describe('agent runbook builder', () => {
         verify: true,
         token: 'flash-token',
       },
-      rtt: { enabled: true, channels: [0], privateKey: 'key' },
+      rtt: {
+        enabled: true,
+        channels: [0],
+        controlBlockAddress: '0x24005310',
+        privateKey: 'key',
+      },
       sshPassword: 'top-secret',
     };
 
@@ -231,7 +236,11 @@ describe('agent runbook builder', () => {
       baseAddress: '0x08008000',
       verify: true,
     });
-    expect(summary.rtt).toEqual({ enabled: true, channels: [0] });
+    expect(summary.rtt).toEqual({
+      enabled: true,
+      channels: [0],
+      controlBlockAddress: '0x24005310',
+    });
 
     const serialized = JSON.stringify(summary);
     expect(serialized).not.toContain('D:/private');

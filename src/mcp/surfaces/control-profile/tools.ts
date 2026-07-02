@@ -17,6 +17,7 @@ import {
   defaultHostPathResolver,
   inspectControlProfileCompleteness,
   parseControlProfileAnswer,
+  type ControlProfileBody,
   type ControlProfile,
   type HostPathResolver,
 } from '../../../core/workspace/index.js';
@@ -208,7 +209,12 @@ export function registerControlProfileTools(
       try {
         const rootContext = await resolveControlRoot(input.root, hostPathResolver);
         const parsed = parseControlProfileAnswer(input.answer);
-        const profile = await deps.controlProfileManager.init(rootContext.hostRoot, parsed.patch, {
+        const { profile: existingProfile } = await loadProfileIfPresent(
+          deps.controlProfileManager,
+          rootContext.hostRoot,
+        );
+        const nextPatch = mergeControlProfilePatch(existingProfile, parsed.patch);
+        const profile = await deps.controlProfileManager.init(rootContext.hostRoot, nextPatch, {
           force: true,
         });
         await saveAiControlProfileRecord(
@@ -523,6 +529,40 @@ async function saveAiControlProfileRecord(
 ): Promise<void> {
   if (!manager) return;
   await manager.save({ root, source: 'ai', profile });
+}
+
+function mergeControlProfilePatch(
+  existingProfile: ControlProfile | undefined,
+  patch: ControlProfileBody,
+): ControlProfileBody {
+  const merged: ControlProfileBody = {
+    ...(existingProfile?.serial !== undefined ? { serial: existingProfile.serial } : {}),
+    ...(existingProfile?.rtt !== undefined ? { rtt: existingProfile.rtt } : {}),
+    ...(existingProfile?.jlink !== undefined ? { jlink: existingProfile.jlink } : {}),
+    ...(existingProfile?.flash !== undefined ? { flash: existingProfile.flash } : {}),
+  };
+
+  if (patch.serial !== undefined) {
+    merged.serial = { ...merged.serial, ...patch.serial };
+  }
+  if (patch.rtt !== undefined) {
+    merged.rtt = { ...merged.rtt, ...patch.rtt };
+  }
+  if (patch.jlink !== undefined) {
+    merged.jlink = { ...merged.jlink, ...patch.jlink };
+  }
+  if (patch.flash !== undefined) {
+    merged.flash = { ...merged.flash, ...patch.flash };
+  }
+
+  if (patch.serial?.enabled === true) {
+    delete merged.rtt;
+  }
+  if (patch.rtt?.enabled === true) {
+    delete merged.serial;
+  }
+
+  return merged;
 }
 
 /**

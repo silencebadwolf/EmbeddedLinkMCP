@@ -213,6 +213,7 @@ export interface JLinkGdbServerSession {
 export interface JLinkRttConnectOptions {
   host: string;
   port: number;
+  controlBlockAddress?: number;
 }
 
 /** Backend-owned RTT session abstraction. */
@@ -604,6 +605,9 @@ export class NodeSeggerManagedProcessRunner implements SeggerManagedProcessRunne
 /** Node net.Socket backed RTT telnet client. */
 export class NetJLinkRttClient implements JLinkRttClient {
   async connect(opts: JLinkRttConnectOptions): Promise<JLinkRttSession> {
+    if (opts.controlBlockAddress !== undefined) {
+      assertUint32(opts.controlBlockAddress, 'rttConnect controlBlockAddress');
+    }
     return new Promise<JLinkRttSession>((resolve, reject) => {
       const socket = createConnection({ host: opts.host, port: opts.port });
       let settled = false;
@@ -619,6 +623,9 @@ export class NetJLinkRttClient implements JLinkRttClient {
         );
       };
       socket.once('connect', () => {
+        if (opts.controlBlockAddress !== undefined) {
+          socket.write(buildRttTelnetConfigString(opts.controlBlockAddress));
+        }
         settled = true;
         resolve(new SocketJLinkRttSession(socket));
       });
@@ -628,7 +635,7 @@ export class NetJLinkRttClient implements JLinkRttClient {
 }
 
 class SocketJLinkRttSession implements JLinkRttSession {
-  readonly channels: RttChannelInfo[] = [{ index: 0, name: 'Terminal', direction: 'up', bufferSize: DEFAULT_MAX_OUTPUT_BYTES }];
+  readonly channels: RttChannelInfo[] = [{ index: 0, name: 'Terminal', direction: 'up', bufferSize: 0 }];
   readonly #socket: Socket;
   #buffer = Buffer.alloc(0);
 
@@ -667,6 +674,10 @@ class SocketJLinkRttSession implements JLinkRttSession {
     this.#socket.destroy();
     this.#buffer = Buffer.alloc(0);
   }
+}
+
+function buildRttTelnetConfigString(controlBlockAddress: number): string {
+  return `$$SEGGER_TELNET_ConfigStr=SetRTTAddr;${formatAddress(controlBlockAddress)}$$`;
 }
 
 /** SEGGER Commander backed client for raw binary flash download and verify. */

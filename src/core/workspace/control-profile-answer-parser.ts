@@ -14,7 +14,8 @@ export type ControlProfileField =
   | 'jlink.speedKHz'
   | 'flash.binary'
   | 'flash.baseAddress'
-  | 'rtt.enabled';
+  | 'rtt.enabled'
+  | 'rtt.controlBlockAddress';
 
 /** 被识别但拒绝写入的字段。 */
 export interface RejectedControlProfileField {
@@ -47,10 +48,15 @@ export function parseControlProfileAnswer(answer: string): ParsedControlProfileA
   const rejectedFields: RejectedControlProfileField[] = [];
   const patch: ControlProfileBody = {};
 
-  const wantsRtt = extractRttEnabled(answer);
+  const rttControlBlockAddress = extractRttControlBlockAddress(answer);
+  const wantsRtt = extractRttEnabled(answer) || rttControlBlockAddress !== undefined;
   if (wantsRtt) {
     patch.rtt = { enabled: true, channels: [0] };
     parsedFields.push('rtt.enabled');
+    if (rttControlBlockAddress !== undefined) {
+      patch.rtt.controlBlockAddress = rttControlBlockAddress;
+      parsedFields.push('rtt.controlBlockAddress');
+    }
   }
 
   const port = wantsRtt ? undefined : extractSerialPort(answer);
@@ -86,8 +92,10 @@ export function parseControlProfileAnswer(answer: string): ParsedControlProfileA
     }
   }
 
+  const rttControlBlockAddresses =
+    patch.rtt?.controlBlockAddress === undefined ? [] : [patch.rtt.controlBlockAddress];
   const binary = extractBinaryPath(answer);
-  const hexAddress = extractHexAddress(answer);
+  const hexAddress = extractHexAddress(answer, { exclude: rttControlBlockAddresses });
   if (binary !== undefined || hexAddress !== undefined) {
     patch.flash = { verify: true };
     if (binary !== undefined) {
@@ -165,7 +173,7 @@ export function buildControlProfileQuestion(report: ControlProfileCompletenessRe
   return (
     '请告诉我这些控制参数：观察通道（串口或 RTT 日志）、芯片型号、SWD/JTAG、J-Link 速度、bin/hex/elf 路径、flash 起始地址。' +
     '串口模式请提供串口号和波特率，例如：COM3，115200，AT32F435RGT7，SWD，4000kHz，build/app.elf，0x08000000。' +
-    'RTT 模式可以回答：RTT 日志，AT32F435RGT7，SWD，4000kHz，build/app.elf，0x08000000。' +
+    'RTT 模式可以回答：RTT 日志，AT32F435RGT7，SWD，4000kHz，build/app.elf，0x08000000；如已知可补充 _SEGGER_RTT=0x24005310。' +
     `当前缺失字段：${report.missingFields.join(', ')}`
   );
 }
@@ -252,8 +260,19 @@ function extractBinaryPath(answer: string): string | undefined {
  * @param answer 用户回答
  * @returns 十六进制地址；未找到时 undefined
  */
-function extractHexAddress(answer: string): string | undefined {
-  return answer.match(/0x[0-9a-fA-F]+/)?.[0];
+function extractHexAddress(answer: string, opts: { exclude?: string[] } = {}): string | undefined {
+  const excluded = new Set((opts.exclude ?? []).map((address) => address.toLowerCase()));
+  for (const match of answer.matchAll(/0x[0-9a-fA-F]+/g)) {
+    const address = match[0];
+    if (!excluded.has(address.toLowerCase())) return address;
+  }
+  return undefined;
+}
+
+function extractRttControlBlockAddress(answer: string): string | undefined {
+  return answer.match(
+    /(?:_SEGGER_RTT|SEGGER_RTT|RTT\s*(?:CB|control\s*block|控制块|address|addr|地址)|control\s*block)\s*[:=：]?\s*(0x[0-9a-fA-F]+)/i,
+  )?.[1];
 }
 
 /**

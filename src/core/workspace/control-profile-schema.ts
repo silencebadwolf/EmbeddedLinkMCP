@@ -42,6 +42,7 @@ export const controlRttProfileSchema = z
   .object({
     enabled: z.boolean(),
     channels: z.array(z.number().int().nonnegative()).max(16).optional(),
+    controlBlockAddress: hexAddressSchema.optional(),
   })
   .strict();
 

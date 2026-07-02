@@ -129,7 +129,7 @@ describe('ControlProfilePanel', () => {
           schemaVersion: 'linkterm-control/1.0.0',
           jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 'auto' },
           flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
-          rtt: { enabled: true },
+          rtt: { enabled: true, controlBlockAddress: '0x24005310' },
         },
       },
     });
@@ -145,6 +145,9 @@ describe('ControlProfilePanel', () => {
     fireEvent.change(screen.getByLabelText('Flash base address'), {
       target: { value: '0x08000000' },
     });
+    fireEvent.change(screen.getByLabelText('RTT control block address'), {
+      target: { value: '0x24005310' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Save to workspace' }));
 
     await waitFor(() =>
@@ -153,7 +156,7 @@ describe('ControlProfilePanel', () => {
         profile: {
           jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 'auto' },
           flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
-          rtt: { enabled: true },
+          rtt: { enabled: true, controlBlockAddress: '0x24005310' },
         },
       }),
     );
@@ -404,7 +407,7 @@ describe('ControlProfilePanel', () => {
       source: 'ai' as const,
       profile: {
         schemaVersion: 'linkterm-control/1.0.0' as const,
-        rtt: { enabled: true },
+        rtt: { enabled: true, controlBlockAddress: '0x24005310' },
         jlink: { enabled: true, target: 'STM32H743II', interface: 'jtag' as const, speedKHz: 4000 },
         flash: { binary: 'build/rtthread.bin', baseAddress: '0x08008000', verify: true },
       },
@@ -432,6 +435,7 @@ describe('ControlProfilePanel', () => {
     expect(screen.getByLabelText('J-Link speed')).toHaveValue('4000');
     expect(screen.getByLabelText('Firmware path')).toHaveValue('build/rtthread.bin');
     expect(screen.getByLabelText('Flash base address')).toHaveValue('0x08008000');
+    expect(screen.getByLabelText('RTT control block address')).toHaveValue('0x24005310');
   });
 
   it('deletes a saved control profile record from the list', async () => {

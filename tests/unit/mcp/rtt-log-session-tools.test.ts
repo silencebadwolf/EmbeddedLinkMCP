@@ -119,8 +119,8 @@ describe('MCP RTT log session tools', () => {
     try {
       await harness.controlProfileManager.init(root, {
         jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
-        rtt: { enabled: true, channels: [0] },
-      });
+        rtt: { enabled: true, channels: [0], controlBlockAddress: '0x24005310' },
+      } as Parameters<ControlProfileManager['init']>[1]);
 
       const out = await callTool(harness.client, 'open_rtt_log_session', {
         root,
@@ -152,7 +152,12 @@ describe('MCP RTT log session tools', () => {
         },
       ]);
       expect(harness.fake.callsOf('gdbServerStart')).toHaveLength(1);
-      expect(harness.fake.callsOf('rttConnect')).toHaveLength(1);
+      expect(harness.fake.callsOf('rttConnect')).toEqual([
+        {
+          method: 'rttConnect',
+          args: [evidence.data.probeId, { controlBlockAddress: 0x24005310 }],
+        },
+      ]);
       const methods = harness.fake.calls.map((call) => call.method);
       expect(methods.indexOf('gdbServerStart')).toBeGreaterThan(methods.indexOf('probeConnect'));
       expect(methods.indexOf('rttConnect')).toBeGreaterThan(methods.indexOf('gdbServerStart'));

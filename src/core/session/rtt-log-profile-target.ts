@@ -77,7 +77,10 @@ export async function prepareProfileRttLogTarget(
     profile.jlink?.speedKHz,
   );
   const gdbServer = await deps.jlinkBackend.gdbServerStart(probe.probeId);
-  const rtt = await deps.jlinkBackend.rttConnect(probe.probeId);
+  const controlBlockAddress = parseOptionalHexAddress(profile.rtt.controlBlockAddress);
+  const rtt = controlBlockAddress === undefined
+    ? await deps.jlinkBackend.rttConnect(probe.probeId)
+    : await deps.jlinkBackend.rttConnect(probe.probeId, { controlBlockAddress });
   return {
     root: input.root,
     hostRoot,
@@ -140,4 +143,13 @@ function selectRttChannel(
     if (configured !== undefined) return configured;
   }
   return upChannels[0]?.index ?? fallback;
+}
+
+function parseOptionalHexAddress(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number.parseInt(value.slice(2), 16);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 0xffff_ffff) {
+    throw new ProfileRttLogTargetError(`Invalid RTT control block address: ${value}`);
+  }
+  return parsed;
 }
