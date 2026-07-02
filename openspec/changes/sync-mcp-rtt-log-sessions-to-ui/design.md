@@ -24,10 +24,11 @@ RTT log sessions already satisfy the storage and transcript parts. The weaker bo
 
 - Add a main IPC regression test using a test session that emits a state transition without a transcript `state` event. The test must fail before the fix and pass after `session:state` forwarding is added.
 - Keep RTT log session tests proving `open_rtt_log_session` registers RTT metadata in normal session summaries.
+- Add RTT log session coverage proving a connected but initially silent RTT channel records system-origin guidance before device bytes arrive.
 - Run targeted IPC/RTT/hydration tests plus OpenSpec validation.
 
 ## Non-Goals
 
 - Do not change flash/download workflows.
-- Do not infer firmware logging behavior from RTT channel silence.
+- Do not infer firmware logging behavior from RTT channel silence; only surface clear next diagnostic action.
 - Do not auto-start additional debug backends beyond existing RTT log session behavior.

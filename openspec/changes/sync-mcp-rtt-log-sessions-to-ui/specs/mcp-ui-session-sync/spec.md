@@ -37,3 +37,16 @@ LinkTerm SHALL forward explicit `SessionManager` state transitions to App window
 - **WHEN** transcript data, clear, error, or state events are emitted
 - **THEN** LinkTerm SHALL continue forwarding transcript events through the transcript channel
 - **AND** lifecycle forwarding SHALL NOT require a transcript subscription to exist
+
+### Requirement: Silent RTT log sessions remain diagnosable
+
+When an RTT log session opens successfully but no target bytes are available yet, LinkTerm SHALL make that state visible in the shared transcript and avoid implying that flash should be repeated.
+
+#### Scenario: RTT channel opens with no firmware output yet
+
+- **GIVEN** an RTT log session has connected to a probe and channel
+- **WHEN** the first RTT poll returns zero device bytes
+- **THEN** the session SHALL remain `open`
+- **AND** the transcript SHALL contain a system-origin data event saying the RTT log is connected and waiting for target output
+- **AND** that guidance SHALL direct the operator toward firmware RTT output, channel, or control block checks
+- **AND** it SHALL NOT suggest repeating flash solely because the RTT channel is silent

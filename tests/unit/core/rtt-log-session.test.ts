@@ -167,6 +167,26 @@ describe('RttLogSession', () => {
     );
   });
 
+  it('records visible system guidance when the RTT channel opens but has no device bytes yet', async () => {
+    const backend = new ScriptedRttBackend([Buffer.alloc(0)]);
+    const session = new RttLogSession({
+      id: 'sess_rtt',
+      jlinkBackend: backend as unknown as IJLinkBackend,
+      probeId: 'probe-1',
+      channelIndex: 0,
+      pollIntervalMs: 50,
+      maxBytesPerRead: 16,
+    });
+
+    await session.open();
+
+    const systemText = readSystemText(session);
+    expect(systemText).toContain('RTT log connected');
+    expect(systemText).toContain('channel 0');
+    expect(systemText).toContain('waiting for target output');
+    expect(systemText).toContain('do not repeat flash solely because RTT is silent');
+  });
+
   it('does not append RTT data after close wins a pending poll', async () => {
     vi.useFakeTimers();
     const backend = new DeferredRttBackend();
@@ -298,11 +318,18 @@ describe('RttLogSession', () => {
 });
 
 function readDataEvents(session: RttLogSession): ReturnType<RttLogSession['read']>['events'] {
-  return session.read(0).events.filter((event) => event.type === 'data');
+  return session.read(0).events.filter((event) => event.type === 'data' && event.origin === 'device');
 }
 
 function readText(session: RttLogSession): string {
   return readDataEvents(session)
+    .map((event) => Buffer.from(event.data ?? []).toString('utf8'))
+    .join('');
+}
+
+function readSystemText(session: RttLogSession): string {
+  return session.read(0).events
+    .filter((event) => event.type === 'data' && event.origin === 'system')
     .map((event) => Buffer.from(event.data ?? []).toString('utf8'))
     .join('');
 }

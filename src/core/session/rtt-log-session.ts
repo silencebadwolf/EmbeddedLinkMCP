@@ -91,6 +91,7 @@ export class RttLogSession extends EventEmitter implements ISession {
     }
     this.#setState('opening');
     this.#setState('open');
+    this.#recordOpenGuidance();
     await this.#pollOnce({ throwOnError: true });
   }
 
@@ -169,6 +170,20 @@ export class RttLogSession extends EventEmitter implements ISession {
 
   #recordError(meta: SessionErrorMeta): TranscriptEvent {
     return this.#appendAndEmit({ type: 'error', origin: 'system', meta });
+  }
+
+  #recordOpenGuidance(): TranscriptEvent {
+    const message =
+      `RTT log connected on channel ${this.#channelIndex}; waiting for target output. ` +
+      'If this stays silent, verify firmware RTT output/channel/control block; ' +
+      'do not repeat flash solely because RTT is silent.\r\n';
+    return this.#appendAndEmit({
+      type: 'data',
+      origin: 'system',
+      evidenceKind: 'raw_bytes',
+      data: Buffer.from(message, 'utf8'),
+      meta: { channelIndex: this.#channelIndex },
+    });
   }
 
   #appendAndEmit(input: TranscriptEventInput): TranscriptEvent {

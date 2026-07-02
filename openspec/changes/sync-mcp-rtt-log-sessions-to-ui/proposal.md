@@ -9,6 +9,7 @@ The current behavior is fragile around session lifecycle propagation: RTT log se
 - Treat App visibility as a required outcome for MCP-created RTT log sessions, not a best-effort side effect.
 - Forward manager-level session state changes through the existing `SESSION_LIFECYCLE` IPC channel so renderer hydration sees state updates from AI/MCP operations.
 - Add regression tests proving that a state-only manager event reaches App lifecycle listeners and that MCP-opened RTT log sessions remain visible through session summaries.
+- Make a successfully opened but silent RTT log session visible in the transcript with system-origin guidance, so operators do not confuse "connected and waiting for target bytes" with "App did not sync" or "flash failed".
 - Keep RTT log sessions read-only and keep one-shot RTT debug tools separate from continuous App-visible observation.
 
 ## Impact

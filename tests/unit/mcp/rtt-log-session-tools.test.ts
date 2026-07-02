@@ -94,7 +94,11 @@ describe('MCP RTT log session tools', () => {
     const events = (readOut.evidence as {
       data: { events: Array<{ type: string; origin: string; dataBase64?: string }> };
     }).data.events;
-    const dataEvent = events.find((event) => event.type === 'data');
+    const systemEvent = events.find((event) => event.type === 'data' && event.origin === 'system');
+    expect(Buffer.from(systemEvent?.dataBase64 ?? '', 'base64').toString('utf8')).toContain(
+      'RTT log connected',
+    );
+    const dataEvent = events.find((event) => event.type === 'data' && event.origin === 'device');
     expect(dataEvent?.origin).toBe('device');
     expect(Buffer.from(dataEvent?.dataBase64 ?? '', 'base64').toString('utf8')).toBe('hello-rtt');
   });
