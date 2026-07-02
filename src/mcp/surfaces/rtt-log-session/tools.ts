@@ -5,6 +5,7 @@ import {
   ProfileRttLogTargetError,
 } from '../../../core/session/rtt-log-profile-target.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
+import { diagnoseRttLogTranscript } from '../../../core/session/rtt-log-diagnostics.js';
 import type { IJLinkBackend } from '../../../jlink/types.js';
 import type { JLinkDeviceCatalog } from '../../../jlink/device-catalog.js';
 import {
@@ -23,7 +24,12 @@ import {
   type ToolHandlerSuccess,
 } from '../../registry.js';
 import { translateJLinkError } from '../debug/error-translate.js';
-import { openRttLogSessionInputSchema, type OpenRttLogSessionInput } from './schemas.js';
+import {
+  diagnoseRttLogSessionInputSchema,
+  openRttLogSessionInputSchema,
+  type DiagnoseRttLogSessionInput,
+  type OpenRttLogSessionInput,
+} from './schemas.js';
 
 /** RTT 日志会话 MCP 工具依赖。 */
 export interface RttLogSessionToolsDeps {
@@ -84,6 +90,56 @@ export function registerRttLogSessionTools(
       } catch (err) {
         translateRttLogToolError(err);
       }
+    },
+  });
+
+  registerTool(server, {
+    name: 'diagnose_rtt_log_session',
+    description:
+      'Read-only diagnostic for an existing App-visible RTT log session. Classifies SEGGER transport banner bytes separately from firmware-origin RTT output so agents do not repeat flash/reset solely because logs are silent.',
+    sensitivity: 'read-only',
+    inputSchema: diagnoseRttLogSessionInputSchema,
+    handler: (input: DiagnoseRttLogSessionInput): ToolHandlerResult => {
+      const summary = deps.sessionManager.summaryOf(input.sessionId);
+      if (summary === null) {
+        return {
+          success: false,
+          sessionId: input.sessionId,
+          error: {
+            code: ERROR_CODES.SESSION_NOT_FOUND,
+            message: `Session not found: ${input.sessionId}`,
+          },
+        };
+      }
+      if (summary.connectionType !== 'rtt-log') {
+        return {
+          success: false,
+          sessionId: input.sessionId,
+          state: summary.state,
+          error: {
+            code: ERROR_CODES.INVALID_ARGUMENT,
+            message:
+              `Session ${input.sessionId} is ${summary.connectionType}; diagnose_rtt_log_session requires an rtt-log session`,
+          },
+        };
+      }
+      const readResult = deps.sessionManager.read(input.sessionId, 0);
+      const diagnosis = diagnoseRttLogTranscript({
+        sessionId: input.sessionId,
+        state: summary.state,
+        connectionType: summary.connectionType,
+        rttLog: summary.rttLog,
+        readResult,
+      });
+      return ok({
+        sessionId: input.sessionId,
+        state: summary.state,
+        evidence: {
+          kind: 'debug_output',
+          data: diagnosis,
+          cursor: readResult.cursor,
+        },
+      });
     },
   });
 }

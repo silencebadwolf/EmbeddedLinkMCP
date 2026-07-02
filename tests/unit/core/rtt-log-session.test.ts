@@ -187,6 +187,40 @@ describe('RttLogSession', () => {
     expect(systemText).toContain('do not repeat flash solely because RTT is silent');
   });
 
+  it('records one App-visible diagnostic when only the SEGGER RTT transport banner appears', async () => {
+    vi.useFakeTimers();
+    const banner =
+      'SEGGER J-Link V7.92 - Real time terminal output\r\n' +
+      'SEGGER J-Link V11.0, SN=123456789\r\n' +
+      'Process: JLinkGDBServerCL.exe\r\n';
+    const backend = new ScriptedRttBackend([
+      Buffer.from(banner),
+      Buffer.from(banner),
+      Buffer.alloc(0),
+    ]);
+    const session = new RttLogSession({
+      id: 'sess_rtt',
+      jlinkBackend: backend as unknown as IJLinkBackend,
+      probeId: 'probe-1',
+      channelIndex: 0,
+      pollIntervalMs: 50,
+      maxBytesPerRead: 256,
+    });
+
+    await session.open();
+    await vi.advanceTimersByTimeAsync(100);
+    await flushMicrotasks();
+
+    const bannerHints = session.read(0).events
+      .filter((event) => event.type === 'data' && event.origin === 'system')
+      .map((event) => Buffer.from(event.data ?? []).toString('utf8'))
+      .filter((text) => text.includes('SEGGER RTT transport banner'));
+
+    expect(bannerHints).toHaveLength(1);
+    expect(bannerHints[0]).toContain('not firmware log output');
+    expect(bannerHints[0]).toContain('do not repeat flash solely because RTT is silent');
+  });
+
   it('does not append RTT data after close wins a pending poll', async () => {
     vi.useFakeTimers();
     const backend = new DeferredRttBackend();

@@ -118,7 +118,9 @@ describe('agent runbook builder', () => {
     expect(runbook.markdown).toContain('send_and_wait');
     expect(runbook.markdown).toContain('read_from_session');
     expect(runbook.markdown).toContain('open_rtt_log_session');
+    expect(runbook.markdown).toContain('diagnose_rtt_log_session');
     expect(runbook.markdown).toContain('continuous RTT log');
+    expect(runbook.markdown).toContain('silent RTT');
     expect(runbook.markdown).toContain('rtt_read');
     expect(runbook.markdown).toContain('read-only');
     expect(runbook.markdown).toContain('core tool');
@@ -147,6 +149,7 @@ describe('agent runbook builder', () => {
         'observe_serial',
         'flash_then_observe',
         'debug_diagnose',
+        'rtt_or_gdb_observe',
         'recover_attach',
         'ui_assist',
       ]),
@@ -265,6 +268,8 @@ describe('MCP agent runbook tool', () => {
     expect(instructions).toContain('write_to_session');
     expect(instructions).toContain('send_and_wait');
     expect(instructions).toContain('read_from_session');
+    expect(instructions).toContain('diagnose_rtt_log_session');
+    expect(instructions).toContain('SEGGER banner');
     expect(instructions).toContain('read-only');
     expect(instructions).toContain('core tool-set diagnostics');
     expect(instructions).toContain('repair or restart the LinkTerm MCP runtime');

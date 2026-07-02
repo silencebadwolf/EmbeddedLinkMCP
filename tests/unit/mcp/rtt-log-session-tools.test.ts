@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -8,6 +9,9 @@ import { ControlProfileManager } from '@/core/workspace/control-profile-manager.
 import { SerialDiscovery } from '@/transports/serial/serial-discovery.js';
 import { createMcpServer, LINKTERM_MCP_SCHEMA_VERSION } from '@/mcp/index.js';
 import type { LinkTermMcpServer } from '@/mcp/server.js';
+import type { ISession, SessionWriteOptions } from '@/core/session/types.js';
+import type { ReadResult, SequenceCursor, TranscriptEvent } from '@/core/transcript/types.js';
+import type { Origin, SessionId, SessionState } from '@/shared/types.js';
 import { FakeJLinkBackend } from '../../fixtures/fake-jlink-backend.js';
 import { createInMemoryMcpTransportPair } from '../../fixtures/mock-mcp-transport.js';
 
@@ -226,4 +230,94 @@ describe('MCP RTT log session tools', () => {
     expect(out.success).toBe(false);
     expect((out.error as { code: string }).code).toBe('NOT_WRITABLE');
   });
+
+  it('diagnoses a banner-only RTT log session without touching hardware again', async () => {
+    const probe = await harness.fake.probeConnect({ target: 'AT32F435VGT7' });
+    const banner =
+      'SEGGER J-Link V7.92 - Real time terminal output\r\n' +
+      'SEGGER J-Link V11.0, SN=123456789\r\n' +
+      'Process: JLinkGDBServerCL.exe\r\n';
+    vi.spyOn(harness.fake, 'rttRead').mockResolvedValueOnce({
+      channelIndex: 0,
+      data: Buffer.from(banner, 'utf8'),
+      truncated: false,
+    });
+    const opened = await callTool(harness.client, 'open_rtt_log_session', {
+      probeId: probe.probeId,
+      channelIndex: 0,
+    });
+    const sessionId = (opened.evidence as { data: { sessionId: string } }).data.sessionId;
+    const callsBeforeDiagnose = harness.fake.calls.length;
+
+    const out = await callTool(harness.client, 'diagnose_rtt_log_session', { sessionId });
+
+    expect(out.success).toBe(true);
+    const evidence = out.evidence as {
+      kind: string;
+      data: {
+        classification: string;
+        transportConnected: boolean;
+        seggerBannerSeen: boolean;
+        firmwareBytes: number;
+        nextActions: string[];
+      };
+    };
+    expect(evidence.kind).toBe('debug_output');
+    expect(evidence.data.classification).toBe('transport_connected_firmware_silent');
+    expect(evidence.data.transportConnected).toBe(true);
+    expect(evidence.data.seggerBannerSeen).toBe(true);
+    expect(evidence.data.firmwareBytes).toBe(0);
+    expect(evidence.data.nextActions.join('\n')).toContain('do not repeat flash');
+    expect(harness.fake.calls).toHaveLength(callsBeforeDiagnose);
+  });
+
+  it('rejects RTT diagnosis for a non-RTT session without reading hardware', async () => {
+    const session = harness.manager.create((id) => new StaticSession(id), {
+      connectionType: 'local-shell',
+      label: 'not RTT',
+    });
+
+    const out = await callTool(harness.client, 'diagnose_rtt_log_session', {
+      sessionId: session.id,
+    });
+
+    expect(out.success).toBe(false);
+    expect((out.error as { code: string }).code).toBe('INVALID_ARGUMENT');
+    expect(harness.fake.calls).toEqual([]);
+  });
 });
+
+class StaticSession extends EventEmitter implements ISession {
+  readonly id: SessionId;
+  readonly state: SessionState = 'open';
+
+  constructor(id: SessionId) {
+    super();
+    this.id = id;
+  }
+
+  async open(): Promise<void> {
+    return undefined;
+  }
+
+  async close(): Promise<void> {
+    return undefined;
+  }
+
+  async write(_data: Uint8Array, _options: SessionWriteOptions): Promise<void> {
+    return undefined;
+  }
+
+  read(cursor: SequenceCursor): ReadResult {
+    return { events: [], cursor, truncated: false, oldestAvailableSequence: cursor + 1 };
+  }
+
+  clear(origin: Origin): TranscriptEvent {
+    return {
+      sequence: 1,
+      timestamp: Date.now(),
+      type: 'clear',
+      origin,
+    };
+  }
+}

@@ -51,6 +51,7 @@ const CORE_TOOL_NAMES = [
   'rtt_read',
   'rtt_search',
   'open_rtt_log_session',
+  'diagnose_rtt_log_session',
   'snapshot_capture',
   'ui_configure',
   'ui_screenshot',

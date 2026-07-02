@@ -37,3 +37,12 @@ export const openRttLogSessionInputSchema = z
   });
 
 export type OpenRttLogSessionInput = z.infer<typeof openRttLogSessionInputSchema>;
+
+export const diagnoseRttLogSessionInputSchema = z
+  .object({
+    ...commonSchema,
+    sessionId: z.string().min(1).max(128),
+  })
+  .strict();
+
+export type DiagnoseRttLogSessionInput = z.infer<typeof diagnoseRttLogSessionInputSchema>;

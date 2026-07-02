@@ -11,6 +11,7 @@ import type {
 } from '../transcript/types.js';
 import type { ISession, SessionErrorMeta, SessionStateMeta, SessionWriteOptions } from './types.js';
 import { SessionNotWritableError } from './types.js';
+import { analyzeRttDataChunk } from './rtt-log-diagnostics.js';
 
 /** RTT 日志会话配置。 */
 export interface RttLogSessionOptions {
@@ -60,6 +61,7 @@ export class RttLogSession extends EventEmitter implements ISession {
   #timer: ReturnType<typeof setTimeout> | undefined;
   #closing = false;
   #polling = false;
+  #bannerOnlyHintRecorded = false;
 
   /**
    * @param options RTT 日志会话依赖与轮询配置
@@ -133,6 +135,7 @@ export class RttLogSession extends EventEmitter implements ISession {
       this.#polling = false;
       if (this.#state !== 'open') return;
       if (result.data.byteLength > 0) {
+        const dataDiagnostic = analyzeRttDataChunk(result.data);
         this.#appendAndEmit({
           type: 'data',
           origin: 'device',
@@ -140,6 +143,9 @@ export class RttLogSession extends EventEmitter implements ISession {
           data: result.data,
           meta: result.truncated ? { truncated: true, channelIndex: result.channelIndex } : { channelIndex: result.channelIndex },
         });
+        if (dataDiagnostic.bannerOnly) {
+          this.#recordBannerOnlyGuidance();
+        }
       }
       this.#scheduleNextPoll();
     } catch (err) {
@@ -183,6 +189,25 @@ export class RttLogSession extends EventEmitter implements ISession {
       evidenceKind: 'raw_bytes',
       data: Buffer.from(message, 'utf8'),
       meta: { channelIndex: this.#channelIndex },
+    });
+  }
+
+  #recordBannerOnlyGuidance(): TranscriptEvent | undefined {
+    if (this.#bannerOnlyHintRecorded) return undefined;
+    this.#bannerOnlyHintRecorded = true;
+    const message =
+      'SEGGER RTT transport banner received; this proves LinkTerm/J-Link RTT transport, ' +
+      'not firmware log output. If no target log follows, check firmware RTT output, ' +
+      'selected channel, and control block; do not repeat flash solely because RTT is silent.\r\n';
+    return this.#appendAndEmit({
+      type: 'data',
+      origin: 'system',
+      evidenceKind: 'raw_bytes',
+      data: Buffer.from(message, 'utf8'),
+      meta: {
+        channelIndex: this.#channelIndex,
+        diagnostic: 'segger_rtt_banner_without_firmware_output',
+      },
     });
   }
 

@@ -32,6 +32,10 @@ describe('tool-set diagnostics', () => {
     expect(expectedCoreToolNames()).toContain('open_rtt_log_session');
   });
 
+  it('includes the RTT log session diagnostic in the core diagnostics contract', () => {
+    expect(expectedCoreToolNames()).toContain('diagnose_rtt_log_session');
+  });
+
   it('includes the runtime restart recovery tool in the core diagnostics contract', () => {
     expect(expectedCoreToolNames()).toContain('restart_mcp_runtime');
   });
