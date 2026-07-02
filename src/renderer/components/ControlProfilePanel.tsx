@@ -62,6 +62,7 @@ export function ControlProfilePanel({
     ReadonlyArray<SavedControlProfileRecordPayload>
   >([]);
   const [openingRecordId, setOpeningRecordId] = React.useState<string | null>(null);
+  const [deletingRecordId, setDeletingRecordId] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [targetHint, setTargetHint] = React.useState<string | null>(null);
@@ -267,6 +268,29 @@ export function ControlProfilePanel({
     }
   };
 
+  const deleteSavedRecord = async (recordId: string): Promise<void> => {
+    const api = getLinkterm();
+    if (!api) {
+      setError(t('controlProfile.error.preloadUnavailable'));
+      return;
+    }
+    const record = savedRecords.find((item) => item.id === recordId);
+    setDeletingRecordId(recordId);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await api.controlProfile.deleteRecord({ recordId });
+      if (result.success) {
+        setSavedRecords((records) => records.filter((item) => item.id !== recordId));
+        setMessage(`${t('controlProfile.record.deleted')} ${record?.label ?? recordId}`);
+      } else {
+        setError(result.error.message);
+      }
+    } finally {
+      setDeletingRecordId(null);
+    }
+  };
+
   const runDownload = async (): Promise<void> => {
     const api = getLinkterm();
     if (!api) {
@@ -335,16 +359,28 @@ export function ControlProfilePanel({
                         / {record.root}
                       </div>
                     </div>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => void openSavedRecord(record.id)}
-                      disabled={openingRecordId === record.id}
-                    >
-                      {openingRecordId === record.id
-                        ? t('controlProfile.record.opening')
-                        : t('controlProfile.record.open')}
-                    </Button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => void openSavedRecord(record.id)}
+                        disabled={openingRecordId === record.id || deletingRecordId === record.id}
+                      >
+                        {openingRecordId === record.id
+                          ? t('controlProfile.record.opening')
+                          : t('controlProfile.record.open')}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => void deleteSavedRecord(record.id)}
+                        disabled={deletingRecordId === record.id || openingRecordId === record.id}
+                      >
+                        {deletingRecordId === record.id
+                          ? t('controlProfile.record.deleting')
+                          : t('controlProfile.record.delete')}
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>

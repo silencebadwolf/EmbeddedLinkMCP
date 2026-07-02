@@ -434,6 +434,76 @@ describe('ControlProfilePanel', () => {
     expect(screen.getByLabelText('Flash base address')).toHaveValue('0x08008000');
   });
 
+  it('deletes a saved control profile record from the list', async () => {
+    const record = {
+      id: 'ctrl_saved',
+      label: 'repo - STM32H743II',
+      root: 'C:/repo',
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' as const },
+        jlink: {
+          enabled: true,
+          target: 'STM32H743II',
+          interface: 'swd' as const,
+          speedKHz: 'auto' as const,
+        },
+        flash: { binary: 'build/rtthread.bin', baseAddress: '0x08008000', verify: true },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.deleteRecord.mockResolvedValueOnce({
+      success: true,
+      data: { deleted: true },
+    });
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
+
+    expect(await screen.findByText('repo - STM32H743II')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete profile' }));
+
+    await waitFor(() =>
+      expect(mock.spies.controlProfile.deleteRecord).toHaveBeenCalledWith({
+        recordId: 'ctrl_saved',
+      }),
+    );
+    expect(mock.spies.controlProfile.openRecord).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByText('repo - STM32H743II')).not.toBeInTheDocument());
+  });
+
+  it('keeps a saved control profile record visible when deletion fails', async () => {
+    const record = {
+      id: 'ctrl_saved',
+      label: 'repo - STM32H743II',
+      root: 'C:/repo',
+      source: 'ai' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        rtt: { enabled: true },
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'jtag' as const, speedKHz: 4000 },
+        flash: { binary: 'build/rtthread.bin', baseAddress: '0x08008000', verify: true },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.deleteRecord.mockResolvedValueOnce({
+      success: false,
+      error: { code: 'CONTROL_PROFILE_RECORD_DELETE_FAILED', message: 'cannot delete record' },
+    });
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
+
+    expect(await screen.findByText('repo - STM32H743II')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete profile' }));
+
+    expect(await screen.findByText('cannot delete record')).toBeInTheDocument();
+    expect(screen.getByText('repo - STM32H743II')).toBeInTheDocument();
+  });
+
   it('runs a manual download from the selected control profile', async () => {
     mock.spies.controlProfile.runDownload.mockResolvedValueOnce({
       success: true,
@@ -449,6 +519,7 @@ describe('ControlProfilePanel', () => {
           verified: true,
           reset: false,
           serialObserved: false,
+          rttObserved: false,
           debugCaptured: false,
         },
         nextActions: [],
