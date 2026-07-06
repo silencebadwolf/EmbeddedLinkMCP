@@ -13,6 +13,7 @@ import { Label } from './ui/label.js';
 import { SerialPortPicker } from './SerialPortPicker.js';
 import { BaudRateInput } from './BaudRateInput.js';
 import { getLinkterm } from '../lib/linkterm-bridge.js';
+import { useAppStore } from '../store/app-store.js';
 import { useT } from '../i18n/index.js';
 import type {
   ControlProfileFilePayload,
@@ -20,11 +21,13 @@ import type {
   JLinkDeviceInfoPayload,
   SavedControlProfileRecordPayload,
 } from '../../shared/preload-api.js';
+import type { SessionId, SessionState } from '../../shared/types.js';
 import { classifyJLinkTargetName } from '../../shared/jlink-target-name.js';
 
 interface ControlProfilePanelProps {
   open: boolean;
   onOpenChange(open: boolean): void;
+  onProfileOpened?(event: ControlProfileOpenedEvent): void;
 }
 
 const JLINK_SPEED_OPTIONS = ['auto', '50000', '25000', '10000', '8000', '4000', '1000'] as const;
@@ -33,12 +36,34 @@ const SELECT_CLASS =
   'flex h-9 w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-1 text-sm text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500';
 type ObservationChannel = 'serial' | 'rtt';
 
+export type ControlProfileObservationOpenResult =
+  | { type: 'serial'; sessionId?: SessionId; state?: SessionState; error?: string }
+  | {
+      type: 'rtt';
+      sessionId?: SessionId;
+      state?: SessionState;
+      probeId?: string;
+      channelIndex: number;
+      reused?: boolean;
+      error?: string;
+    }
+  | { type: 'none'; error?: string };
+
+export interface ControlProfileOpenedEvent {
+  path: string;
+  record: SavedControlProfileRecordPayload;
+  observation: ControlProfileObservationOpenResult;
+}
+
 /** UI entry for humans to save workspace-local control-profile.json. */
 export function ControlProfilePanel({
   open,
   onOpenChange,
+  onProfileOpened,
 }: ControlProfilePanelProps): React.ReactElement {
   const t = useT();
+  const addSession = useAppStore((s) => s.addSession);
+  const setActive = useAppStore((s) => s.setActive);
   const [root, setRoot] = React.useState('');
   const [observationChannel, setObservationChannel] = React.useState<ObservationChannel>('serial');
   const [serialPort, setSerialPort] = React.useState('');
@@ -265,6 +290,9 @@ export function ControlProfilePanel({
         const record = result.data.record;
         applyProfileToForm(record.root, record.profile);
         setSavedRecords((records) => upsertRecord(records, record));
+        const observation = await openObservationForRecord(api, record, addSession, setActive);
+        onProfileOpened?.({ path: result.data.path, record, observation });
+        onOpenChange(false);
         setMessage(`${t('controlProfile.record.opened')} ${record.label}`);
       } else {
         setError(result.error.message);
@@ -599,4 +627,70 @@ function upsertRecord(
 ): ReadonlyArray<SavedControlProfileRecordPayload> {
   const without = records.filter((record) => record.id !== next.id);
   return [next, ...without].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+async function openObservationForRecord(
+  api: NonNullable<ReturnType<typeof getLinkterm>>,
+  record: SavedControlProfileRecordPayload,
+  addSession: ReturnType<typeof useAppStore.getState>['addSession'],
+  setActive: ReturnType<typeof useAppStore.getState>['setActive'],
+): Promise<ControlProfileObservationOpenResult> {
+  const serial = record.profile.serial;
+  if (
+    serial?.enabled === true &&
+    serial.port !== undefined &&
+    serial.baudRate !== undefined
+  ) {
+    const mode = serial.mode ?? 'terminal';
+    const result = await api.session.create({
+      config: {
+        type: 'serial',
+        port: serial.port,
+        baudRate: serial.baudRate,
+        mode,
+        label: record.label,
+      },
+      label: record.label,
+    });
+    if (!result.success) return { type: 'serial', error: result.error.message };
+    addSession({
+      id: result.data.sessionId,
+      label: record.label,
+      connectionType: 'serial',
+      state: result.data.state,
+    });
+    setActive(result.data.sessionId);
+    return { type: 'serial', sessionId: result.data.sessionId, state: result.data.state };
+  }
+
+  const rtt = record.profile.rtt;
+  if (rtt?.enabled === true) {
+    const channelIndex = rtt.channels?.[0] ?? 0;
+    const result = await api.rttLog.open({
+      root: record.root,
+      channelIndex,
+      label: record.label,
+    });
+    if (!result.success) return { type: 'rtt', channelIndex, error: result.error.message };
+    const resolvedChannelIndex = result.data.channelIndex ?? channelIndex;
+    const resolvedProbeId = result.data.probeId ?? record.root;
+    addSession({
+      id: result.data.sessionId,
+      label: record.label,
+      connectionType: 'rtt-log',
+      state: result.data.state,
+      rttLog: { probeId: resolvedProbeId, channelIndex: resolvedChannelIndex },
+    });
+    setActive(result.data.sessionId);
+    return {
+      type: 'rtt',
+      sessionId: result.data.sessionId,
+      state: result.data.state,
+      probeId: resolvedProbeId,
+      channelIndex: resolvedChannelIndex,
+      reused: result.data.reused,
+    };
+  }
+
+  return { type: 'none', error: 'No enabled observation channel in this profile.' };
 }
