@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Show opened control profile details and automatically open the configured serial or RTT observation channel.
+**Goal:** Show opened control profile details, automatically open the configured serial or RTT observation channel, and keep profile operations in the left-side status area.
 
-**Architecture:** Keep the change in renderer UI and existing preload APIs. `App` owns the current opened profile summary and renders a main-screen status region; `ControlProfilePanel` opens saved records, starts the configured observation session, updates the shared session store using existing actions, and reports the opened profile summary back to `App`.
+**Architecture:** Keep the change in renderer UI and existing preload APIs. `App` owns the current opened profile summary and renders a main-screen status region; `ControlProfilePanel` opens saved records, starts the configured observation session, updates the shared session store using existing actions, and reports the opened profile summary back to `App`. The status region owns Connect, Disconnect, and Download actions, calling the existing `session.create`, `rttLog.open`, `session.destroy`, and `controlProfile.runDownload` APIs.
 
 **Tech Stack:** React 19, Zustand store actions, existing `window.linkterm.session.create` and `window.linkterm.rttLog.open`, Vitest with happy-dom.
 
@@ -47,3 +47,10 @@
 - [ ] Run targeted renderer tests.
 - [ ] Run `pnpm run build:renderer` or the narrowest available type/build command if renderer build is enough for changed files.
 - [ ] Run `mcp__gitnexus.detect_changes({scope:"all", repo:"link-mcp"})`.
+
+### Task 5: Status Area Operations
+
+- [ ] Write failing App-level tests for status-area Download progress/result evidence, Disconnect closing the bound session and panel, and Connect retry after auto-open failure.
+- [ ] Move the manual Download action out of the configuration dialog.
+- [ ] Add status-area Connect, Disconnect, Download, status bar, and download result rendering using existing preload APIs.
+- [ ] Re-run focused App and ControlProfilePanel tests.

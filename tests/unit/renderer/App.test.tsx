@@ -5,7 +5,7 @@
 
 import * as React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useAppStore } from '../../../src/renderer/store/app-store.js';
 import { installMockPreload, type MockPreloadAPI } from '../../fixtures/mock-preload-api.js';
 
@@ -133,6 +133,118 @@ describe('App', () => {
     );
   });
 
+  it('runs download from the opened control profile status area and shows progress data', async () => {
+    const record = {
+      id: 'ctrl_serial_download',
+      label: 'repo - Download',
+      root: 'C:/repo',
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' as const },
+        jlink: {
+          enabled: true,
+          target: 'STM32H743II',
+          interface: 'swd' as const,
+          speedKHz: 'auto' as const,
+        },
+        flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    let resolveDownload!: (
+      value: Awaited<ReturnType<typeof mock.api.controlProfile.runDownload>>,
+    ) => void;
+    const downloadPromise = new Promise<
+      Awaited<ReturnType<typeof mock.api.controlProfile.runDownload>>
+    >((resolve) => {
+      resolveDownload = resolve;
+    });
+    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
+      success: true,
+      data: { path: 'C:/repo/.linkterm/control-profile.json', record },
+    });
+    mock.spies.session.create.mockResolvedValueOnce({
+      success: true,
+      data: { sessionId: 'sess_download_profile', state: 'open' },
+    });
+    mock.spies.controlProfile.runDownload.mockReturnValueOnce(downloadPromise);
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId('control-profile-open'));
+    expect(await screen.findByText('repo - Download')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
+
+    const statusPanel = await screen.findByTestId('control-profile-status');
+    fireEvent.click(within(statusPanel).getByRole('button', { name: 'Download' }));
+
+    await waitFor(() =>
+      expect(mock.spies.controlProfile.runDownload).toHaveBeenCalledWith({ root: 'C:/repo' }),
+    );
+    expect(screen.getByTestId('control-profile-status-bar')).toHaveAttribute(
+      'data-phase',
+      'running',
+    );
+    expect(statusPanel).toHaveTextContent('Downloading...');
+
+    resolveDownload({
+      success: true,
+      data: {
+        mode: 'flash-observe',
+        root: 'C:/repo',
+        steps: [
+          {
+            id: 'flash_download',
+            status: 'passed',
+            durationMs: 1250,
+            evidence: 'ConfigTargetSettings() start - ConfigTargetSettings() end',
+          },
+          {
+            id: 'verify',
+            status: 'passed',
+            durationMs: 300,
+            evidence: { bytes: 4096, checksum: '0x1234' },
+          },
+        ],
+        summary: {
+          serialOpened: true,
+          probeConnected: true,
+          gdbServerStarted: false,
+          flashed: true,
+          verified: true,
+          reset: true,
+          serialObserved: true,
+          rttObserved: false,
+          debugCaptured: false,
+        },
+        nextActions: [],
+      },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('control-profile-status-bar')).toHaveAttribute(
+        'data-phase',
+        'succeeded',
+      ),
+    );
+    expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent(
+      'Download complete',
+    );
+    expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent(
+      'flash_download',
+    );
+    expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent('passed');
+    expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent('1250 ms');
+    expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent(
+      'ConfigTargetSettings() start',
+    );
+    expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent('4096');
+  });
+
   it('opens a saved serial control profile when serial mode is omitted', async () => {
     const record = {
       id: 'ctrl_serial_legacy',
@@ -238,6 +350,59 @@ describe('App', () => {
       expect(mock.spies.session.destroy).toHaveBeenCalledWith({ sessionId: 'sess_close_profile' }),
     );
     await waitFor(() => expect(screen.queryByTestId('control-profile-status')).toBeNull());
+  });
+
+  it('disconnects the opened control profile from the status area and closes the status area', async () => {
+    const record = {
+      id: 'ctrl_serial_disconnect',
+      label: 'repo - Disconnect',
+      root: 'C:/repo',
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' as const },
+        jlink: {
+          enabled: true,
+          target: 'STM32H743II',
+          interface: 'swd' as const,
+          speedKHz: 'auto' as const,
+        },
+        flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
+      success: true,
+      data: { path: 'C:/repo/.linkterm/control-profile.json', record },
+    });
+    mock.spies.session.create.mockResolvedValueOnce({
+      success: true,
+      data: { sessionId: 'sess_disconnect_profile', state: 'open' },
+    });
+    mock.spies.session.destroy.mockResolvedValueOnce({
+      success: true,
+      data: { destroyed: true },
+    });
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId('control-profile-open'));
+    expect(await screen.findByText('repo - Disconnect')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
+
+    const statusPanel = await screen.findByTestId('control-profile-status');
+    fireEvent.click(within(statusPanel).getByRole('button', { name: 'Disconnect' }));
+
+    await waitFor(() =>
+      expect(mock.spies.session.destroy).toHaveBeenCalledWith({
+        sessionId: 'sess_disconnect_profile',
+      }),
+    );
+    await waitFor(() => expect(screen.queryByTestId('control-profile-status')).toBeNull());
+    expect(screen.queryByTestId('terminal-sess_disconnect_profile')).toBeNull();
   });
 
   it('opens a saved RTT control profile and shows resolved RTT details', async () => {
@@ -346,5 +511,52 @@ describe('App', () => {
     );
     expect(screen.getByTestId('control-profile-status')).toHaveTextContent('COM404');
     expect(screen.getByTestId('control-profile-status')).toHaveTextContent('COM404 is unavailable');
+  });
+
+  it('retries observation connection from the status area after auto-open fails', async () => {
+    const record = {
+      id: 'ctrl_serial_retry',
+      label: 'repo - Retry Serial',
+      root: 'C:/repo',
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' as const },
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd' as const },
+        flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
+      success: true,
+      data: { path: 'C:/repo/.linkterm/control-profile.json', record },
+    });
+    mock.spies.session.create
+      .mockResolvedValueOnce({
+        success: false,
+        error: { code: 'SERIAL_OPEN_FAILED', message: 'first open failed' },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: { sessionId: 'sess_retry_profile', state: 'open' },
+      });
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId('control-profile-open'));
+    expect(await screen.findByText('repo - Retry Serial')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
+
+    const statusPanel = await screen.findByTestId('control-profile-status');
+    expect(statusPanel).toHaveTextContent('first open failed');
+    fireEvent.click(within(statusPanel).getByRole('button', { name: 'Connect' }));
+
+    await waitFor(() => expect(mock.spies.session.create).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId('control-profile-status')).toHaveTextContent('open');
+    expect(screen.getByTestId('control-profile-status')).not.toHaveTextContent('first open failed');
+    expect(screen.getByTestId('terminal-sess_retry_profile')).toBeVisible();
   });
 });

@@ -508,37 +508,13 @@ describe('ControlProfilePanel', () => {
     expect(screen.getByText('repo - STM32H743II')).toBeInTheDocument();
   });
 
-  it('runs a manual download from the selected control profile', async () => {
-    mock.spies.controlProfile.runDownload.mockResolvedValueOnce({
-      success: true,
-      data: {
-        mode: 'flash-observe',
-        root: 'C:/repo',
-        steps: [],
-        summary: {
-          serialOpened: false,
-          probeConnected: true,
-          gdbServerStarted: false,
-          flashed: true,
-          verified: true,
-          reset: false,
-          serialObserved: false,
-          rttObserved: false,
-          debugCaptured: false,
-        },
-        nextActions: [],
-      },
-    });
-
+  it('keeps manual download out of the control profile editor dialog', async () => {
     render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Browse workspace' }));
     await waitFor(() => expect(screen.getByLabelText('Workspace root')).toHaveValue('C:/repo'));
-    fireEvent.click(screen.getByRole('button', { name: 'Download' }));
 
-    await waitFor(() =>
-      expect(mock.spies.controlProfile.runDownload).toHaveBeenCalledWith({ root: 'C:/repo' }),
-    );
-    expect(await screen.findByText(/Download complete/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Download' })).toBeNull();
+    expect(mock.spies.controlProfile.runDownload).not.toHaveBeenCalled();
   });
 });

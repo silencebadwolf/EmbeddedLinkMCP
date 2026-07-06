@@ -27,6 +27,18 @@ As a LinkTerm user, when I open a saved workspace control profile that uses RTT 
 2. Given the RTT open result returns a resolved probe/channel, then the detail area shows the RTT channel and associated session status.
 3. Given RTT opening fails, then the detail area remains visible and shows the failure message.
 
+### User Story 3 - Operate an opened control profile from its status area
+
+As a LinkTerm user, when a control profile is open, I want connection controls, disconnection, and download progress to live in the same left-side status area so the profile, its live state, and its download evidence stay together.
+
+**Acceptance Criteria**
+
+1. Given an opened control profile, then the left-side status area shows Connect, Disconnect, and Download actions instead of requiring the configuration dialog for download.
+2. Given the opened profile already has a live serial or RTT session, then Disconnect destroys that session and closes the associated status area.
+3. Given observation auto-open failed and no session exists, then Connect retries the profile's configured serial or RTT observation and updates the status area with the new session state.
+4. Given Download is running from the status area, then the status area shows an in-progress status bar.
+5. Given Download completes or fails, then the status area shows the resulting summary, step statuses, duration values, and available evidence/error data.
+
 ## Requirements
 
 - **FR-001**: Opening a saved control profile MUST publish the opened profile to a non-modal UI region separate from the editor dialog.
@@ -36,6 +48,10 @@ As a LinkTerm user, when I open a saved workspace control profile that uses RTT 
 - **FR-005**: The detail region MUST reflect the current state of the associated session from renderer session metadata.
 - **FR-006**: Observation auto-open failures MUST be shown in the detail region and MUST NOT erase the opened profile details.
 - **FR-007**: Profiles that do not have a complete enabled serial or RTT observation channel MUST still show details and report that no observation session was opened.
+- **FR-008**: The detail region MUST provide Connect and Disconnect actions bound to the same opened control profile lifecycle.
+- **FR-009**: Disconnecting from the detail region MUST close the associated observation session and remove the detail region with it.
+- **FR-010**: The Download action MUST be available from the detail region and MUST NOT remain as a primary action in the configuration dialog.
+- **FR-011**: Download execution MUST show an in-progress status bar and MUST render completed step status, duration, summary, and evidence/error data returned by the existing download API.
 
 ## Out of Scope
 

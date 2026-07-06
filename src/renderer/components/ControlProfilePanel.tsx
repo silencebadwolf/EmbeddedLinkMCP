@@ -83,7 +83,6 @@ export function ControlProfilePanel({
   const [baseAddress, setBaseAddress] = React.useState('0x08000000');
   const [rttControlBlockAddress, setRttControlBlockAddress] = React.useState('');
   const [saving, setSaving] = React.useState(false);
-  const [downloading, setDownloading] = React.useState(false);
   const [savedRecords, setSavedRecords] = React.useState<
     ReadonlyArray<SavedControlProfileRecordPayload>
   >([]);
@@ -322,35 +321,6 @@ export function ControlProfilePanel({
       }
     } finally {
       setDeletingRecordId(null);
-    }
-  };
-
-  const runDownload = async (): Promise<void> => {
-    const api = getLinkterm();
-    if (!api) {
-      setError(t('controlProfile.error.preloadUnavailable'));
-      return;
-    }
-    if (!root.trim()) {
-      setError(t('controlProfile.error.rootRequired'));
-      return;
-    }
-    setDownloading(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const result = await api.controlProfile.runDownload({ root: root.trim() });
-      if (result.success) {
-        const flashed = result.data.summary.flashed;
-        const verified = result.data.summary.verified;
-        setMessage(
-          `${t('controlProfile.download.complete')} ${flashed ? t('controlProfile.download.flashed') : ''}${verified ? ` ${t('controlProfile.download.verified')}` : ''}`.trim(),
-        );
-      } else {
-        setError(result.error.message);
-      }
-    } finally {
-      setDownloading(false);
     }
   };
 
@@ -604,14 +574,6 @@ export function ControlProfilePanel({
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
             {t('controlProfile.close')}
           </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => void runDownload()}
-            disabled={downloading}
-          >
-            {downloading ? t('controlProfile.download.downloading') : t('controlProfile.download')}
-          </Button>
           <Button type="button" onClick={() => void save()} disabled={saving}>
             {saving ? t('controlProfile.saving') : t('controlProfile.save')}
           </Button>
@@ -629,18 +591,14 @@ function upsertRecord(
   return [next, ...without].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-async function openObservationForRecord(
+export async function openObservationForRecord(
   api: NonNullable<ReturnType<typeof getLinkterm>>,
   record: SavedControlProfileRecordPayload,
   addSession: ReturnType<typeof useAppStore.getState>['addSession'],
   setActive: ReturnType<typeof useAppStore.getState>['setActive'],
 ): Promise<ControlProfileObservationOpenResult> {
   const serial = record.profile.serial;
-  if (
-    serial?.enabled === true &&
-    serial.port !== undefined &&
-    serial.baudRate !== undefined
-  ) {
+  if (serial?.enabled === true && serial.port !== undefined && serial.baudRate !== undefined) {
     const mode = serial.mode ?? 'terminal';
     const result = await api.session.create({
       config: {
