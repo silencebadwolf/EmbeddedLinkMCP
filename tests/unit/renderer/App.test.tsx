@@ -280,13 +280,105 @@ describe('App', () => {
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
     };
-    let resolveDownload!: (
-      value: Awaited<ReturnType<typeof mock.api.controlProfile.runDownload>>,
-    ) => void;
-    const downloadPromise = new Promise<
-      Awaited<ReturnType<typeof mock.api.controlProfile.runDownload>>
-    >((resolve) => {
-      resolveDownload = resolve;
+    const runningStep = {
+      id: 'flash_download',
+      status: 'running' as const,
+      durationMs: 0,
+      evidence: {
+        progress: {
+          phase: 'erasing',
+          message: 'Erasing sectors',
+          percent: 12,
+          bytesTotal: 4096,
+        },
+      },
+    };
+    const finalResult = {
+      mode: 'flash-observe' as const,
+      root: 'C:/repo',
+      steps: [
+        {
+          id: 'flash_download',
+          status: 'passed' as const,
+          durationMs: 1250,
+          evidence: {
+            progress: {
+              phase: 'completed',
+              message: 'Flash download completed',
+              percent: 100,
+              bytesWritten: 4096,
+              bytesTotal: 4096,
+            },
+          },
+        },
+        {
+          id: 'verify',
+          status: 'passed' as const,
+          durationMs: 300,
+          evidence: { bytes: 4096, checksum: '0x1234' },
+        },
+      ],
+      summary: {
+        serialOpened: true,
+        probeConnected: true,
+        gdbServerStarted: false,
+        flashed: true,
+        verified: true,
+        reset: true,
+        serialObserved: true,
+        rttObserved: false,
+        debugCaptured: false,
+      },
+      nextActions: [],
+    };
+    const runningJob = {
+      jobId: 'download-job-1',
+      state: 'running' as const,
+      mode: 'flash-observe' as const,
+      root: 'C:/repo',
+      createdAt: 1,
+      startedAt: 1,
+      updatedAt: 2,
+      currentStepId: 'flash_download',
+      currentStep: runningStep,
+      cancelRequested: false,
+      summary: finalResult.summary,
+      workflow: {
+        mode: 'flash-observe' as const,
+        root: 'C:/repo',
+        steps: [runningStep],
+        summary: finalResult.summary,
+        nextActions: [],
+      },
+    };
+    const succeededJob = {
+      ...runningJob,
+      state: 'succeeded' as const,
+      completedAt: 3,
+      updatedAt: 3,
+      currentStep: finalResult.steps[1],
+      currentStepId: 'verify',
+      workflow: finalResult,
+    };
+    let resolveNextStatus!: (value: { success: true; data: typeof succeededJob }) => void;
+    const nextStatus = new Promise<{ success: true; data: typeof succeededJob }>((resolve) => {
+      resolveNextStatus = resolve;
+    });
+    const startDownload = vi.fn(async () => ({ success: true as const, data: runningJob }));
+    const getDownloadStatus = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true as const, data: runningJob })
+      .mockReturnValue(nextStatus);
+    const readDownload = vi.fn(async () => ({ success: true as const, data: succeededJob }));
+    Object.assign(mock.api.controlProfile as Record<string, unknown>, {
+      startDownload,
+      getDownloadStatus,
+      readDownload,
+    });
+    Object.assign(mock.spies.controlProfile as Record<string, unknown>, {
+      startDownload,
+      getDownloadStatus,
+      readDownload,
     });
     mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
     mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
@@ -297,7 +389,6 @@ describe('App', () => {
       success: true,
       data: { sessionId: 'sess_download_profile', state: 'open' },
     });
-    mock.spies.controlProfile.runDownload.mockReturnValueOnce(downloadPromise);
 
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);
@@ -310,47 +401,20 @@ describe('App', () => {
     fireEvent.click(within(statusPanel).getByRole('button', { name: 'Download' }));
 
     await waitFor(() =>
-      expect(mock.spies.controlProfile.runDownload).toHaveBeenCalledWith({ root: 'C:/repo' }),
+      expect(startDownload).toHaveBeenCalledWith({ root: 'C:/repo' }),
+    );
+    await waitFor(() =>
+      expect(getDownloadStatus).toHaveBeenCalledWith({ jobId: 'download-job-1' }),
     );
     expect(screen.getByTestId('control-profile-status-bar')).toHaveAttribute(
       'data-phase',
       'running',
     );
     expect(statusPanel).toHaveTextContent('Downloading...');
+    expect(statusPanel).toHaveTextContent('Erasing sectors');
+    expect(statusPanel).toHaveTextContent('12%');
 
-    resolveDownload({
-      success: true,
-      data: {
-        mode: 'flash-observe',
-        root: 'C:/repo',
-        steps: [
-          {
-            id: 'flash_download',
-            status: 'passed',
-            durationMs: 1250,
-            evidence: 'ConfigTargetSettings() start - ConfigTargetSettings() end',
-          },
-          {
-            id: 'verify',
-            status: 'passed',
-            durationMs: 300,
-            evidence: { bytes: 4096, checksum: '0x1234' },
-          },
-        ],
-        summary: {
-          serialOpened: true,
-          probeConnected: true,
-          gdbServerStarted: false,
-          flashed: true,
-          verified: true,
-          reset: true,
-          serialObserved: true,
-          rttObserved: false,
-          debugCaptured: false,
-        },
-        nextActions: [],
-      },
-    });
+    resolveNextStatus({ success: true, data: succeededJob });
 
     await waitFor(() =>
       expect(screen.getByTestId('control-profile-status-bar')).toHaveAttribute(
@@ -367,7 +431,7 @@ describe('App', () => {
     expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent('passed');
     expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent('1250 ms');
     expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent(
-      'ConfigTargetSettings() start',
+      'Flash download completed',
     );
     expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent('4096');
   });

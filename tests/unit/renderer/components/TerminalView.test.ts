@@ -9,9 +9,12 @@ import { installMockPreload, type MockPreloadAPI } from '../../../fixtures/mock-
 
 const xtermMock = vi.hoisted(() => {
   type DataHandler = (data: string) => void;
+  type KeyHandler = (event: KeyboardEvent) => boolean;
   const handlers: DataHandler[] = [];
+  const keyHandlers: KeyHandler[] = [];
   const writes: string[] = [];
   const focuses: number[] = [];
+  const pastes: string[] = [];
   class TerminalMock {
     readonly handlers = handlers;
 
@@ -37,6 +40,11 @@ const xtermMock = vi.hoisted(() => {
       writes.push(data);
     }
 
+    paste(data: string): void {
+      pastes.push(data);
+      for (const handler of handlers) handler(data);
+    }
+
     focus(): void {
       focuses.push(Date.now());
     }
@@ -45,14 +53,16 @@ const xtermMock = vi.hoisted(() => {
       /* noop */
     }
 
-    attachCustomKeyEventHandler(): void {
-      /* noop */
+    attachCustomKeyEventHandler(handler: KeyHandler): void {
+      keyHandlers.push(handler);
     }
 
     dispose(): void {
       handlers.length = 0;
+      keyHandlers.length = 0;
       writes.length = 0;
       focuses.length = 0;
+      pastes.length = 0;
     }
 
     get cols(): number {
@@ -66,8 +76,10 @@ const xtermMock = vi.hoisted(() => {
 
   return {
     handlers,
+    keyHandlers,
     writes,
     focuses,
+    pastes,
     TerminalMock,
   };
 });
@@ -93,8 +105,10 @@ function resetStore(): void {
     connectionDialogPrefill: null,
   });
   xtermMock.handlers.length = 0;
+  xtermMock.keyHandlers.length = 0;
   xtermMock.writes.length = 0;
   xtermMock.focuses.length = 0;
+  xtermMock.pastes.length = 0;
 }
 
 describe('TerminalView write gating', () => {
@@ -204,6 +218,37 @@ describe('TerminalView write gating', () => {
     fireEvent.mouseDown(getByTestId('terminal-view'));
 
     expect(xtermMock.focuses.length).toBeGreaterThan(focusCount);
+  });
+
+  it('pastes clipboard text into a writable terminal from the right-click menu', async () => {
+    const readText = vi.fn(async () => 'version');
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      configurable: true,
+      value: { readText },
+    });
+    const { TerminalView } = await import(
+      '../../../../src/renderer/components/TerminalView.js'
+    );
+    useAppStore.getState().addSession({
+      id: 'sess_serial_paste',
+      label: 'COM7',
+      connectionType: 'serial',
+      state: 'open',
+    });
+
+    const { getByTestId } = render(React.createElement(TerminalView, { sessionId: 'sess_serial_paste' }));
+    await waitFor(() => expect(xtermMock.handlers).toHaveLength(1));
+
+    fireEvent.contextMenu(getByTestId('terminal-view'));
+
+    await waitFor(() => expect(xtermMock.pastes).toContain('version'));
+    await waitFor(() =>
+      expect(mock.spies.session.write).toHaveBeenCalledWith({
+        sessionId: 'sess_serial_paste',
+        dataBase64: btoa('version'),
+        priority: 'normal',
+      }),
+    );
   });
 
   it('renders a visible terminal error when session.write returns a structured failure', async () => {

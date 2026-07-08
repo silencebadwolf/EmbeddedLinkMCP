@@ -15,7 +15,10 @@ import type { ConnectionType, SessionId } from '../../shared/types.js';
 import { useTranscript } from '../hooks/useTranscript.js';
 import { useAppStore } from '../store/app-store.js';
 import { getLinkterm } from '../lib/linkterm-bridge.js';
-import { installTerminalCopyShortcut } from '../lib/terminal-clipboard.js';
+import {
+  installTerminalClipboardShortcuts,
+  pasteTextToTerminal,
+} from '../lib/terminal-clipboard.js';
 
 /** TerminalView props。 */
 export interface TerminalViewProps {
@@ -81,7 +84,7 @@ export function TerminalView({ sessionId }: TerminalViewProps): React.ReactEleme
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(container);
-    installTerminalCopyShortcut(term);
+    installTerminalClipboardShortcuts(term);
     term.focus();
 
     const state: {
@@ -178,12 +181,21 @@ export function TerminalView({ sessionId }: TerminalViewProps): React.ReactEleme
   // transcript 订阅：把后端事件渲染进 xterm
   useTranscript(sessionId, terminal);
 
+  const pasteFromContextMenu = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const term = termRef.current?.term;
+    if (!term) return;
+    term.focus();
+    void pasteTextToTerminal(term).catch(() => undefined);
+  }, []);
+
   return (
     <div
       ref={containerRef}
       data-testid="terminal-view"
       className="h-full w-full bg-black"
       onMouseDown={() => termRef.current?.term.focus()}
+      onContextMenu={pasteFromContextMenu}
       style={{ minHeight: '300px' }}
     />
   );

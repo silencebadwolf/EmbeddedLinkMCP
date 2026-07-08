@@ -18,11 +18,15 @@ import { useUiPatchSubscription } from './hooks/useUiPatchSubscription.js';
 import { useSessionHydration } from './hooks/useSessionHydration.js';
 import type { ControlProfileOpenedEvent } from './components/ControlProfilePanel.js';
 import type {
+  ControlProfileDownloadJobPayload,
   ControlProfileDownloadResultPayload,
+  ControlProfileNamespace,
   ControlProfileWorkflowStepPayload,
   SavedControlProfileRecordPayload,
 } from '../shared/preload-api.js';
 import type { SessionId, SessionState } from '../shared/types.js';
+
+const DOWNLOAD_POLL_INTERVAL_MS = 200;
 
 /**
  * App 根组件.
@@ -243,13 +247,65 @@ export function App(): React.ReactElement {
       return;
     }
     setControlProfileDownload({ phase: 'running' });
-    const result = await api.controlProfile.runDownload({ root: openedControlProfile.record.root });
+    const result = await api.controlProfile.startDownload({ root: openedControlProfile.record.root });
     if (result.success) {
-      setControlProfileDownload({ phase: 'succeeded', result: result.data });
+      setControlProfileDownload({ phase: 'running', job: result.data });
       return;
     }
     setControlProfileDownload({ phase: 'failed', error: result.error.message });
   }, [openedControlProfile, t]);
+
+  const runningDownloadJobId =
+    controlProfileDownload.phase === 'running' ? controlProfileDownload.job?.jobId : undefined;
+
+  React.useEffect(() => {
+    if (runningDownloadJobId === undefined) return;
+    const api = getLinkterm();
+    if (!api) {
+      setControlProfileDownload({ phase: 'failed', error: preloadUnavailableMessage });
+      return;
+    }
+
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const poll = async (): Promise<void> => {
+      const result = await api.controlProfile.getDownloadStatus({ jobId: runningDownloadJobId });
+      if (disposed) return;
+      if (!result.success) {
+        setControlProfileDownload({ phase: 'failed', error: result.error.message });
+        return;
+      }
+
+      const job = result.data;
+      if (isActiveDownloadJob(job)) {
+        setControlProfileDownload({ phase: 'running', job });
+        timer = setTimeout(() => void poll(), DOWNLOAD_POLL_INTERVAL_MS);
+        return;
+      }
+
+      const finalJob = job.workflow
+        ? job
+        : await readDownloadJob(api.controlProfile, runningDownloadJobId, job);
+      if (disposed) return;
+      const workflow = finalJob.workflow;
+      if (finalJob.state === 'succeeded' && workflow !== undefined) {
+        setControlProfileDownload({ phase: 'succeeded', result: workflow });
+        return;
+      }
+      setControlProfileDownload({
+        phase: 'failed',
+        error: describeDownloadJobFailure(finalJob),
+        ...(workflow !== undefined ? { result: workflow } : {}),
+      });
+    };
+
+    void poll();
+    return () => {
+      disposed = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [runningDownloadJobId, preloadUnavailableMessage]);
 
   return (
     <div className="flex h-screen flex-col bg-gray-950 text-gray-100">
@@ -605,13 +661,14 @@ function ControlProfileStatusPanel({
 
 type ControlProfileDownloadState =
   | { phase: 'idle' }
-  | { phase: 'running' }
+  | { phase: 'running'; job?: ControlProfileDownloadJobPayload }
   | { phase: 'succeeded'; result: ControlProfileDownloadResultPayload }
-  | { phase: 'failed'; error: string };
+  | { phase: 'failed'; error: string; result?: ControlProfileDownloadResultPayload };
 
 function StatusBar({ download }: { download: ControlProfileDownloadState }): React.ReactElement {
   const t = useT();
   const label = describeDownloadPhase(download, t);
+  const width = `${getDownloadProgressPercent(download)}%`;
   const barClass =
     download.phase === 'failed'
       ? 'bg-red-500'
@@ -620,8 +677,6 @@ function StatusBar({ download }: { download: ControlProfileDownloadState }): Rea
         : download.phase === 'running'
           ? 'bg-blue-500'
           : 'bg-gray-700';
-  const width =
-    download.phase === 'succeeded' ? '100%' : download.phase === 'running' ? '65%' : '18%';
 
   return (
     <div className="mt-3" data-testid="control-profile-status-bar" data-phase={download.phase}>
@@ -630,7 +685,10 @@ function StatusBar({ download }: { download: ControlProfileDownloadState }): Rea
         <span className="text-gray-200">{label}</span>
       </div>
       <div className="mt-1 h-1.5 overflow-hidden rounded bg-gray-800">
-        <div className={`h-full ${barClass}`} style={{ width }} />
+        <div
+          className={`h-full ${barClass} transition-[width] duration-200 ease-out`}
+          style={{ width }}
+        />
       </div>
     </div>
   );
@@ -642,7 +700,41 @@ function DownloadResultPanel({
   download: ControlProfileDownloadState;
 }): React.ReactElement | null {
   const t = useT();
-  if (download.phase === 'idle' || download.phase === 'running') return null;
+  if (download.phase === 'idle') return null;
+  if (download.phase === 'running') {
+    const workflow = download.job?.workflow;
+    const steps = workflow?.steps ?? (download.job?.currentStep ? [download.job.currentStep] : []);
+    const progress = getCurrentFlashProgress(download);
+    if (download.job === undefined && steps.length === 0) return null;
+    return (
+      <div
+        className="mt-3 space-y-3 rounded border border-gray-800 bg-gray-950/60 px-3 py-2 text-xs text-gray-200"
+        data-testid="control-profile-download-result"
+      >
+        <div className="font-medium text-blue-200">{t('controlProfile.download.downloading')}</div>
+        {progress ? (
+          <div className="rounded border border-blue-900 bg-blue-950/40 px-2 py-2 text-blue-50">
+            <div className="flex items-center justify-between gap-2">
+              <span className="min-w-0 truncate">{progress.message}</span>
+              {progress.percent !== undefined ? (
+                <span className="shrink-0 font-medium">{progress.percent}%</span>
+              ) : null}
+            </div>
+            {formatProgressBytes(progress) ? (
+              <div className="mt-1 text-[11px] text-blue-200">{formatProgressBytes(progress)}</div>
+            ) : null}
+          </div>
+        ) : null}
+        {steps.length > 0 ? (
+          <div className="space-y-2">
+            {steps.map((step) => (
+              <DownloadStep key={step.id} step={step} />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
   if (download.phase === 'failed') {
     return (
       <div
@@ -651,6 +743,13 @@ function DownloadResultPanel({
       >
         <div className="font-medium">{t('controlProfile.download.failed')}</div>
         <div className="mt-1 break-words">{download.error}</div>
+        {download.result?.steps.length ? (
+          <div className="mt-2 space-y-2">
+            {download.result.steps.map((step) => (
+              <DownloadStep key={step.id} step={step} />
+            ))}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -683,6 +782,7 @@ function DownloadResultPanel({
 }
 
 function DownloadStep({ step }: { step: ControlProfileWorkflowStepPayload }): React.ReactElement {
+  const progress = getStepFlashProgress(step);
   const details = step.error?.message ?? formatEvidence(step.evidence);
   return (
     <div className="rounded border border-gray-800 bg-gray-900 px-2 py-2">
@@ -692,6 +792,12 @@ function DownloadStep({ step }: { step: ControlProfileWorkflowStepPayload }): Re
           {step.status} / {step.durationMs} ms
         </span>
       </div>
+      {progress ? (
+        <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-blue-200">
+          <span className="min-w-0 truncate">{progress.message}</span>
+          {progress.percent !== undefined ? <span className="shrink-0">{progress.percent}%</span> : null}
+        </div>
+      ) : null}
       {details ? (
         <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-950 p-2 font-mono text-[11px] text-gray-300">
           {details}
@@ -724,12 +830,117 @@ function describeDownloadPhase(
     case 'idle':
       return t('controlProfile.download.idle');
     case 'running':
-      return t('controlProfile.download.downloading');
+      return describeRunningDownload(download, t);
     case 'succeeded':
       return t('controlProfile.download.complete');
     case 'failed':
       return t('controlProfile.download.failed');
   }
+}
+
+interface FlashProgressView {
+  phase?: string;
+  message: string;
+  percent?: number;
+  bytesWritten?: number;
+  bytesTotal?: number;
+}
+
+function describeRunningDownload(
+  download: Extract<ControlProfileDownloadState, { phase: 'running' }>,
+  t: ReturnType<typeof useT>,
+): string {
+  const progress = getCurrentFlashProgress(download);
+  if (progress?.percent !== undefined) return `${progress.message} ${progress.percent}%`;
+  if (progress) return progress.message;
+  return t('controlProfile.download.downloading');
+}
+
+function getDownloadProgressPercent(download: ControlProfileDownloadState): number {
+  if (download.phase === 'idle') return 18;
+  if (download.phase === 'succeeded') return 100;
+
+  const progress = getCurrentFlashProgress(download);
+  if (progress?.percent !== undefined) return clampPercent(progress.percent);
+  if (download.phase === 'failed') return 100;
+
+  const steps = download.job?.workflow?.steps ?? [];
+  if (steps.length === 0) return 8;
+  const completed = steps.filter((step) => step.status === 'passed' || step.status === 'skipped').length;
+  const runningBonus = steps.some((step) => step.status === 'running') ? 0.5 : 0;
+  return Math.min(95, Math.max(8, Math.round(((completed + runningBonus) / (steps.length + 1)) * 100)));
+}
+
+function getCurrentFlashProgress(
+  download: ControlProfileDownloadState,
+): FlashProgressView | null {
+  if (download.phase === 'idle') return null;
+  const currentStep =
+    download.phase === 'running' ? download.job?.currentStep : download.result?.steps.at(-1);
+  return getStepFlashProgress(currentStep);
+}
+
+function getStepFlashProgress(
+  step: ControlProfileWorkflowStepPayload | undefined,
+): FlashProgressView | null {
+  if (!step || !isRecord(step.evidence)) return null;
+  const progress = step.evidence.progress;
+  if (!isRecord(progress)) return null;
+  const rawPercent = progress.percent;
+  const percent =
+    typeof rawPercent === 'number' && Number.isFinite(rawPercent)
+      ? clampPercent(rawPercent)
+      : undefined;
+  const rawBytesWritten = progress.bytesWritten;
+  const rawBytesTotal = progress.bytesTotal;
+  return {
+    ...(typeof progress.phase === 'string' ? { phase: progress.phase } : {}),
+    message: typeof progress.message === 'string' ? progress.message : step.id,
+    ...(percent !== undefined ? { percent } : {}),
+    ...(typeof rawBytesWritten === 'number' && Number.isFinite(rawBytesWritten)
+      ? { bytesWritten: Math.max(0, Math.round(rawBytesWritten)) }
+      : {}),
+    ...(typeof rawBytesTotal === 'number' && Number.isFinite(rawBytesTotal)
+      ? { bytesTotal: Math.max(0, Math.round(rawBytesTotal)) }
+      : {}),
+  };
+}
+
+function formatProgressBytes(progress: FlashProgressView): string | null {
+  if (progress.bytesWritten !== undefined && progress.bytesTotal !== undefined) {
+    return `${progress.bytesWritten} / ${progress.bytesTotal} bytes`;
+  }
+  if (progress.bytesTotal !== undefined) return `${progress.bytesTotal} bytes`;
+  return null;
+}
+
+function clampPercent(value: number): number {
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function isActiveDownloadJob(job: ControlProfileDownloadJobPayload): boolean {
+  return job.state === 'queued' || job.state === 'running';
+}
+
+async function readDownloadJob(
+  controlProfile: ControlProfileNamespace,
+  jobId: string,
+  fallback: ControlProfileDownloadJobPayload,
+): Promise<ControlProfileDownloadJobPayload> {
+  const result = await controlProfile.readDownload({ jobId });
+  return result.success ? result.data : fallback;
+}
+
+function describeDownloadJobFailure(job: ControlProfileDownloadJobPayload): string {
+  if (job.state === 'cancelled') return 'Download cancelled';
+  const failedStep =
+    job.workflow?.steps.find((step) => step.id === job.failedStep) ??
+    job.workflow?.steps.find((step) => step.status === 'failed');
+  return failedStep?.error?.message ?? 'Download failed';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function summarizeDownload(result: ControlProfileDownloadResultPayload): string[] {

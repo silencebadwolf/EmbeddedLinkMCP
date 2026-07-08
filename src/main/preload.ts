@@ -31,6 +31,7 @@ import type {
   AgentIntegrationDiagnosticResult,
   JLinkDeviceInfoPayload,
   JLinkDeviceSearchResultPayload,
+  ControlProfileDownloadJobPayload,
   ControlProfileFilePayload,
   ControlProfileDownloadResultPayload,
   SavedControlProfileRecordPayload,
@@ -149,6 +150,12 @@ const api: PreloadAPI = {
       invoke<{ deleted: true }>(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_DELETE, req),
     runDownload: (req) =>
       invoke<ControlProfileDownloadResultPayload>(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD, req),
+    startDownload: (req) =>
+      invoke<ControlProfileDownloadJobPayload>(IPC_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD, req),
+    getDownloadStatus: (req) =>
+      invoke<ControlProfileDownloadJobPayload>(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_STATUS, req),
+    readDownload: (req) =>
+      invoke<ControlProfileDownloadJobPayload>(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_READ, req),
     pickWorkspaceRoot: () =>
       invoke<{ root: string | null }>(IPC_CHANNELS.CONTROL_PROFILE_PICK_WORKSPACE_ROOT),
     pickFirmwareFile: () =>

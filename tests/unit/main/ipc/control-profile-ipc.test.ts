@@ -237,4 +237,101 @@ describe('registerControlProfileIpc', () => {
     });
     expect(manager.init).toHaveBeenLastCalledWith('C:/repo', profileBody, { force: true });
   });
+
+  it('starts a background download job and exposes live status over IPC', async () => {
+    const summary = {
+      serialOpened: false,
+      probeConnected: true,
+      gdbServerStarted: false,
+      flashed: false,
+      verified: false,
+      reset: false,
+      serialObserved: false,
+      rttObserved: false,
+      debugCaptured: false,
+    };
+    const runningStep = {
+      id: 'flash_download',
+      status: 'running' as const,
+      durationMs: 0,
+      evidence: {
+        progress: {
+          phase: 'programming',
+          message: 'Programming flash',
+          percent: 42,
+          bytesWritten: 1720,
+          bytesTotal: 4096,
+        },
+      },
+    };
+    const workflow = {
+      mode: 'flash-observe' as const,
+      root: 'C:/repo',
+      steps: [runningStep],
+      summary,
+      nextActions: [],
+    };
+    const job = {
+      jobId: 'job-download-1',
+      state: 'running' as const,
+      mode: 'flash-observe' as const,
+      root: 'C:/repo',
+      createdAt: 1,
+      startedAt: 1,
+      updatedAt: 2,
+      currentStepId: 'flash_download',
+      cancelRequested: false,
+      workflow,
+    };
+    const jobManager = {
+      create: vi.fn(() => job),
+      start: vi.fn(async () => job),
+      getStatus: vi.fn(() => job),
+      read: vi.fn(() => job),
+    };
+
+    registerControlProfileIpc({} as ControlProfileManager, undefined, {
+      sessionManager: {},
+      jlinkBackend: {},
+      controlWorkflowJobManager: jobManager,
+    } as never);
+
+    const start = handlers.get((IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_START_DOWNLOAD)!;
+    const started = await start({}, { root: 'C:/repo' });
+
+    expect(started).toEqual({
+      success: true,
+      data: expect.objectContaining({
+        jobId: 'job-download-1',
+        state: 'running',
+        currentStep: runningStep,
+        workflow,
+      }),
+    });
+    expect(jobManager.create).toHaveBeenCalledWith({
+      input: expect.objectContaining({
+        root: 'C:/repo',
+        mode: 'flash-observe',
+        confirm: true,
+        observe: { enabled: false, serial: false },
+      }),
+    });
+    expect(jobManager.start).toHaveBeenCalledWith('job-download-1', expect.any(Function));
+
+    const status = handlers.get((IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_DOWNLOAD_STATUS)!;
+    await expect(status({}, { jobId: 'job-download-1' })).resolves.toEqual({
+      success: true,
+      data: expect.objectContaining({
+        jobId: 'job-download-1',
+        currentStep: runningStep,
+        workflow,
+      }),
+    });
+
+    const read = handlers.get((IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_DOWNLOAD_READ)!;
+    await expect(read({}, { jobId: 'job-download-1' })).resolves.toEqual({
+      success: true,
+      data: expect.objectContaining({ workflow }),
+    });
+  });
 });

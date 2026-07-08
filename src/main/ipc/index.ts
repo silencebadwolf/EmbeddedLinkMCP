@@ -243,7 +243,7 @@ export async function registerIpcHandlers(
   const unregisterControlProfile = registerControlProfileIpc(
     controlProfileManager,
     controlProfileRecordManager,
-    { sessionManager, jlinkBackend, jlinkDeviceCatalog },
+    { sessionManager, jlinkBackend, jlinkDeviceCatalog, controlWorkflowJobManager },
   );
   const unregisterJLinkDeviceCatalog = registerJLinkDeviceCatalogIpc(jlinkDeviceCatalog);
 

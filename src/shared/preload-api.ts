@@ -422,7 +422,7 @@ export interface SavedControlProfileRecordPayload {
 
 export interface ControlProfileWorkflowStepPayload {
   id: string;
-  status: 'passed' | 'failed' | 'skipped';
+  status: 'running' | 'passed' | 'failed' | 'skipped';
   durationMs: number;
   evidence?: unknown;
   error?: { code: string; message: string; failureCode?: string; details?: unknown };
@@ -447,6 +447,32 @@ export interface ControlProfileDownloadResultPayload {
   failureCode?: string;
   nextActions: ReadonlyArray<unknown>;
   blockingReasons?: ReadonlyArray<unknown>;
+}
+
+export type ControlProfileDownloadJobStatePayload =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
+
+export interface ControlProfileDownloadJobPayload {
+  jobId: string;
+  state: ControlProfileDownloadJobStatePayload;
+  mode: ControlProfileDownloadResultPayload['mode'];
+  root: string;
+  createdAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  expiresAt?: number;
+  updatedAt: number;
+  currentStepId?: string;
+  currentStep?: ControlProfileWorkflowStepPayload;
+  cancelRequested: boolean;
+  summary?: ControlProfileDownloadResultPayload['summary'];
+  failedStep?: string;
+  failureCode?: string;
+  workflow?: ControlProfileDownloadResultPayload;
 }
 
 /** 工作区控制配置命名空间。 */
@@ -479,6 +505,15 @@ export interface ControlProfileNamespace {
     root: string;
     timeoutMs?: number;
   }): Promise<PreloadResult<ControlProfileDownloadResultPayload>>;
+  /** 启动后台下载/烧录 job，并立即返回可轮询的 job 状态。 */
+  startDownload(req: {
+    root: string;
+    timeoutMs?: number;
+  }): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
+  /** 读取后台下载/烧录 job 的轻量状态与最新进度。 */
+  getDownloadStatus(req: { jobId: string }): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
+  /** 读取后台下载/烧录 job 的完整结构化证据。 */
+  readDownload(req: { jobId: string }): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
   /** 选择工作区目录；用户取消时 root 为 null。 */
   pickWorkspaceRoot(): Promise<PreloadResult<{ root: string | null }>>;
   /** 选择固件文件；用户取消时 path 为 null；Intel HEX/ELF 可附带检测出的 baseAddress。 */

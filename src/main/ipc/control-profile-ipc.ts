@@ -24,9 +24,14 @@ import { formatHexAddress } from '../../core/workspace/intel-hex.js';
 import type { IJLinkBackend, JLinkDeviceCatalog } from '../../jlink/index.js';
 import type { SessionManager } from '../../core/session/session-manager.js';
 import { defaultOpenSerial } from '../../mcp/surfaces/control-profile/tools.js';
+import { ControlWorkflowJobManager } from '../../mcp/surfaces/control-workflow/job-manager.js';
+import type { ControlWorkflowJobSnapshot } from '../../mcp/surfaces/control-workflow/job-manager.js';
+import type { RunControlWorkflowInput } from '../../mcp/surfaces/control-workflow/schemas.js';
 import { runControlWorkflow } from '../../mcp/surfaces/control-workflow/workflow-runner.js';
+import { ToolError } from '../../mcp/registry.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type {
+  ControlProfileDownloadJobPayload,
   ControlProfileDownloadResultPayload,
   ControlProfileFilePayload,
   ControlProfilePayload,
@@ -42,6 +47,7 @@ export interface RegisterControlProfileIpcOptions {
   sessionManager?: SessionManager;
   jlinkBackend?: IJLinkBackend;
   jlinkDeviceCatalog?: JLinkDeviceCatalog;
+  controlWorkflowJobManager?: ControlWorkflowJobManager;
 }
 
 export function registerControlProfileIpc(
@@ -49,6 +55,8 @@ export function registerControlProfileIpc(
   recordManager?: ControlProfileRecordManager,
   options: RegisterControlProfileIpcOptions = {},
 ): () => void {
+  const jobManager = options.controlWorkflowJobManager ?? new ControlWorkflowJobManager();
+
   ipcMain.handle(
     IPC_CHANNELS.CONTROL_PROFILE_SAVE,
     async (
@@ -152,22 +160,57 @@ export function registerControlProfileIpc(
         }
         const input = parseRunDownloadPayload(raw);
         const data = await runControlWorkflow(
-          {
-            controlProfileManager: manager,
-            sessionManager: options.sessionManager,
-            jlinkBackend: options.jlinkBackend,
-            jlinkDeviceCatalog: options.jlinkDeviceCatalog,
-            openSerial: defaultOpenSerial(options.sessionManager),
-          },
-          {
-            root: input.root,
-            mode: 'flash-observe',
-            confirm: true,
-            observe: { enabled: false, serial: false },
-            ...(input.timeoutMs !== undefined ? { firmware: { timeoutMs: input.timeoutMs } } : {}),
-          },
+          buildRunDownloadDeps(manager, options),
+          buildRunDownloadWorkflowInput(input),
         );
         return { success: true, data: data as ControlProfileDownloadResultPayload };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD,
+    async (_event, raw: unknown): Promise<PreloadResult<ControlProfileDownloadJobPayload>> => {
+      try {
+        if (!options.sessionManager || !options.jlinkBackend) {
+          throw new Error('Control workflow runtime is unavailable');
+        }
+        const input = parseRunDownloadPayload(raw);
+        const workflowInput = buildRunDownloadWorkflowInput(input);
+        const runnerDeps = buildRunDownloadDeps(manager, options);
+        const job = jobManager.create({ input: workflowInput });
+        void jobManager
+          .start(job.jobId, ({ signal, update }) =>
+            runControlWorkflow(runnerDeps, workflowInput, { signal, onUpdate: update }),
+          )
+          .catch(() => undefined);
+        return { success: true, data: toDownloadJobPayload(jobManager.getStatus(job.jobId)) };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_STATUS,
+    async (_event, raw: unknown): Promise<PreloadResult<ControlProfileDownloadJobPayload>> => {
+      try {
+        const jobId = parseJobIdPayload(raw);
+        return { success: true, data: toDownloadJobPayload(jobManager.getStatus(jobId)) };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_READ,
+    async (_event, raw: unknown): Promise<PreloadResult<ControlProfileDownloadJobPayload>> => {
+      try {
+        const jobId = parseJobIdPayload(raw);
+        return { success: true, data: toDownloadJobPayload(jobManager.read(jobId)) };
       } catch (err) {
         return toIpcError(err);
       }
@@ -211,8 +254,62 @@ export function registerControlProfileIpc(
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_OPEN);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_DELETE);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD);
+    ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD);
+    ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_STATUS);
+    ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_READ);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_PICK_WORKSPACE_ROOT);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_PICK_FIRMWARE_FILE);
+  };
+}
+
+function buildRunDownloadDeps(
+  manager: ControlProfileManager,
+  options: RegisterControlProfileIpcOptions,
+): Parameters<typeof runControlWorkflow>[0] {
+  if (!options.sessionManager || !options.jlinkBackend) {
+    throw new Error('Control workflow runtime is unavailable');
+  }
+  return {
+    controlProfileManager: manager,
+    sessionManager: options.sessionManager,
+    jlinkBackend: options.jlinkBackend,
+    jlinkDeviceCatalog: options.jlinkDeviceCatalog,
+    openSerial: defaultOpenSerial(options.sessionManager),
+  };
+}
+
+function buildRunDownloadWorkflowInput(input: {
+  root: string;
+  timeoutMs?: number;
+}): RunControlWorkflowInput {
+  return {
+    root: input.root,
+    mode: 'flash-observe',
+    confirm: true,
+    observe: { enabled: false, serial: false },
+    ...(input.timeoutMs !== undefined ? { firmware: { timeoutMs: input.timeoutMs } } : {}),
+  };
+}
+
+function toDownloadJobPayload(job: ControlWorkflowJobSnapshot): ControlProfileDownloadJobPayload {
+  const currentStep = job.workflow?.steps.at(-1);
+  return {
+    jobId: job.jobId,
+    state: job.state,
+    mode: job.mode,
+    root: job.root,
+    createdAt: job.createdAt,
+    ...(job.startedAt !== undefined ? { startedAt: job.startedAt } : {}),
+    ...(job.completedAt !== undefined ? { completedAt: job.completedAt } : {}),
+    ...(job.expiresAt !== undefined ? { expiresAt: job.expiresAt } : {}),
+    updatedAt: job.updatedAt,
+    ...(job.currentStepId !== undefined ? { currentStepId: job.currentStepId } : {}),
+    ...(currentStep !== undefined ? { currentStep } : {}),
+    cancelRequested: job.cancelRequested,
+    ...(job.workflow?.summary !== undefined ? { summary: job.workflow.summary } : {}),
+    ...(job.workflow?.failedStep !== undefined ? { failedStep: job.workflow.failedStep } : {}),
+    ...(job.workflow?.failureCode !== undefined ? { failureCode: job.workflow.failureCode } : {}),
+    ...(job.workflow !== undefined ? { workflow: job.workflow as ControlProfileDownloadResultPayload } : {}),
   };
 }
 
@@ -398,7 +495,17 @@ function parseRunDownloadPayload(raw: unknown): { root: string; timeoutMs?: numb
   };
 }
 
+function parseJobIdPayload(raw: unknown): string {
+  if (typeof raw !== 'object' || raw === null) throw new Error('Invalid payload');
+  const jobId = (raw as { jobId?: unknown }).jobId;
+  if (typeof jobId !== 'string' || jobId.trim().length === 0) throw new Error('jobId is required');
+  return jobId;
+}
+
 function toIpcError<T>(err: unknown): PreloadResult<T> {
+  if (err instanceof ToolError) {
+    return { success: false, error: { code: err.code, message: err.message } };
+  }
   if (err instanceof ControlProfileAlreadyInitializedError) {
     return { success: false, error: { code: err.code, message: err.message } };
   }

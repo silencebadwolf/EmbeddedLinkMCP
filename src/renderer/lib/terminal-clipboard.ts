@@ -3,6 +3,9 @@ import type { Terminal } from '@xterm/xterm';
 /** 可注入的文本复制函数，便于组件与单元测试共用同一快捷键逻辑。 */
 export type ClipboardWriter = (text: string) => Promise<boolean> | boolean;
 
+/** 可注入的文本读取函数，便于组件与单元测试共用同一粘贴逻辑。 */
+export type ClipboardReader = () => Promise<string> | string;
+
 /** 终端复制快捷键需要读取的键盘事件字段。 */
 export type TerminalCopyKeyEvent = Pick<
   KeyboardEvent,
@@ -11,6 +14,11 @@ export type TerminalCopyKeyEvent = Pick<
 
 /** 终端复制逻辑需要的最小 xterm 接口。 */
 export type CopyableTerminal = Pick<Terminal, 'attachCustomKeyEventHandler' | 'getSelection'>;
+
+/** 终端粘贴逻辑需要的最小 xterm 接口。 */
+export interface PasteableTerminal {
+  paste(data: string): void;
+}
 
 /**
  * 判断键盘事件是否是终端复制快捷键。
@@ -40,6 +48,21 @@ export function isTerminalCopyOnlyShortcut(event: TerminalCopyKeyEvent): boolean
 }
 
 /**
+ * 判断键盘事件是否是终端粘贴快捷键。
+ *
+ * 支持 `Ctrl+V` / `Cmd+V`，阻止浏览器把粘贴交给页面其它默认处理。
+ *
+ * @param event 键盘事件。
+ * @returns 是粘贴快捷键时返回 true。
+ */
+export function isTerminalPasteShortcut(event: TerminalCopyKeyEvent): boolean {
+  if (event.type !== 'keydown') return false;
+  if (event.altKey) return false;
+  if (!event.ctrlKey && !event.metaKey) return false;
+  return event.key.toLowerCase() === 'v';
+}
+
+/**
  * 把文本写入系统剪贴板。
  *
  * 优先使用现代 Clipboard API；当 Electron/浏览器环境拒绝时，回退到隐藏 textarea + `execCommand('copy')`。
@@ -61,6 +84,21 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
   }
 
   return copyTextWithTextareaFallback(text);
+}
+
+/**
+ * 从系统剪贴板读取文本。
+ *
+ * @returns 剪贴板文本；环境不支持或读取失败时返回空字符串。
+ */
+export async function readTextFromClipboard(): Promise<string> {
+  const clipboard = globalThis.navigator?.clipboard;
+  if (!clipboard || typeof clipboard.readText !== 'function') return '';
+  try {
+    return await clipboard.readText();
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -112,6 +150,23 @@ export async function copyTerminalSelection(
 }
 
 /**
+ * 把剪贴板文本粘贴到 xterm。
+ *
+ * @param term xterm 终端实例或测试替身。
+ * @param readClipboard 剪贴板读取函数，默认读取系统剪贴板。
+ * @returns 读到非空文本并交给终端时返回 true。
+ */
+export async function pasteTextToTerminal(
+  term: PasteableTerminal,
+  readClipboard: ClipboardReader = readTextFromClipboard,
+): Promise<boolean> {
+  const text = await readClipboard();
+  if (text.length === 0) return false;
+  term.paste(text);
+  return true;
+}
+
+/**
  * 给 xterm 安装复制快捷键处理器。
  *
  * 有选区时，`Ctrl+C` / `Cmd+C` 和 `Ctrl+Shift+C` / `Cmd+Shift+C` 都复制选区并阻止字节进入终端；
@@ -125,6 +180,36 @@ export function installTerminalCopyShortcut(
   writeClipboard: ClipboardWriter = copyTextToClipboard,
 ): void {
   term.attachCustomKeyEventHandler((event) => {
+    if (!isTerminalCopyShortcut(event)) return true;
+
+    const selection = term.getSelection();
+    if (selection.length > 0) {
+      void Promise.resolve(writeClipboard(selection)).catch(() => undefined);
+      return false;
+    }
+
+    return !isTerminalCopyOnlyShortcut(event);
+  });
+}
+
+/**
+ * 给 xterm 安装复制与粘贴快捷键处理器。
+ *
+ * @param term xterm 终端实例或测试替身。
+ * @param writeClipboard 剪贴板写入函数，默认写入系统剪贴板。
+ * @param readClipboard 剪贴板读取函数，默认读取系统剪贴板。
+ */
+export function installTerminalClipboardShortcuts(
+  term: CopyableTerminal & PasteableTerminal,
+  writeClipboard: ClipboardWriter = copyTextToClipboard,
+  readClipboard: ClipboardReader = readTextFromClipboard,
+): void {
+  term.attachCustomKeyEventHandler((event) => {
+    if (isTerminalPasteShortcut(event)) {
+      void pasteTextToTerminal(term, readClipboard).catch(() => undefined);
+      return false;
+    }
+
     if (!isTerminalCopyShortcut(event)) return true;
 
     const selection = term.getSelection();

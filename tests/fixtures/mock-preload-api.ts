@@ -19,6 +19,7 @@ import type {
   AgentIntegrationUninstallResult,
   AgentIntegrationDiagnosticResult,
   JLinkDeviceSearchResultPayload,
+  ControlProfileDownloadJobPayload,
   ControlProfileFilePayload,
   ControlProfileDownloadResultPayload,
   SavedControlProfileRecordPayload,
@@ -87,6 +88,9 @@ export interface MockPreloadAPI {
       openRecord: ReturnType<typeof vi.fn>;
       deleteRecord: ReturnType<typeof vi.fn>;
       runDownload: ReturnType<typeof vi.fn>;
+      startDownload: ReturnType<typeof vi.fn>;
+      getDownloadStatus: ReturnType<typeof vi.fn>;
+      readDownload: ReturnType<typeof vi.fn>;
       pickWorkspaceRoot: ReturnType<typeof vi.fn>;
       pickFirmwareFile: ReturnType<typeof vi.fn>;
     };
@@ -281,6 +285,46 @@ export function createMockPreloadAPI(): MockPreloadAPI {
         nextActions: [],
       }),
   );
+  const defaultControlProfileDownloadJob: ControlProfileDownloadJobPayload = {
+    jobId: 'download_job_test',
+    state: 'succeeded',
+    mode: 'flash-observe',
+    root: 'C:/repo',
+    createdAt: 0,
+    startedAt: 0,
+    completedAt: 0,
+    updatedAt: 0,
+    cancelRequested: false,
+    workflow: {
+      mode: 'flash-observe',
+      root: 'C:/repo',
+      steps: [],
+      summary: {
+        serialOpened: false,
+        probeConnected: true,
+        gdbServerStarted: false,
+        flashed: true,
+        verified: true,
+        reset: false,
+        serialObserved: false,
+        rttObserved: false,
+        debugCaptured: false,
+      },
+      nextActions: [],
+    },
+  };
+  const controlProfileStartDownload = vi.fn(
+    async (): Promise<PreloadResult<ControlProfileDownloadJobPayload>> =>
+      okEmpty(defaultControlProfileDownloadJob),
+  );
+  const controlProfileGetDownloadStatus = vi.fn(
+    async (): Promise<PreloadResult<ControlProfileDownloadJobPayload>> =>
+      okEmpty(defaultControlProfileDownloadJob),
+  );
+  const controlProfileReadDownload = vi.fn(
+    async (): Promise<PreloadResult<ControlProfileDownloadJobPayload>> =>
+      okEmpty(defaultControlProfileDownloadJob),
+  );
   const controlProfilePickWorkspaceRoot = vi.fn(async () => okEmpty({ root: 'C:/repo' }));
   const controlProfilePickFirmwareFile = vi.fn(async () => okEmpty({ path: 'build/app.bin' }));
 
@@ -332,6 +376,9 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       openRecord: controlProfileOpenRecord,
       deleteRecord: controlProfileDeleteRecord,
       runDownload: controlProfileRunDownload,
+      startDownload: controlProfileStartDownload,
+      getDownloadStatus: controlProfileGetDownloadStatus,
+      readDownload: controlProfileReadDownload,
       pickWorkspaceRoot: controlProfilePickWorkspaceRoot,
       pickFirmwareFile: controlProfilePickFirmwareFile,
     },
@@ -383,6 +430,9 @@ export function createMockPreloadAPI(): MockPreloadAPI {
         openRecord: controlProfileOpenRecord,
         deleteRecord: controlProfileDeleteRecord,
         runDownload: controlProfileRunDownload,
+        startDownload: controlProfileStartDownload,
+        getDownloadStatus: controlProfileGetDownloadStatus,
+        readDownload: controlProfileReadDownload,
         pickWorkspaceRoot: controlProfilePickWorkspaceRoot,
         pickFirmwareFile: controlProfilePickFirmwareFile,
       },
