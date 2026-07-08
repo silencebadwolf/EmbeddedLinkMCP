@@ -34,6 +34,12 @@ LinkTerm SHALL include a compact AI operation runbook in MCP initialize instruct
 - **THEN** the proxy instructions include the same compact runbook guidance
 - **AND** the proxy does not require the user to tell the AI to call `get_agent_runbook` before safe basic operation
 
+#### Scenario: Client receives firmware image guidance on initialize
+- **WHEN** an MCP client completes initialization against LinkTerm MCP
+- **THEN** the server instructions identify `.bin`, `.hex`, and `.elf` as supported profile firmware formats
+- **AND** the instructions say ELF firmware is decoded from loadable segments before raw flash download
+- **AND** the instructions say an AI client must not rewrite an `.elf` profile firmware path to `.bin` to bypass diagnostics
+
 ### Requirement: Runbook content structure
 
 The `get_agent_runbook` result SHALL include both human-readable Markdown and machine-readable JSON describing LinkTerm MCP usage.
@@ -49,6 +55,13 @@ The `get_agent_runbook` result SHALL include both human-readable Markdown and ma
 - **THEN** the structured evidence includes workflow entries with stable identifiers
 - **AND** each workflow entry identifies recommended MCP tools, risk level, whether confirmation is required, and expected evidence kind
 - **AND** the RTT observation workflow includes `diagnose_rtt_log_session` alongside `open_rtt_log_session` and `read_from_session`
+
+#### Scenario: Runbook explains firmware image ownership
+- **WHEN** `get_agent_runbook` succeeds
+- **THEN** the Markdown explains that `.bin`, `.hex`, and `.elf` profile firmware paths are supported
+- **AND** the Markdown explains that LinkTerm decodes Intel HEX records and ELF loadable program segments before invoking the raw flash backend
+- **AND** the Markdown warns that ELF headers are not Cortex-M vector tables
+- **AND** the structured safety rules include the same firmware image guidance
 
 ### Requirement: Safety and confirmation guidance
 
@@ -68,6 +81,18 @@ The runbook SHALL explicitly describe LinkTerm's ownership boundary and high-imp
 - **WHEN** an AI reads the runbook
 - **THEN** the runbook identifies high-impact `run_control_workflow` modes that require confirmation
 - **AND** the runbook directs clients to prefer supported high-level workflows over manually chaining low-level serial and J-Link tools
+
+#### Scenario: Profile-first flash recommendations preserve ELF firmware facts
+- **WHEN** `get_app_status` reports a workspace profile that is ready for `profile_flash_observe`
+- **THEN** the recommended next actions and recommended workflow reason say to use `profile.flash.binary` without overriding it
+- **AND** they identify `.bin`, `.hex`, and `.elf` as supported firmware formats
+- **AND** they say not to override an `.elf` profile with a `.bin` path
+
+#### Scenario: Workflow tool description preserves firmware image guidance
+- **WHEN** an MCP client lists tools
+- **THEN** the `run_control_workflow` description explains `.bin`, `.hex`, and `.elf` firmware handling
+- **AND** it says ELF loadable segments are decoded before raw flash download
+- **AND** it says not to override an `.elf` profile with a `.bin` path
 
 ### Requirement: Sanitized runtime and profile summary
 

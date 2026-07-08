@@ -22,6 +22,8 @@ The control profile UI SHALL let the user choose the workspace directory and fir
 - **THEN** LinkTerm fills the firmware path field
 - **AND** does not change the flash base address based on file contents
 
+## ADDED Requirements
+
 ### Requirement: Destructive flash workflow uses decoded firmware bytes
 
 LinkTerm SHALL decode Intel HEX firmware before invoking raw binary flash download workflows.
