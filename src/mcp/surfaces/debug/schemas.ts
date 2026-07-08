@@ -1,5 +1,5 @@
 /**
- * MCP debug surface 的 28 个工具入参 Zod schema。
+ * MCP debug surface 的 30 个工具入参 Zod schema。
  *
  * 设计原则：
  * 1. **probeId 一律 UUID v4**：与 SessionId 风格一致，序列号绝不暴露在传输层；
@@ -97,6 +97,17 @@ export const probeStatusInputSchema = z
   .object({
     ...commonSchema,
     probeId: probeIdField,
+  })
+  .strict();
+
+export const jlinkRebootInputSchema = z
+  .object({
+    ...commonSchema,
+    ...abortableMixin,
+    serialNumber: z.string().min(1).max(64).optional(),
+    force: z.boolean().optional(),
+    reconnectTimeoutMs: z.number().int().positive().max(600_000).optional(),
+    confirm: confirmField,
   })
   .strict();
 
@@ -374,6 +385,7 @@ export type ProbeDetectInput = z.infer<typeof probeDetectInputSchema>;
 export type ProbeConnectInput = z.infer<typeof probeConnectInputSchema>;
 export type ProbeDisconnectInput = z.infer<typeof probeDisconnectInputSchema>;
 export type ProbeStatusInput = z.infer<typeof probeStatusInputSchema>;
+export type JLinkRebootInput = z.infer<typeof jlinkRebootInputSchema>;
 
 export type CpuResetInput = z.infer<typeof cpuResetInputSchema>;
 export type CpuHaltInput = z.infer<typeof cpuHaltInputSchema>;

@@ -18,13 +18,17 @@
  * 会把不完整序列替换成 U+FFFD。改用按 (sessionId, origin) 的 decoder 池 + `stream:true`。
  */
 
-import type { Origin } from '../../shared/types.js';
+import type { ConnectionType, Origin } from '../../shared/types.js';
 import type { SessionId } from '../../shared/types.js';
 import type { SerializedTranscriptEvent } from '../../shared/transcript-ipc-types.js';
 
 /** xterm-side 期望的最小 Terminal 接口；用本接口而非全 Terminal 类便于测试 stub。 */
 export interface XtermLike {
   write(data: string): void;
+}
+
+export interface RenderEventOptions {
+  connectionType?: ConnectionType;
 }
 
 /**
@@ -205,13 +209,16 @@ export function renderEventToXterm(
   event: SerializedTranscriptEvent,
   state: RenderState,
   sessionId: SessionId,
+  options: RenderEventOptions = {},
 ): void {
   switch (event.type) {
     case 'data': {
       if (!event.dataBase64) return;
       if (event.origin === 'human' || event.origin === 'ai') {
-        // UI 不本地回显 outgoing 输入；等待设备/PTY 自己 echo，避免串口终端出现 [A] 与重复命令。
-        return;
+        if (options.connectionType !== 'rtt-log') {
+          // 非 RTT 终端不本地回显 outgoing 输入；等待设备/PTY 自己 echo，避免重复命令。
+          return;
+        }
       }
       const bytes = decodeBase64(event.dataBase64);
       // 流式解码：跨 chunk 的多字节字符不会被 U+FFFD 替换

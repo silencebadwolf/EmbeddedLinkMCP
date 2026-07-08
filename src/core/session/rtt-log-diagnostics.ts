@@ -3,6 +3,7 @@ import type { ReadResult } from '../transcript/types.js';
 
 export type RttLogTranscriptClassification =
   | 'firmware_output_seen'
+  | 'target_input_unanswered'
   | 'transport_connected_firmware_silent'
   | 'rtt_session_error'
   | 'no_transport_evidence';
@@ -34,6 +35,9 @@ export interface RttLogTranscriptDiagnosis {
   truncated: boolean;
   eventCount: number;
   deviceDataEvents: number;
+  outboundWriteEvents: number;
+  outboundBytes: number;
+  deviceBytesAfterLastWrite: number;
   errorEvents: number;
   systemGuidanceSeen: boolean;
   seggerBannerSeen: boolean;
@@ -61,10 +65,22 @@ export function diagnoseRttLogTranscript(
   input: RttLogTranscriptDiagnosisInput,
 ): RttLogTranscriptDiagnosis {
   let deviceDataEvents = 0;
+  let outboundWriteEvents = 0;
+  let outboundBytes = 0;
+  let deviceBytesAfterLastWrite = 0;
+  let lastOutboundSequence = 0;
   let errorEvents = 0;
   let firmwareBytes = 0;
   let seggerBannerSeen = false;
   let systemGuidanceSeen = false;
+
+  for (const event of input.readResult.events) {
+    if (event.type === 'data' && (event.origin === 'human' || event.origin === 'ai')) {
+      outboundWriteEvents += 1;
+      outboundBytes += event.data?.byteLength ?? 0;
+      lastOutboundSequence = Math.max(lastOutboundSequence, event.sequence);
+    }
+  }
 
   for (const event of input.readResult.events) {
     if (event.type === 'error') {
@@ -72,6 +88,7 @@ export function diagnoseRttLogTranscript(
       continue;
     }
     if (event.type !== 'data') continue;
+    if (event.origin === 'human' || event.origin === 'ai') continue;
     if (event.origin === 'system') {
       const text = Buffer.from(event.data ?? []).toString('utf8');
       if (SYSTEM_GUIDANCE_PATTERNS.some((pattern) => pattern.test(text))) {
@@ -81,6 +98,9 @@ export function diagnoseRttLogTranscript(
     }
     if (event.origin !== 'device') continue;
     deviceDataEvents += 1;
+    if (event.sequence > lastOutboundSequence) {
+      deviceBytesAfterLastWrite += event.data?.byteLength ?? 0;
+    }
     const chunk = analyzeRttDataChunk(event.data ?? Buffer.alloc(0));
     seggerBannerSeen ||= chunk.seggerBannerSeen;
     firmwareBytes += chunk.firmwareBytes;
@@ -92,6 +112,8 @@ export function diagnoseRttLogTranscript(
     state: input.state,
     errorEvents,
     firmwareBytes,
+    outboundWriteEvents,
+    deviceBytesAfterLastWrite,
     transportConnected,
   });
 
@@ -105,6 +127,9 @@ export function diagnoseRttLogTranscript(
     truncated: input.readResult.truncated,
     eventCount: input.readResult.events.length,
     deviceDataEvents,
+    outboundWriteEvents,
+    outboundBytes,
+    deviceBytesAfterLastWrite,
     errorEvents,
     systemGuidanceSeen,
     seggerBannerSeen,
@@ -145,9 +170,14 @@ function classify(input: {
   state: SessionState;
   errorEvents: number;
   firmwareBytes: number;
+  outboundWriteEvents: number;
+  deviceBytesAfterLastWrite: number;
   transportConnected: boolean;
 }): RttLogTranscriptClassification {
   if (input.state === 'errored' || input.errorEvents > 0) return 'rtt_session_error';
+  if (input.outboundWriteEvents > 0 && input.deviceBytesAfterLastWrite === 0) {
+    return 'target_input_unanswered';
+  }
   if (input.firmwareBytes > 0) return 'firmware_output_seen';
   if (input.transportConnected) return 'transport_connected_firmware_silent';
   return 'no_transport_evidence';
@@ -157,6 +187,8 @@ function summaryFor(classification: RttLogTranscriptClassification): string {
   switch (classification) {
     case 'firmware_output_seen':
       return 'Firmware-origin RTT output has been seen in this session.';
+    case 'target_input_unanswered':
+      return 'RTT terminal input was written, but no target/device output was observed afterwards.';
     case 'transport_connected_firmware_silent':
       return 'RTT transport is connected, but no firmware-origin RTT output has been seen yet.';
     case 'rtt_session_error':
@@ -171,6 +203,12 @@ function nextActionsFor(classification: RttLogTranscriptClassification): string[
     case 'firmware_output_seen':
       return [
         'Firmware RTT output is present; continue reading the App-visible session transcript from the returned cursor.',
+      ];
+    case 'target_input_unanswered':
+      return [
+        'Do not treat the write as a successful board interaction until device-origin output appears.',
+        'Verify that the SEGGER RTT down channel is actually consumed by the target firmware, not just accepted by the host RTT telnet socket.',
+        'If the target firmware does not echo shell input, use an explicit command/marker or firmware-side RTT down-buffer diagnostic to prove input consumption.',
       ];
     case 'transport_connected_firmware_silent':
       return [

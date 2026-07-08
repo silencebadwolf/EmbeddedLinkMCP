@@ -35,6 +35,7 @@ import type {
   ControlProfileDownloadResultPayload,
   SavedControlProfileRecordPayload,
   RttLogOpenSuccess,
+  SavedConnectionOpenSuccess,
 } from '../shared/preload-api.js';
 import type {
   SessionId,
@@ -104,17 +105,9 @@ const api: PreloadAPI = {
   connections: {
     list: () => invoke<ReadonlyArray<SavedConnectionSummary>>(IPC_CHANNELS.CONNECTIONS_LIST),
     saveAndOpen: (req) =>
-      invoke<{
-        profile: SavedConnectionSummary;
-        sessionId: SessionId;
-        state: SessionState;
-      }>(IPC_CHANNELS.CONNECTIONS_SAVE_AND_OPEN, req),
+      invoke<SavedConnectionOpenSuccess>(IPC_CHANNELS.CONNECTIONS_SAVE_AND_OPEN, req),
     open: (req) =>
-      invoke<{
-        profile: SavedConnectionSummary;
-        sessionId: SessionId;
-        state: SessionState;
-      }>(IPC_CHANNELS.CONNECTIONS_OPEN, req),
+      invoke<SavedConnectionOpenSuccess>(IPC_CHANNELS.CONNECTIONS_OPEN, req),
     delete: (req) => invoke<{ deleted: true }>(IPC_CHANNELS.CONNECTIONS_DELETE, req),
   },
   agentIntegrations: {

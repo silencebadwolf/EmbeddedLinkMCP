@@ -10,8 +10,10 @@ import type {
   TranscriptEventInput,
 } from '../transcript/types.js';
 import type { ISession, SessionErrorMeta, SessionStateMeta, SessionWriteOptions } from './types.js';
-import { SessionNotWritableError } from './types.js';
+import { SessionNotOpenError } from './types.js';
 import { analyzeRttDataChunk } from './rtt-log-diagnostics.js';
+import { WriteQueue } from '../write-queue/write-queue.js';
+import type { WriteAuditCallback } from '../write-queue/types.js';
 
 /** RTT 日志会话配置。 */
 export interface RttLogSessionOptions {
@@ -43,7 +45,7 @@ const MIN_MAX_BYTES_PER_READ = 1;
 const MAX_BYTES_PER_READ = 16 * 1024 * 1024;
 
 /**
- * 只读 RTT 日志会话。
+ * 可交互 RTT 日志会话。
  *
  * 它把 `IJLinkBackend.rttRead()` 的 up-channel 字节转换为普通 transcript data 事件，
  * 让 UI 和 AI 都能复用已有 cursor/subscription/xterm 渲染路径；但所有 RTT socket、GDB server
@@ -57,6 +59,7 @@ export class RttLogSession extends EventEmitter implements ISession {
   readonly #pollIntervalMs: number;
   readonly #maxBytesPerRead: number;
   readonly #transcript: ITranscriptBuffer;
+  readonly #writeQueue: WriteQueue;
   #state: SessionState = 'idle';
   #timer: ReturnType<typeof setTimeout> | undefined;
   #closing = false;
@@ -77,6 +80,16 @@ export class RttLogSession extends EventEmitter implements ISession {
     this.#transcript = options.transcript ?? new TranscriptBuffer({
       sessionId: options.id,
       capacity: options.transcriptCapacity,
+    });
+    this.#writeQueue = new WriteQueue({
+      writer: async (data) => {
+        await this.#jlinkBackend.rttWrite(
+          this.#probeId,
+          this.#channelIndex,
+          Buffer.from(data),
+        );
+      },
+      audit: this.#onWriteAudit,
     });
   }
 
@@ -104,13 +117,22 @@ export class RttLogSession extends EventEmitter implements ISession {
     this.#closing = true;
     this.#clearTimer();
     this.#setState('closing');
+    await this.#writeQueue.close().catch(() => undefined);
     this.#setState('closed');
     this.#closing = false;
   }
 
-  /** RTT 日志会话当前只读，禁止通用 session 写入。 */
-  async write(_data: Uint8Array, _options: SessionWriteOptions): Promise<void> {
-    throw new SessionNotWritableError(this.id);
+  /** 写入 RTT down-channel；成功后记录 human/ai transcript audit。 */
+  async write(data: Uint8Array, options: SessionWriteOptions): Promise<void> {
+    if (this.#state !== 'open') {
+      throw new SessionNotOpenError(this.id, this.#state);
+    }
+    await this.#writeQueue.enqueue({
+      origin: options.origin,
+      data,
+      correlationId: options.correlationId,
+      priority: options.priority,
+    });
   }
 
   /** 从 cursor 之后读取 transcript。 */
@@ -177,6 +199,20 @@ export class RttLogSession extends EventEmitter implements ISession {
   #recordError(meta: SessionErrorMeta): TranscriptEvent {
     return this.#appendAndEmit({ type: 'error', origin: 'system', meta });
   }
+
+  #onWriteAudit: WriteAuditCallback = (item, result) => {
+    if (result.ok) {
+      this.#appendAndEmit({
+        type: 'data',
+        origin: item.origin,
+        evidenceKind: 'raw_bytes',
+        data: item.data,
+        meta: item.correlationId ? { correlationId: item.correlationId } : undefined,
+      });
+    } else {
+      this.#recordError({ message: result.error.message, source: 'writer', fatal: false });
+    }
+  };
 
   #recordOpenGuidance(): TranscriptEvent {
     const message =

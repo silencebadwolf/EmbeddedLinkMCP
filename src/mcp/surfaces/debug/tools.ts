@@ -1,8 +1,8 @@
 /**
- * MCP debug surface 工具实现 —— 非二进制部分（21 个）。
+ * MCP debug surface 工具实现 —— 非二进制部分（22 个）。
  *
  * 二进制载荷工具（memory / flash / rtt_read / rtt_search / snapshot）见
- * `./tools-binary.ts`。两文件共同覆盖 29 个 J-Link MCP 工具。
+ * `./tools-binary.ts`。两文件共同覆盖 30 个 J-Link MCP 工具。
  *
  * 每个 handler：
  * 1. 走 {@link runJLink} wrapper —— 集中翻译 JLinkError 子类；
@@ -33,6 +33,7 @@ import {
   flashEraseInputSchema,
   gdbServerStartInputSchema,
   gdbServerStopInputSchema,
+  jlinkRebootInputSchema,
   probeConnectInputSchema,
   probeDetectInputSchema,
   probeDisconnectInputSchema,
@@ -54,6 +55,7 @@ import {
   type FlashEraseInput,
   type GdbServerStartInput,
   type GdbServerStopInput,
+  type JLinkRebootInput,
   type ProbeConnectInput,
   type ProbeDetectInput,
   type ProbeDisconnectInput,
@@ -166,6 +168,53 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
           data: { probe: sanitizeProbeForMcp(probe) },
           cursor: 0,
         },
+      });
+    },
+  });
+
+  registerTool(server, {
+    name: 'jlink_reboot',
+    description:
+      'Reboot the J-Link probe itself through SEGGER Commander without connecting to a target. ' +
+      'Use this when probe discovery or target attach is stuck, for example a red LED / USB transport lockup. ' +
+      'serialNumber can select a specific physical probe; it is never echoed in evidence. ' +
+      'force defaults to true for recovery. ' +
+      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned. ' +
+      'No external CLI fallback.',
+    sensitivity: 'state-affecting',
+    inputSchema: jlinkRebootInputSchema,
+    handler: async (input: JLinkRebootInput): Promise<ToolHandlerResult> => {
+      return runJLink(async () => {
+        if (input.confirm !== true) throw new ConfirmationRequiredError('jlink_reboot');
+        const force = input.force ?? true;
+        const result = await withAbortableTimeout(input.timeoutMs, (signal) =>
+          jlinkBackend.jlinkReboot(
+            {
+              force,
+              ...(input.serialNumber !== undefined ? { serialNumber: input.serialNumber } : {}),
+              ...(input.reconnectTimeoutMs !== undefined
+                ? { reconnectTimeoutMs: input.reconnectTimeoutMs }
+                : {}),
+              ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+            },
+            signal,
+          ),
+        );
+        return ok({
+          evidence: {
+            kind: 'debug_output',
+            data: {
+              rebooted: true,
+              selection: input.serialNumber !== undefined ? 'serialNumber' : 'default',
+              force,
+              ...(input.reconnectTimeoutMs !== undefined
+                ? { reconnectTimeoutMs: input.reconnectTimeoutMs }
+                : {}),
+              commander: result,
+            },
+            cursor: 0,
+          },
+        });
       });
     },
   });

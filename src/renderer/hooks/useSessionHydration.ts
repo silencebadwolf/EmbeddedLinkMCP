@@ -7,6 +7,8 @@ import type { SessionSummary } from '../../shared/types.js';
 import { getLinkterm } from '../lib/linkterm-bridge.js';
 import { useAppStore } from '../store/app-store.js';
 
+const SESSION_RECONCILE_INTERVAL_MS = 2000;
+
 /**
  * 在组件挂载后读取后台 runtime 当前会话摘要，并把尚未知晓的会话加入 renderer store。
  *
@@ -48,13 +50,20 @@ export function useSessionHydration(): void {
       if (cancelled || !result.success) return;
       for (const summary of result.data.sessions) {
         upsertSummary(summary);
+        if (summary.createdBy === 'ai') {
+          setActive(summary.sessionId);
+        }
       }
     };
 
     void hydrate();
+    const reconcileTimer = window.setInterval(() => {
+      void hydrate();
+    }, SESSION_RECONCILE_INTERVAL_MS);
 
     return () => {
       cancelled = true;
+      window.clearInterval(reconcileTimer);
       unsubscribeLifecycle();
     };
   }, [addSession, removeSession, setActive]);

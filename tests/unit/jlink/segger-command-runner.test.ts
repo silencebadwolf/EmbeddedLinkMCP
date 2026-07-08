@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createServer, type AddressInfo, type Socket } from 'node:net';
-import { JLinkAbortedError, JLinkOperationError } from '@/jlink/index.js';
+import { JLinkAbortedError, JLinkInvalidStateError, JLinkOperationError } from '@/jlink/index.js';
 import {
   buildDefaultCommanderCandidates,
   buildDefaultGdbServerCandidates,
@@ -20,6 +20,7 @@ import {
   type SeggerProcessRequest,
   type SeggerProcessResult,
 } from '@/jlink/segger-command-runner.js';
+import type { FlashProgressUpdate } from '@/jlink/types.js';
 
 class FakeProcessRunner {
   readonly requests: SeggerProcessRequest[] = [];
@@ -67,6 +68,21 @@ class FakeProcessRunner {
 class CapturingProcessRunner extends FakeProcessRunner {
   override async run(request: SeggerProcessRequest): Promise<SeggerProcessResult> {
     return super.run(request);
+  }
+}
+
+class StreamingOutputProcessRunner extends FakeProcessRunner {
+  constructor(private readonly chunksByRun: string[][]) {
+    super();
+  }
+
+  override async run(request: SeggerProcessRequest): Promise<SeggerProcessResult> {
+    const result = await super.run(request);
+    const chunks = this.chunksByRun[this.requests.length - 1] ?? [];
+    for (const chunk of chunks) {
+      request.onOutput?.({ stream: 'stdout', chunk });
+    }
+    return result;
   }
 }
 
@@ -374,6 +390,42 @@ describe('DefaultJLinkCommanderClient', () => {
     expect(await exists(runner.scriptPath)).toBe(false);
   });
 
+  it('reboots a J-Link probe without generating target connection lines', async () => {
+    const runner = new FakeProcessRunner();
+    runner.result = {
+      exitCode: 0,
+      signal: null,
+      stdout: 'S/N: 123456789\nSerial number: 123456789\nReboot scheduled\n',
+      stderr: '',
+    };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+
+    const result = await client.rebootProbe({
+      serialNumber: '123456789',
+      force: true,
+      reconnectTimeoutMs: 2000,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('[redacted]');
+    expect(result.stdout).not.toContain('123456789');
+    expect(runner.requests).toHaveLength(1);
+    expect(runner.requests[0]!.args).toEqual([
+      '-ExitOnError',
+      '1',
+      '-NoGui',
+      '1',
+      '-SelectEmuBySN',
+      '123456789',
+      '-CommandFile',
+      runner.scriptPath,
+    ]);
+    expect(runner.scriptContent).toBe('Reboot force 2000\nq\n');
+    expect(runner.scriptContent).not.toContain('device');
+    expect(runner.scriptContent).not.toContain('connect');
+    expect(await exists(runner.scriptPath)).toBe(false);
+  });
+
   it('downloads raw binary through a generated J-Link command file and cleans temporary files', async () => {
     const runner = new FakeProcessRunner();
     runner.result = { exitCode: 0, signal: null, stdout: 'Downloading\nVerify successful\n', stderr: '' };
@@ -525,6 +577,43 @@ describe('DefaultJLinkCommanderClient', () => {
     expect(runner.scripts[0]).toContain('verifybin');
     expect(runner.scripts[0]).toContain('0x08008000');
     expect(runner.scripts[1]).toContain('savebin');
+  });
+
+  it('emits flash progress updates from streamed Commander output while downloading', async () => {
+    const runner = new StreamingOutputProcessRunner([
+      ['Erasing flash sectors...\n', 'Downloading file [firmware.bin]... 40%\n', 'Verify successful\n'],
+      ['Reading back target flash...\n', 'Verify successful\n'],
+    ]);
+    runner.result = { exitCode: 0, signal: null, stdout: 'Verify successful\n', stderr: '' };
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+    const binary = Buffer.alloc(1024, 0xa5);
+    const progress: FlashProgressUpdate[] = [];
+
+    await client.download(
+      { target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+      binary,
+      { address: 0x08008000, verify: true, onProgress: (update) => progress.push(update) },
+    );
+
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: 'erasing', bytesTotal: binary.byteLength }),
+        expect.objectContaining({
+          phase: 'programming',
+          percent: 40,
+          bytesWritten: 410,
+          bytesTotal: binary.byteLength,
+        }),
+        expect.objectContaining({ phase: 'verifying', bytesTotal: binary.byteLength }),
+        expect.objectContaining({ phase: 'readback', bytesTotal: binary.byteLength }),
+        expect.objectContaining({
+          phase: 'completed',
+          percent: 100,
+          bytesWritten: binary.byteLength,
+          bytesTotal: binary.byteLength,
+        }),
+      ]),
+    );
   });
 
   it('does not split unaligned raw binary downloads across artificial 64 KiB boundaries', async () => {
@@ -970,10 +1059,64 @@ describe('NetJLinkRttClient', () => {
 
       expect(session.channels).toEqual([
         { index: 0, name: 'Terminal', direction: 'up', bufferSize: 0 },
+        { index: 0, name: 'Terminal', direction: 'down', bufferSize: 0 },
       ]);
       expect(Buffer.concat(chunks).toString('utf8')).toBe(
         '$$SEGGER_TELNET_ConfigStr=SetRTTAddr;0x24005310$$',
       );
+      await session.close();
+    } finally {
+      acceptedSocket?.destroy();
+      await closeServer(server);
+    }
+  });
+
+  it('rejects writes to channels without a reported RTT down-channel', async () => {
+    const chunks: Buffer[] = [];
+    let acceptedSocket: Socket | undefined;
+    const server = createServer((socket) => {
+      acceptedSocket = socket;
+      socket.on('data', (chunk: Buffer) => {
+        chunks.push(Buffer.from(chunk));
+      });
+    });
+    await listen(server);
+    try {
+      const address = server.address() as AddressInfo;
+      const client = new NetJLinkRttClient();
+      const session = await client.connect({ host: '127.0.0.1', port: address.port });
+
+      await expect(session.write(1, Buffer.from('help\r\n'))).rejects.toBeInstanceOf(
+        JLinkInvalidStateError,
+      );
+
+      expect(chunks).toEqual([]);
+      await session.close();
+    } finally {
+      acceptedSocket?.destroy();
+      await closeServer(server);
+    }
+  });
+
+  it('writes RTT terminal input to the SEGGER RTT telnet socket', async () => {
+    const chunks: Buffer[] = [];
+    let acceptedSocket: Socket | undefined;
+    const server = createServer((socket) => {
+      acceptedSocket = socket;
+      socket.on('data', (chunk: Buffer) => {
+        chunks.push(Buffer.from(chunk));
+      });
+    });
+    await listen(server);
+    try {
+      const address = server.address() as AddressInfo;
+      const client = new NetJLinkRttClient();
+      const session = await client.connect({ host: '127.0.0.1', port: address.port });
+
+      await session.write(0, Buffer.from('help\r'));
+      await waitForSocketData();
+
+      expect(Buffer.concat(chunks).toString('utf8')).toBe('help\r');
       await session.close();
     } finally {
       acceptedSocket?.destroy();

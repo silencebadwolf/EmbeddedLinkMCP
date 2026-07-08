@@ -12,7 +12,16 @@ import {
   JLinkInvalidStateError,
   JLinkOperationError,
 } from './errors.js';
-import type { CommanderScriptResult, MemoryRange, ProbeInfo, RegisterValue, RttChannelInfo, RttReadResult } from './types.js';
+import type {
+  CommanderScriptResult,
+  FlashProgressUpdate,
+  JLinkRebootOptions,
+  MemoryRange,
+  ProbeInfo,
+  RegisterValue,
+  RttChannelInfo,
+  RttReadResult,
+} from './types.js';
 
 /** Probe context required by SEGGER Commander commands. */
 export interface CommanderProbeContext {
@@ -24,6 +33,12 @@ export interface CommanderProbeContext {
   speedKHz?: number;
   /** Optional physical J-Link serial number; never exposed at MCP boundary. */
   serialNumber?: string;
+}
+
+/** Output chunk emitted by a SEGGER child process before the process exits. */
+export interface SeggerProcessOutputEvent {
+  stream: 'stdout' | 'stderr';
+  chunk: string;
 }
 
 /** Request passed to the low-level process runner. */
@@ -38,6 +53,8 @@ export interface SeggerProcessRequest {
   timeoutMs?: number;
   /** Maximum stdout/stderr bytes retained in memory. */
   maxOutputBytes?: number;
+  /** Optional streaming output observer used for long-running status updates. */
+  onOutput?: (event: SeggerProcessOutputEvent) => void;
 }
 
 /** Low-level process completion result. */
@@ -84,11 +101,17 @@ export interface JLinkCommanderClient {
   /** Enumerate physically attached J-Link probes without opening a target connection. */
   detectProbes?(): Promise<ProbeInfo[]>;
 
+  /** Reboot the J-Link probe itself without opening a target connection. */
+  rebootProbe?(
+    opts?: JLinkRebootOptions,
+    signal?: AbortSignal,
+  ): Promise<CommanderScriptResult>;
+
   /** Program a raw binary at an explicit address. */
   download(
     probe: CommanderProbeContext,
     binary: Buffer,
-    opts: { address: number; verify?: boolean; timeoutMs?: number },
+    opts: { address: number; verify?: boolean; timeoutMs?: number; onProgress?: (update: FlashProgressUpdate) => void },
     signal?: AbortSignal,
   ): Promise<{ bytesWritten: number; verified: boolean }>;
 
@@ -96,7 +119,7 @@ export interface JLinkCommanderClient {
   verify(
     probe: CommanderProbeContext,
     binary: Buffer,
-    opts: { address: number; timeoutMs?: number },
+    opts: { address: number; timeoutMs?: number; onProgress?: (update: FlashProgressUpdate) => void },
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; mismatchAt?: number }>;
 
@@ -220,6 +243,7 @@ export interface JLinkRttConnectOptions {
 export interface JLinkRttSession {
   readonly channels: RttChannelInfo[];
   read(channelIndex: number, maxBytes: number): Promise<RttReadResult>;
+  write(channelIndex: number, data: Buffer): Promise<void>;
   search(channelIndex: number, pattern: string, maxBytes: number): Promise<{ matchAt: number | null; preview: Buffer }>;
   clear(channelIndex: number): Promise<void>;
   close(): Promise<void>;
@@ -401,9 +425,11 @@ export class NodeSeggerProcessRunner implements SeggerProcessRunner {
       };
 
       child.stdout.on('data', (chunk: Buffer) => {
+        request.onOutput?.({ stream: 'stdout', chunk: chunk.toString('utf-8') });
         stdout = append(stdout, chunk);
       });
       child.stderr.on('data', (chunk: Buffer) => {
+        request.onOutput?.({ stream: 'stderr', chunk: chunk.toString('utf-8') });
         stderr = append(stderr, chunk);
       });
       child.on('error', (err) => {
@@ -635,7 +661,10 @@ export class NetJLinkRttClient implements JLinkRttClient {
 }
 
 class SocketJLinkRttSession implements JLinkRttSession {
-  readonly channels: RttChannelInfo[] = [{ index: 0, name: 'Terminal', direction: 'up', bufferSize: 0 }];
+  readonly channels: RttChannelInfo[] = [
+    { index: 0, name: 'Terminal', direction: 'up', bufferSize: 0 },
+    { index: 0, name: 'Terminal', direction: 'down', bufferSize: 0 },
+  ];
   readonly #socket: Socket;
   #buffer = Buffer.alloc(0);
 
@@ -650,15 +679,28 @@ class SocketJLinkRttSession implements JLinkRttSession {
   }
 
   async read(channelIndex: number, maxBytes: number): Promise<RttReadResult> {
-    assertRttChannel(channelIndex);
+    assertRttChannel(channelIndex, 'up');
     assertRttMaxBytes(maxBytes);
     const data = this.#buffer.subarray(0, maxBytes);
     this.#buffer = this.#buffer.subarray(data.byteLength);
     return { channelIndex, data, truncated: this.#buffer.byteLength > 0 };
   }
 
+  async write(channelIndex: number, data: Buffer): Promise<void> {
+    assertRttChannel(channelIndex, 'down');
+    await new Promise<void>((resolve, reject) => {
+      this.#socket.write(data, (err) => {
+        if (err) reject(new JLinkOperationError('Failed to write to J-Link RTT telnet endpoint', {
+          operation: 'rttWrite',
+          underlying: err,
+        }));
+        else resolve();
+      });
+    });
+  }
+
   async search(channelIndex: number, pattern: string, maxBytes: number): Promise<{ matchAt: number | null; preview: Buffer }> {
-    assertRttChannel(channelIndex);
+    assertRttChannel(channelIndex, 'up');
     assertRttMaxBytes(maxBytes);
     const preview = this.#buffer.subarray(0, maxBytes);
     const match = preview.indexOf(pattern);
@@ -666,7 +708,7 @@ class SocketJLinkRttSession implements JLinkRttSession {
   }
 
   async clear(channelIndex: number): Promise<void> {
-    assertRttChannel(channelIndex);
+    assertRttChannel(channelIndex, 'up');
     this.#buffer = Buffer.alloc(0);
   }
 
@@ -739,23 +781,66 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     });
   }
 
+  /** Reboot the J-Link probe itself without requiring a target connection. */
+  async rebootProbe(
+    opts: JLinkRebootOptions = {},
+    signal?: AbortSignal,
+  ): Promise<CommanderScriptResult> {
+    if (signal?.aborted) throw new JLinkAbortedError();
+    const commanderPath = this.#requireCommanderPath();
+    const normalized = normalizeJLinkRebootOptions(opts);
+    return this.#withTempCommandFile(async (file) => {
+      await writeFile(file.scriptPath, `${buildProbeRebootCommand(normalized)}\nq\n`, 'utf-8');
+      const result = await this.#runner.run({
+        command: commanderPath,
+        args: buildCommanderProbeMaintenanceArgs(file.scriptPath, normalized.serialNumber),
+        signal,
+        timeoutMs: probeRebootProcessTimeoutMs(normalized, this.#defaultTimeoutMs),
+        maxOutputBytes: this.#maxOutputBytes,
+      });
+      assertProbeRebootSuccess(result, normalized.serialNumber);
+      return sanitizeProbeRebootResult(result, normalized.serialNumber);
+    });
+  }
+
   /** Program a raw binary at an explicit flash address. */
   async download(
     probe: CommanderProbeContext,
     binary: Buffer,
-    opts: { address: number; verify?: boolean; timeoutMs?: number },
+    opts: { address: number; verify?: boolean; timeoutMs?: number; onProgress?: (update: FlashProgressUpdate) => void },
     signal?: AbortSignal,
   ): Promise<{ bytesWritten: number; verified: boolean }> {
     if (signal?.aborted) throw new JLinkAbortedError();
     assertAddress(opts.address, 'download');
     const commanderPath = this.#requireCommanderPath();
     const timeoutMs = opts.timeoutMs ?? defaultRawFlashTimeoutMs(binary.byteLength);
+    const progress = createFlashProgressReporter(opts.onProgress, binary.byteLength);
+    progress.emit({
+      phase: 'preparing',
+      message: 'Preparing J-Link flash download',
+      percent: 0,
+      bytesTotal: binary.byteLength,
+    });
     await this.#withTempFlashFiles(binary, async (files) => {
       const lines = [`loadbin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(opts.address)}`];
       if (opts.verify === true) {
         lines.push(`verifybin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(opts.address)}`);
       }
-      const result = await this.#runCommander(commanderPath, probe, files, lines, signal, timeoutMs);
+      progress.emit({
+        phase: 'erasing',
+        message: 'J-Link Commander is erasing and programming flash sectors',
+        percent: 5,
+        bytesTotal: binary.byteLength,
+      });
+      const result = await this.#runCommander(
+        commanderPath,
+        probe,
+        files,
+        lines,
+        signal,
+        timeoutMs,
+        progress.observeCommanderOutput(probe, 'download'),
+      );
       if (opts.verify === true && classifyVerifyMismatch(result)) {
         throw new JLinkOperationError('J-Link flash verify failed after download', {
           operation: 'flashDownload',
@@ -770,7 +855,7 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
       const verifyResult = await this.verify(
         probe,
         binary,
-        { address: opts.address, timeoutMs },
+        { address: opts.address, timeoutMs, onProgress: opts.onProgress },
         signal,
       );
       if (!verifyResult.ok) {
@@ -782,6 +867,13 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
         });
       }
     }
+    progress.emit({
+      phase: 'completed',
+      message: 'J-Link flash download completed',
+      percent: 100,
+      bytesWritten: binary.byteLength,
+      bytesTotal: binary.byteLength,
+    });
     return { bytesWritten: binary.byteLength, verified: opts.verify === true };
   }
 
@@ -789,12 +881,18 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
   async verify(
     probe: CommanderProbeContext,
     binary: Buffer,
-    opts: { address: number; timeoutMs?: number },
+    opts: { address: number; timeoutMs?: number; onProgress?: (update: FlashProgressUpdate) => void },
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; mismatchAt?: number }> {
     if (signal?.aborted) throw new JLinkAbortedError();
     assertAddress(opts.address, 'verify');
     const commanderPath = this.#requireCommanderPath();
+    const progress = createFlashProgressReporter(opts.onProgress, binary.byteLength);
+    progress.emit({
+      phase: 'verifying',
+      message: 'Verifying flash contents',
+      bytesTotal: binary.byteLength,
+    });
     return this.#withTempVerifyFiles(binary, async (files) => {
       const result = await this.#runCommander(
         commanderPath,
@@ -806,6 +904,7 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
         ],
         signal,
         opts.timeoutMs,
+        progress.observeCommanderOutput(probe, 'verify'),
       );
       const mismatch = classifyVerifyMismatch(result);
       if (mismatch !== undefined) {
@@ -1104,6 +1203,7 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     commandLines: string[],
     signal?: AbortSignal,
     timeoutMs?: number,
+    onOutput?: (event: SeggerProcessOutputEvent) => void,
   ): Promise<SeggerProcessResult> {
     const script = [...buildConnectionScriptLines(probe, commanderPath), ...commandLines, 'q', ''].join('\n');
     await writeFile(files.scriptPath, script, 'utf-8');
@@ -1114,6 +1214,7 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
         signal,
         timeoutMs: timeoutMs ?? this.#defaultTimeoutMs,
         maxOutputBytes: this.#maxOutputBytes,
+        onOutput,
       });
     } catch (err) {
       throw addCommanderTimeoutGuidance(err, commandLines);
@@ -1323,6 +1424,59 @@ function buildCommanderProbeDetectArgs(scriptPath: string): string[] {
     '-CommandFile',
     scriptPath,
   ];
+}
+
+function buildCommanderProbeMaintenanceArgs(scriptPath: string, serialNumber?: string): string[] {
+  const args = [
+    '-ExitOnError',
+    '1',
+    '-NoGui',
+    '1',
+    '-CommandFile',
+    scriptPath,
+  ];
+  if (serialNumber !== undefined) {
+    args.splice(args.length - 2, 0, '-SelectEmuBySN', safeCommanderToken(serialNumber, 'serialNumber'));
+  }
+  return args;
+}
+
+function normalizeJLinkRebootOptions(opts: JLinkRebootOptions): JLinkRebootOptions {
+  const serialNumber = opts.serialNumber?.trim();
+  if (opts.reconnectTimeoutMs !== undefined) {
+    assertPositiveTimeoutMs(opts.reconnectTimeoutMs, 'jlinkReboot reconnectTimeoutMs');
+  }
+  if (opts.timeoutMs !== undefined) {
+    assertPositiveTimeoutMs(opts.timeoutMs, 'jlinkReboot timeoutMs');
+  }
+  return {
+    force: opts.force ?? true,
+    ...(serialNumber !== undefined && serialNumber !== '' ? { serialNumber } : {}),
+    ...(opts.reconnectTimeoutMs !== undefined ? { reconnectTimeoutMs: opts.reconnectTimeoutMs } : {}),
+    ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+  };
+}
+
+function buildProbeRebootCommand(opts: JLinkRebootOptions): string {
+  const parts = ['Reboot'];
+  if (opts.force === true) parts.push('force');
+  if (opts.reconnectTimeoutMs !== undefined) parts.push(String(opts.reconnectTimeoutMs));
+  return parts.join(' ');
+}
+
+function probeRebootProcessTimeoutMs(opts: JLinkRebootOptions, defaultTimeoutMs: number): number {
+  if (opts.timeoutMs !== undefined) return opts.timeoutMs;
+  if (opts.reconnectTimeoutMs !== undefined) return Math.max(defaultTimeoutMs, opts.reconnectTimeoutMs + 5_000);
+  return defaultTimeoutMs;
+}
+
+function assertPositiveTimeoutMs(value: number, operation: string): void {
+  if (!Number.isInteger(value) || value <= 0 || value > 600_000) {
+    throw new JLinkInvalidStateError(`${operation} requires a timeout between 1 and 600000ms`, {
+      expected: '1..600000',
+      actual: String(value),
+    });
+  }
 }
 
 function assertAddress(address: number | undefined, operation: string): asserts address is number {
@@ -1536,10 +1690,10 @@ function formatByte(value: number): string {
   return `0x${value.toString(16).padStart(2, '0')}`;
 }
 
-function assertRttChannel(channelIndex: number): void {
+function assertRttChannel(channelIndex: number, direction: 'up' | 'down'): void {
   if (!Number.isInteger(channelIndex) || channelIndex !== 0) {
-    throw new JLinkInvalidStateError('Only RTT up channel 0 is currently supported', {
-      expected: 'channelIndex 0',
+    throw new JLinkInvalidStateError(`Only RTT ${direction} channel 0 is currently supported`, {
+      expected: `${direction} channelIndex 0`,
       actual: String(channelIndex),
     });
   }
@@ -1552,6 +1706,115 @@ function assertRttMaxBytes(maxBytes: number): void {
       actual: String(maxBytes),
     });
   }
+}
+
+interface FlashProgressReporter {
+  emit(update: FlashProgressUpdate): void;
+  observeCommanderOutput(
+    probe: CommanderProbeContext,
+    stage: 'download' | 'verify',
+  ): (event: SeggerProcessOutputEvent) => void;
+}
+
+function createFlashProgressReporter(
+  onProgress: ((update: FlashProgressUpdate) => void) | undefined,
+  bytesTotal: number,
+): FlashProgressReporter {
+  let lastKey = '';
+
+  const emit = (update: FlashProgressUpdate): void => {
+    if (onProgress === undefined) return;
+    const normalized = normalizeFlashProgressUpdate(update, bytesTotal);
+    const key = JSON.stringify(normalized);
+    if (key === lastKey) return;
+    lastKey = key;
+    onProgress(normalized);
+  };
+
+  return {
+    emit,
+    observeCommanderOutput:
+      (probe, stage) =>
+      (event): void => {
+        for (const update of parseFlashProgressOutput(event.chunk, probe, stage, bytesTotal)) {
+          emit(update);
+        }
+      },
+  };
+}
+
+function parseFlashProgressOutput(
+  chunk: string,
+  probe: CommanderProbeContext,
+  stage: 'download' | 'verify',
+  bytesTotal: number,
+): FlashProgressUpdate[] {
+  return chunk
+    .split(/\r?\n/u)
+    .map((line) => parseFlashProgressLine(line, probe, stage, bytesTotal))
+    .filter((update): update is FlashProgressUpdate => update !== undefined);
+}
+
+function parseFlashProgressLine(
+  line: string,
+  probe: CommanderProbeContext,
+  stage: 'download' | 'verify',
+  bytesTotal: number,
+): FlashProgressUpdate | undefined {
+  const message = line.replace(/\s+/gu, ' ').trim();
+  if (message === '') return undefined;
+  const lower = message.toLowerCase();
+  let phase: FlashProgressUpdate['phase'] | undefined;
+  if (/eras(?:e|ing|ed)|sector erase/iu.test(lower)) {
+    phase = 'erasing';
+  } else if (/read(?:ing)? back|savebin|readback|saving/iu.test(lower)) {
+    phase = 'readback';
+  } else if (/verify|verifying|verification/iu.test(lower)) {
+    phase = 'verifying';
+  } else if (/download|program|programming|writing|loadbin/iu.test(lower)) {
+    phase = stage === 'verify' ? 'verifying' : 'programming';
+  }
+  if (phase === undefined) return undefined;
+
+  const percent = parseProgressPercent(message);
+  return normalizeFlashProgressUpdate(
+    {
+      phase,
+      message: sanitizeOutput(message, probe),
+      ...(percent !== undefined ? { percent } : {}),
+      bytesTotal,
+    },
+    bytesTotal,
+  );
+}
+
+function parseProgressPercent(line: string): number | undefined {
+  const match = line.match(/\b(\d{1,3})\s*%/u);
+  if (match?.[1] === undefined) return undefined;
+  const value = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(value)) return undefined;
+  return Math.min(100, Math.max(0, value));
+}
+
+function normalizeFlashProgressUpdate(
+  update: FlashProgressUpdate,
+  bytesTotal: number,
+): FlashProgressUpdate {
+  const percent = update.percent === undefined
+    ? undefined
+    : Math.min(100, Math.max(0, Math.round(update.percent)));
+  const bytesWritten = update.bytesWritten ?? (
+    update.phase === 'programming' && percent !== undefined
+      ? Math.round((bytesTotal * percent) / 100)
+      : undefined
+  );
+  return {
+    phase: update.phase,
+    message: update.message,
+    ...(percent !== undefined ? { percent } : {}),
+    ...(bytesWritten !== undefined ? { bytesWritten } : {}),
+    bytesTotal: update.bytesTotal ?? bytesTotal,
+  };
 }
 
 function addCommanderTimeoutGuidance(err: unknown, commandLines: string[]): unknown {
@@ -1667,6 +1930,19 @@ function parseShowEmuListOutput(output: string): ProbeInfo[] {
   return probes;
 }
 
+function assertProbeRebootSuccess(result: SeggerProcessResult, serialNumber?: string): void {
+  const output = `${result.stdout}\n${result.stderr}`;
+  const failed =
+    result.exitCode !== 0 ||
+    /script\s+processing\s+failed|failed\s+to\s+reboot|cannot\s+reboot|no\s+j-link|no\s+emulators\s+found/i.test(
+      output,
+    );
+  if (!failed) return;
+  throw new JLinkOperationError(sanitizeProbeRebootOutput(`J-Link jlinkReboot failed: ${output}`, serialNumber).slice(0, 4000), {
+    operation: 'jlinkReboot',
+  });
+}
+
 function assertCommanderSuccess(
   result: SeggerProcessResult,
   probe: CommanderProbeContext,
@@ -1690,6 +1966,24 @@ function sanitizeOutput(output: string, probe: CommanderProbeContext): string {
     sanitized = sanitized.split(probe.serialNumber).join('[redacted]');
   }
   return sanitized.slice(0, 4000);
+}
+
+function sanitizeProbeRebootResult(result: SeggerProcessResult, serialNumber?: string): CommanderScriptResult {
+  return {
+    exitCode: result.exitCode,
+    signal: result.signal,
+    stdout: sanitizeProbeRebootOutput(result.stdout, serialNumber),
+    stderr: sanitizeProbeRebootOutput(result.stderr, serialNumber),
+    ...(result.truncated === true ? { truncated: true } : {}),
+  };
+}
+
+function sanitizeProbeRebootOutput(output: string, serialNumber?: string): string {
+  let sanitized = sanitizeProcessOutput(output).replace(/(Serial\s+number:\s*)[^\s,]+/gi, '$1[redacted]');
+  if (serialNumber !== undefined) {
+    sanitized = sanitized.split(serialNumber).join('[redacted]');
+  }
+  return sanitized;
 }
 
 /** SEGGER GDB server backed client. */

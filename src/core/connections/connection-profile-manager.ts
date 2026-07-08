@@ -13,7 +13,10 @@ import {
 } from './types.js';
 import { connectionsFileSchema } from './schemas.js';
 import { defaultFsPrimitives, type FsPrimitives } from '../workspace/fs-primitives.js';
-import type { SessionCreateRequestConfig, SshCredentialsPayload } from '../../shared/preload-api.js';
+import type {
+  SaveConnectionProfileConfig,
+  SshCredentialsPayload,
+} from '../../shared/preload-api.js';
 
 /** 保存 SSH 凭据时系统安全存储不可用。 */
 export class CredentialStorageUnavailableError extends Error {
@@ -119,8 +122,8 @@ export class ConnectionProfileManager {
     });
   }
 
-  /** 读取 profile 并还原成可直接传给 buildSession 的创建配置。 */
-  async openConfig(profileId: string): Promise<SessionCreateRequestConfig> {
+  /** 读取 profile 并还原成可打开配置；RTT 分支由专用 RTT open 路径消费。 */
+  async openConfig(profileId: string): Promise<SaveConnectionProfileConfig> {
     const file = await this.#readFileOrDefault();
     const profile = file.profiles.find((p) => p.id === profileId);
     if (!profile) throw new ConnectionProfileNotFoundError(profileId);
@@ -136,6 +139,8 @@ export class ConnectionProfileManager {
           ...profile.config,
           credentials: this.#decryptCredential(profile.encryptedCredential),
         };
+      case 'rtt-log':
+        return { ...profile.config };
     }
   }
 

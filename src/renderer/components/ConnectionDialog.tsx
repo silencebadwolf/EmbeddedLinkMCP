@@ -43,6 +43,8 @@ import type {
 import type {
   NonSensitivePrefill,
   SavedConnectionSummary,
+  RttLogConnectionConfig,
+  SavedConnectionOpenSuccess,
   SessionCreateRequestConfig,
 } from '../../shared/preload-api.js';
 
@@ -80,6 +82,7 @@ interface FormState {
   localShell: string;
   localCwd: string;
   // rtt-log
+  rttRoot: string;
   rttProbeId: string;
   rttChannel: string;
 }
@@ -106,6 +109,7 @@ const INITIAL_FORM: FormState = {
   sshPassphrase: '',
   localShell: '',
   localCwd: '',
+  rttRoot: '',
   rttProbeId: '',
   rttChannel: '0',
 };
@@ -208,7 +212,12 @@ function inferType(p: NonSensitivePrefill): ConnectionType | undefined {
   return undefined;
 }
 
-function defaultProfileLabel(config: SessionCreateRequestConfig): string {
+function defaultRttLabel(config: RttLogConnectionConfig): string {
+  const target = config.root ?? config.probeId ?? 'RTT';
+  return `${target} · RTT ch${config.channelIndex}`;
+}
+
+function defaultProfileLabel(config: SessionCreateRequestConfig | RttLogConnectionConfig): string {
   switch (config.type) {
     case 'serial':
       return `${config.port} · ${config.baudRate}`;
@@ -216,6 +225,8 @@ function defaultProfileLabel(config: SessionCreateRequestConfig): string {
       return `${config.username}@${config.host}:${config.port}`;
     case 'local-shell':
       return config.shell || config.cwd || 'Local shell';
+    case 'rtt-log':
+      return defaultRttLabel(config);
   }
 }
 
@@ -227,7 +238,22 @@ function describeProfile(profile: SavedConnectionSummary): string {
       return `${profile.config.username}@${profile.config.host}:${profile.config.port}${profile.hasCredential ? ' · credential saved' : ''}`;
     case 'local-shell':
       return [profile.config.shell, profile.config.cwd].filter(Boolean).join(' · ') || 'local shell';
+    case 'rtt-log':
+      return defaultRttLabel(profile.config);
   }
+}
+
+function buildRttConfig(form: FormState): RttLogConnectionConfig | null {
+  const root = form.rttRoot.trim();
+  const probeId = form.rttProbeId.trim();
+  const channelIndex = parseRttChannel(form.rttChannel);
+  if (!root && !probeId) return null;
+  if (channelIndex === null) return null;
+  return {
+    type: 'rtt-log',
+    ...(root ? { root } : { probeId }),
+    channelIndex,
+  };
 }
 
 /**
@@ -280,6 +306,9 @@ export function ConnectionDialog(): React.ReactElement {
       ...(prefill.sshAuth !== undefined ? { sshAuth: prefill.sshAuth } : {}),
       ...(prefill.localShell !== undefined ? { localShell: prefill.localShell } : {}),
       ...(prefill.localCwd !== undefined ? { localCwd: prefill.localCwd } : {}),
+      ...(prefill.rttRoot !== undefined ? { rttRoot: prefill.rttRoot } : {}),
+      ...(prefill.rttProbeId !== undefined ? { rttProbeId: prefill.rttProbeId } : {}),
+      ...(prefill.rttChannel !== undefined ? { rttChannel: prefill.rttChannel } : {}),
     });
     useAppStore.getState().setConnectionDialogPrefill(null);
   }, [open]);
@@ -291,14 +320,16 @@ export function ConnectionDialog(): React.ReactElement {
   const addCreatedSession = (
     sessionId: string,
     state: 'idle' | 'opening' | 'open' | 'closing' | 'closed' | 'errored',
-    profileOrConfig: SavedConnectionSummary | SessionCreateRequestConfig,
+    profileOrConfig: SavedConnectionSummary | SessionCreateRequestConfig | RttLogConnectionConfig,
     label: string | undefined,
+    rttLog?: SavedConnectionOpenSuccess['rttLog'],
   ): void => {
     useAppStore.getState().addSession({
       id: sessionId,
       label: label || sessionId.slice(-4),
       connectionType: profileOrConfig.type,
       state,
+      ...(rttLog ? { rttLog } : {}),
     });
     useAppStore.getState().setActive(sessionId);
   };
@@ -317,7 +348,13 @@ export function ConnectionDialog(): React.ReactElement {
         setError(result.error.message || t('error.create.failed'));
         return;
       }
-      addCreatedSession(result.data.sessionId, result.data.state, result.data.profile, result.data.profile.label);
+      addCreatedSession(
+        result.data.sessionId,
+        result.data.state,
+        result.data.profile,
+        result.data.profile.label,
+        result.data.rttLog,
+      );
       closeDialog();
     } finally {
       setSubmitting(false);
@@ -336,15 +373,29 @@ export function ConnectionDialog(): React.ReactElement {
     await loadSavedProfiles();
   };
 
-  const openRttLog = async (): Promise<boolean> => {
-    const probeId = form.rttProbeId.trim();
-    const channelIndex = parseRttChannel(form.rttChannel);
-    if (!probeId) {
-      setError(t('controlProfile.rttLog.error.probeRequired'));
-      return false;
+  const browseRttWorkspace = async (): Promise<void> => {
+    const api = getLinkterm();
+    if (!api) {
+      setError(t('error.create.failed'));
+      return;
     }
-    if (channelIndex === null) {
-      setError(t('controlProfile.rttLog.error.channelInvalid'));
+    const result = await api.controlProfile.pickWorkspaceRoot();
+    if (result.success) {
+      if (result.data.root !== null) update('rttRoot', result.data.root);
+      return;
+    }
+    setError(result.error.message || t('error.create.failed'));
+  };
+
+  const openRttLog = async (): Promise<boolean> => {
+    const config = buildRttConfig(form);
+    if (config === null) {
+      const channelIndex = parseRttChannel(form.rttChannel);
+      if (channelIndex === null) {
+        setError(t('controlProfile.rttLog.error.channelInvalid'));
+        return false;
+      }
+      setError(t('dialog.rtt.error.targetRequired'));
       return false;
     }
     const api = getLinkterm();
@@ -352,18 +403,59 @@ export function ConnectionDialog(): React.ReactElement {
       setError(t('error.create.failed'));
       return false;
     }
-    const label = form.label.trim() || `RTT ch${channelIndex}`;
-    const result = await api.rttLog.open({ probeId, channelIndex, label });
+    const label = form.label.trim() || `RTT ch${config.channelIndex}`;
+    if (form.saveProfile) {
+      if (!config.root) {
+        setError(t('dialog.rtt.error.saveRequiresRoot'));
+        return false;
+      }
+      const savedConfig = {
+        type: 'rtt-log' as const,
+        root: config.root,
+        channelIndex: config.channelIndex,
+        ...(config.pollIntervalMs !== undefined ? { pollIntervalMs: config.pollIntervalMs } : {}),
+        ...(config.maxBytesPerRead !== undefined
+          ? { maxBytesPerRead: config.maxBytesPerRead }
+          : {}),
+      };
+      const saved = await api.connections.saveAndOpen({
+        config: savedConfig,
+        label: form.label.trim() || defaultProfileLabel(savedConfig),
+        saveCredentials: false,
+      });
+      if (!saved.success) {
+        setError(saved.error.message || t('error.create.failed'));
+        return false;
+      }
+      addCreatedSession(
+        saved.data.sessionId,
+        saved.data.state,
+        saved.data.profile,
+        saved.data.profile.label,
+        saved.data.rttLog,
+      );
+      closeDialog();
+      return true;
+    }
+    const result = await api.rttLog.open({
+      ...(config.root ? { root: config.root } : { probeId: config.probeId }),
+      channelIndex: config.channelIndex,
+      ...(config.pollIntervalMs !== undefined ? { pollIntervalMs: config.pollIntervalMs } : {}),
+      ...(config.maxBytesPerRead !== undefined ? { maxBytesPerRead: config.maxBytesPerRead } : {}),
+      label,
+    });
     if (!result.success) {
       setError(result.error.message || t('error.create.failed'));
       return false;
     }
+    const resolvedChannelIndex = result.data.channelIndex ?? config.channelIndex;
+    const resolvedProbeId = result.data.probeId ?? config.probeId;
     useAppStore.getState().addSession({
       id: result.data.sessionId,
       label,
       connectionType: 'rtt-log',
       state: result.data.state,
-      rttLog: { probeId, channelIndex },
+      rttLog: { probeId: resolvedProbeId || config.root || 'rtt', channelIndex: resolvedChannelIndex },
     });
     useAppStore.getState().setActive(result.data.sessionId);
     closeDialog();
@@ -409,6 +501,7 @@ export function ConnectionDialog(): React.ReactElement {
           result.data.state,
           result.data.profile,
           result.data.profile.label,
+          result.data.rttLog,
         );
         closeDialog();
         return;
@@ -729,6 +822,27 @@ export function ConnectionDialog(): React.ReactElement {
           {/* RTT Log 字段 */}
           {form.type === 'rtt-log' && (
             <div className="grid grid-cols-2 gap-2">
+              <FormField
+                id="conn-rtt-root"
+                label={t('dialog.rtt.workspaceRoot')}
+                className="col-span-2"
+              >
+                <div className="flex gap-2">
+                  <Input
+                    id="conn-rtt-root"
+                    value={form.rttRoot}
+                    onChange={(e) => update('rttRoot', e.target.value)}
+                    placeholder={t('controlProfile.workspaceRoot.placeholder')}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => void browseRttWorkspace()}
+                  >
+                    {t('controlProfile.browseWorkspace')}
+                  </Button>
+                </div>
+              </FormField>
               <FormField id="conn-rtt-probe" label={t('dialog.rtt.probeId')} className="col-span-2">
                 <Input
                   id="conn-rtt-probe"
@@ -748,16 +862,14 @@ export function ConnectionDialog(): React.ReactElement {
             </div>
           )}
 
-          {form.type !== 'rtt-log' && (
-            <label className="flex items-center gap-2 text-sm text-gray-300">
-              <input
-                type="checkbox"
-                checked={form.saveProfile}
-                onChange={(e) => update('saveProfile', e.target.checked)}
-              />
-              {t('dialog.saveProfile')}
-            </label>
-          )}
+          <label className="flex items-center gap-2 text-sm text-gray-300">
+            <input
+              type="checkbox"
+              checked={form.saveProfile}
+              onChange={(e) => update('saveProfile', e.target.checked)}
+            />
+            {t('dialog.saveProfile')}
+          </label>
 
           {error && <p className="text-sm text-red-400">{error}</p>}
 

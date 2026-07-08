@@ -2,7 +2,7 @@
  * MCP debug tools — registration & non-binary semantic tests.
  *
  * 覆盖：
- * - 28 工具全注册（用 SDK listTools()）
+ * - debug 工具全注册（用 SDK listTools()）
  * - sensitivity 分类对版本协商的影响（read-only mismatch 警告 vs state-affecting 拒绝）
  * - NO_BACKEND 默认拒绝（不注入 jlinkBackend 时挂 NullJLinkBackend）
  * - probe_connect/status/disconnect 端到端 roundtrip via FakeJLinkBackend
@@ -72,6 +72,7 @@ const ALL_DEBUG_TOOLS = [
   'probe_connect',
   'probe_disconnect',
   'probe_status',
+  'jlink_reboot',
   // cpu (4)
   'cpu_reset',
   'cpu_halt',
@@ -119,13 +120,13 @@ describe('MCP debug tools', () => {
   });
 
   describe('registration', () => {
-    it('exposes all 28 debug tools', async () => {
+    it('exposes all debug tools', async () => {
       const list = await h.client.listTools();
       const names = list.tools.map((t) => t.name);
       for (const expected of ALL_DEBUG_TOOLS) {
         expect(names).toContain(expected);
       }
-      expect(ALL_DEBUG_TOOLS.length).toBe(29);
+      expect(ALL_DEBUG_TOOLS.length).toBe(30);
     });
   });
 
@@ -230,6 +231,38 @@ describe('MCP debug tools', () => {
   });
 
   describe('cpu / breakpoint / register tools delegate to backend', () => {
+    it('jlink_reboot delegates probe recovery without echoing serialNumber', async () => {
+      const out = await callTool(h.client, 'jlink_reboot', {
+        serialNumber: 'SN-12345-LICENSE-KEY',
+        reconnectTimeoutMs: 2000,
+        confirm: true,
+      });
+
+      expect(out.success).toBe(true);
+      const data = (out.evidence as {
+        data: {
+          selection: string;
+          force: boolean;
+          rebooted: boolean;
+          commander: { stdout: string };
+        };
+      }).data;
+      expect(data).toMatchObject({
+        rebooted: true,
+        selection: 'serialNumber',
+        force: true,
+      });
+      expect(JSON.stringify(out.evidence)).not.toContain('SN-12345-LICENSE-KEY');
+
+      const calls = h.fake!.callsOf('jlinkReboot');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.args[0]).toMatchObject({
+        serialNumber: 'SN-12345-LICENSE-KEY',
+        force: true,
+        reconnectTimeoutMs: 2000,
+      });
+    });
+
     it('cpu_reset records halt option in fake ledger', async () => {
       const connect = await callTool(h.client, 'probe_connect', { target: 'STM32F4' });
       const probe = (connect.evidence as { data: { probe: { probeId: string } } }).data.probe;

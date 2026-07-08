@@ -27,7 +27,7 @@ const commonSchema = {
  */
 export const nonSensitivePrefillSchema = z
   .object({
-    type: z.enum(['serial', 'ssh', 'local-shell']).optional(),
+    type: z.enum(['serial', 'ssh', 'local-shell', 'rtt-log']).optional(),
     label: z.string().max(128).optional(),
     serialPort: z.string().max(256).optional(),
     baudRate: z
@@ -46,6 +46,13 @@ export const nonSensitivePrefillSchema = z
     sshAuth: z.enum(['password', 'privateKey']).optional(),
     localShell: z.string().max(256).optional(),
     localCwd: z.string().max(1024).optional(),
+    rttRoot: z.string().max(1024).optional(),
+    rttProbeId: z.string().max(128).optional(),
+    rttChannel: z
+      .string()
+      .max(8)
+      .regex(/^\d+$/, 'rttChannel must be a non-negative integer string')
+      .optional(),
   })
   .strict();
 
@@ -61,7 +68,7 @@ const setLocaleActionSchema = z
 const setConnectionTypeActionSchema = z
   .object({
     action: z.literal('set_connection_type'),
-    type: z.enum(['serial', 'ssh', 'local-shell']),
+    type: z.enum(['serial', 'ssh', 'local-shell', 'rtt-log']),
   })
   .strict();
 

@@ -76,7 +76,7 @@ describe('App', () => {
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
     };
-    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
     mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
       success: true,
       data: { path: 'C:/repo/.linkterm/control-profile.json', record },
@@ -90,7 +90,7 @@ describe('App', () => {
     render(<App />);
 
     fireEvent.click(screen.getByTestId('control-profile-open'));
-    expect(await screen.findByText('repo - Serial')).toBeInTheDocument();
+    expect(within(await screen.findByRole('dialog')).getByText('repo - Serial')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
 
     await waitFor(() =>
@@ -133,6 +133,133 @@ describe('App', () => {
     );
   });
 
+  it('shows saved control profiles in the side bar on startup and opens one directly', async () => {
+    const record = {
+      id: 'ctrl_sidebar_serial',
+      label: 'repo - Sidebar Serial',
+      root: 'C:/repo',
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM9', baudRate: 230400, mode: 'terminal' as const },
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd' as const },
+        flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
+    mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
+      success: true,
+      data: { path: 'C:/repo/.linkterm/control-profile.json', record },
+    });
+    mock.spies.session.create.mockResolvedValueOnce({
+      success: true,
+      data: { sessionId: 'sess_sidebar_serial', state: 'open' },
+    });
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    const sidebar = await screen.findByTestId('control-profile-sidebar');
+    expect(within(sidebar).getByText('repo - Sidebar Serial')).toBeInTheDocument();
+    expect(within(sidebar).getByText(/COM9/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('control-profile-sidebar-item-ctrl_sidebar_serial'));
+
+    await waitFor(() =>
+      expect(mock.spies.controlProfile.openRecord).toHaveBeenCalledWith({
+        recordId: 'ctrl_sidebar_serial',
+      }),
+    );
+    expect(await screen.findByTestId('control-profile-status')).toHaveTextContent(
+      'repo - Sidebar Serial',
+    );
+    expect(screen.getByTestId('terminal-sess_sidebar_serial')).toBeVisible();
+    expect(screen.getByTestId('control-profile-sidebar-item-ctrl_sidebar_serial')).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+
+  it('switches between already opened control profiles from the side bar without reopening them', async () => {
+    const serialRecord = {
+      id: 'ctrl_switch_serial',
+      label: 'repo - Switch Serial',
+      root: 'C:/repo/serial',
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' as const },
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd' as const },
+        flash: { binary: 'build/serial.bin', baseAddress: '0x08000000', verify: true },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(1).toISOString(),
+    };
+    const rttRecord = {
+      id: 'ctrl_switch_rtt',
+      label: 'repo - Switch RTT',
+      root: 'C:/repo/rtt',
+      source: 'ai' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        rtt: { enabled: true, channels: [1], controlBlockAddress: '0x24005310' },
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd' as const },
+        flash: { binary: 'build/rtt.elf', baseAddress: '0x08008000', verify: true },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(2).toISOString(),
+    };
+    mock.spies.controlProfile.listRecords.mockResolvedValue({
+      success: true,
+      data: [rttRecord, serialRecord],
+    });
+    mock.spies.controlProfile.openRecord
+      .mockResolvedValueOnce({
+        success: true,
+        data: { path: 'C:/repo/serial/.linkterm/control-profile.json', record: serialRecord },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: { path: 'C:/repo/rtt/.linkterm/control-profile.json', record: rttRecord },
+      });
+    mock.spies.session.create.mockResolvedValueOnce({
+      success: true,
+      data: { sessionId: 'sess_switch_serial', state: 'open' },
+    });
+    mock.spies.rttLog.open.mockResolvedValueOnce({
+      success: true,
+      data: {
+        sessionId: 'sess_switch_rtt',
+        state: 'open',
+        reused: false,
+        probeId: 'probe-1',
+        channelIndex: 1,
+      },
+    });
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    expect(await screen.findByTestId('control-profile-sidebar-item-ctrl_switch_serial')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('control-profile-sidebar-item-ctrl_switch_serial'));
+    expect(await screen.findByTestId('terminal-sess_switch_serial')).toBeVisible();
+
+    fireEvent.click(screen.getByTestId('control-profile-sidebar-item-ctrl_switch_rtt'));
+    expect(await screen.findByTestId('terminal-sess_switch_rtt')).toBeVisible();
+
+    fireEvent.click(screen.getByTestId('control-profile-sidebar-item-ctrl_switch_serial'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('terminal-sess_switch_serial')).toBeVisible(),
+    );
+    expect(mock.spies.controlProfile.openRecord).toHaveBeenCalledTimes(2);
+    expect(mock.spies.session.create).toHaveBeenCalledTimes(1);
+    expect(mock.spies.rttLog.open).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('control-profile-status')).toHaveTextContent('repo - Switch Serial');
+  });
+
   it('runs download from the opened control profile status area and shows progress data', async () => {
     const record = {
       id: 'ctrl_serial_download',
@@ -161,7 +288,7 @@ describe('App', () => {
     >((resolve) => {
       resolveDownload = resolve;
     });
-    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
     mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
       success: true,
       data: { path: 'C:/repo/.linkterm/control-profile.json', record },
@@ -176,7 +303,7 @@ describe('App', () => {
     render(<App />);
 
     fireEvent.click(screen.getByTestId('control-profile-open'));
-    expect(await screen.findByText('repo - Download')).toBeInTheDocument();
+    expect(within(await screen.findByRole('dialog')).getByText('repo - Download')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
 
     const statusPanel = await screen.findByTestId('control-profile-status');
@@ -265,7 +392,7 @@ describe('App', () => {
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
     };
-    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
     mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
       success: true,
       data: { path: 'C:/repo/.linkterm/control-profile.json', record },
@@ -279,7 +406,9 @@ describe('App', () => {
     render(<App />);
 
     fireEvent.click(screen.getByTestId('control-profile-open'));
-    expect(await screen.findByText('repo - Legacy Serial')).toBeInTheDocument();
+    expect(
+      within(await screen.findByRole('dialog')).getByText('repo - Legacy Serial'),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
 
     await waitFor(() =>
@@ -320,7 +449,7 @@ describe('App', () => {
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
     };
-    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
     mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
       success: true,
       data: { path: 'C:/repo/.linkterm/control-profile.json', record },
@@ -338,7 +467,9 @@ describe('App', () => {
     render(<App />);
 
     fireEvent.click(screen.getByTestId('control-profile-open'));
-    expect(await screen.findByText('repo - Close With Session')).toBeInTheDocument();
+    expect(
+      within(await screen.findByRole('dialog')).getByText('repo - Close With Session'),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
 
     expect(await screen.findByTestId('control-profile-status')).toHaveTextContent(
@@ -352,7 +483,7 @@ describe('App', () => {
     await waitFor(() => expect(screen.queryByTestId('control-profile-status')).toBeNull());
   });
 
-  it('disconnects the opened control profile from the status area and closes the status area', async () => {
+  it('disconnects the opened serial profile from the status area and can open it again', async () => {
     const record = {
       id: 'ctrl_serial_disconnect',
       label: 'repo - Disconnect',
@@ -372,15 +503,20 @@ describe('App', () => {
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
     };
-    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
     mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
       success: true,
       data: { path: 'C:/repo/.linkterm/control-profile.json', record },
     });
-    mock.spies.session.create.mockResolvedValueOnce({
-      success: true,
-      data: { sessionId: 'sess_disconnect_profile', state: 'open' },
-    });
+    mock.spies.session.create
+      .mockResolvedValueOnce({
+        success: true,
+        data: { sessionId: 'sess_disconnect_profile', state: 'open' },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: { sessionId: 'sess_reconnect_profile', state: 'open' },
+      });
     mock.spies.session.destroy.mockResolvedValueOnce({
       success: true,
       data: { destroyed: true },
@@ -390,19 +526,31 @@ describe('App', () => {
     render(<App />);
 
     fireEvent.click(screen.getByTestId('control-profile-open'));
-    expect(await screen.findByText('repo - Disconnect')).toBeInTheDocument();
+    expect(
+      within(await screen.findByRole('dialog')).getByText('repo - Disconnect'),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
 
     const statusPanel = await screen.findByTestId('control-profile-status');
-    fireEvent.click(within(statusPanel).getByRole('button', { name: 'Disconnect' }));
+    fireEvent.click(within(statusPanel).getByRole('button', { name: 'Disconnect serial' }));
 
     await waitFor(() =>
       expect(mock.spies.session.destroy).toHaveBeenCalledWith({
         sessionId: 'sess_disconnect_profile',
       }),
     );
-    await waitFor(() => expect(screen.queryByTestId('control-profile-status')).toBeNull());
     expect(screen.queryByTestId('terminal-sess_disconnect_profile')).toBeNull();
+    expect(screen.getByTestId('control-profile-status')).toHaveTextContent('repo - Disconnect');
+
+    const disconnectedStatusPanel = screen.getByTestId('control-profile-status');
+    const openSerialButton = within(disconnectedStatusPanel).getByRole('button', {
+      name: 'Open serial',
+    });
+    expect(openSerialButton).toBeEnabled();
+    fireEvent.click(openSerialButton);
+
+    await waitFor(() => expect(mock.spies.session.create).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId('terminal-sess_reconnect_profile')).toBeVisible();
   });
 
   it('opens a saved RTT control profile and shows resolved RTT details', async () => {
@@ -425,7 +573,7 @@ describe('App', () => {
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
     };
-    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
     mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
       success: true,
       data: { path: 'C:/repo/.linkterm/control-profile.json', record },
@@ -445,7 +593,7 @@ describe('App', () => {
     render(<App />);
 
     fireEvent.click(screen.getByTestId('control-profile-open'));
-    expect(await screen.findByText('repo - RTT')).toBeInTheDocument();
+    expect(within(await screen.findByRole('dialog')).getByText('repo - RTT')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
 
     await waitFor(() =>
@@ -489,7 +637,7 @@ describe('App', () => {
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
     };
-    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
     mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
       success: true,
       data: { path: 'C:/repo/.linkterm/control-profile.json', record },
@@ -503,7 +651,9 @@ describe('App', () => {
     render(<App />);
 
     fireEvent.click(screen.getByTestId('control-profile-open'));
-    expect(await screen.findByText('repo - Missing Serial')).toBeInTheDocument();
+    expect(
+      within(await screen.findByRole('dialog')).getByText('repo - Missing Serial'),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
 
     expect(await screen.findByTestId('control-profile-status')).toHaveTextContent(
@@ -528,7 +678,7 @@ describe('App', () => {
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
     };
-    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
     mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
       success: true,
       data: { path: 'C:/repo/.linkterm/control-profile.json', record },
@@ -547,12 +697,14 @@ describe('App', () => {
     render(<App />);
 
     fireEvent.click(screen.getByTestId('control-profile-open'));
-    expect(await screen.findByText('repo - Retry Serial')).toBeInTheDocument();
+    expect(
+      within(await screen.findByRole('dialog')).getByText('repo - Retry Serial'),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
 
     const statusPanel = await screen.findByTestId('control-profile-status');
     expect(statusPanel).toHaveTextContent('first open failed');
-    fireEvent.click(within(statusPanel).getByRole('button', { name: 'Connect' }));
+    fireEvent.click(within(statusPanel).getByRole('button', { name: 'Open serial' }));
 
     await waitFor(() => expect(mock.spies.session.create).toHaveBeenCalledTimes(2));
     expect(screen.getByTestId('control-profile-status')).toHaveTextContent('open');

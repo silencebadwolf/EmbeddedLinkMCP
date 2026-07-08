@@ -1,0 +1,33 @@
+- [x] 1. Add OpenSpec requirement for manual RTT log creation from a workspace profile.
+- [x] 2. Add renderer regression test for opening RTT Log from New Connection using workspace root without probe id.
+- [x] 3. Update ConnectionDialog RTT form to browse/select workspace root and call `rttLog.open({ root })`.
+- [x] 4. Preserve probe-id fallback behavior and update validation copy.
+- [x] 5. Run targeted tests, OpenSpec validation, lint/build/full tests, and GitNexus `detect_changes`.
+- [x] 6. Add OpenSpec requirements for saved RTT Log profiles and RTT terminal input.
+- [x] 7. Add failing tests for saving/reopening RTT profiles through UI and IPC.
+- [x] 8. Add failing tests for RTT `session.write` forwarding to backend RTT down-channel.
+- [x] 9. Implement RTT saved profile schemas/types plus IPC RTT open routing.
+- [x] 10. Implement backend RTT write and make RTT terminal sessions writable through the shared write queue.
+- [x] 11. Run targeted tests, OpenSpec validation, lint/build/full tests, and GitNexus `detect_changes`.
+- [x] 12. Add failing tests for RTT write failures being visible instead of silently treated as success.
+- [x] 13. Add failing tests for RTT Enter normalization and backend down-channel capability checks.
+- [x] 14. Implement visible renderer write failure handling, RTT Enter normalization, and down-channel metadata validation.
+- [x] 15. Run targeted tests, OpenSpec validation, lint/build/full tests, and GitNexus `detect_changes`.
+- [x] 16. Reproduce RTT input on real hardware through LinkTerm MCP and capture unanswered-input evidence.
+- [x] 17. Add OpenSpec requirement for RTT local input visibility and unanswered-input diagnostics.
+- [x] 18. Add renderer and diagnostic regression tests for RTT local input visibility and unanswered writes.
+- [x] 19. Implement RTT local input rendering and unanswered-input diagnostic classification.
+- [x] 20. Re-run targeted tests, OpenSpec validation, lint/build/full tests, GitNexus `detect_changes`, and real MCP interaction after runtime reload.
+- [x] 21. Reproduce the user's manual-input symptom on a fresh runtime and add terminal focus coverage so an opened/clicked RTT terminal accepts keyboard input immediately.
+- [x] 22. Reproduce missed MCP-created RTT session synchronization in the App UI and add periodic session-list reconciliation coverage.
+
+## Real hardware evidence
+
+- 2026-07-03T08:52:36Z: restarted LinkTerm MCP runtime; `get_app_status` reported `code.fresh=true`, full 61-tool core set, and no stale artifacts.
+- Opened `/home/jianyin/code/FNA1000` RTT ch0 as App-visible session `sess_0dcb2b64-62e2-4e6a-b45c-ceb13e61c3c6`; managed GDB/RTT backend started and SEGGER RTT telnet banner appeared.
+- Sent `help\r\n` through `write_to_session`; transcript and screenshot showed the local RTT input in the App terminal.
+- Ran `cpu_reset(halt=false)` on probe `5bc40e3a-baef-41db-8dc7-d693680f52bc`; transcript still had no firmware-origin bytes after reset.
+- Called `diagnose_rtt_log_session` through the same MCP runtime; diagnosis was `target_input_unanswered` with `outboundWriteEvents=1`, `outboundBytes=6`, and `deviceBytesAfterLastWrite=0`.
+- Conclusion: the LinkTerm/App input path is visible and shared, but this hardware run did not prove target firmware consumed RTT down-channel input or emitted startup logs.
+- After a renderer/runtime restart, opened another MCP RTT session `sess_65d5af76-2091-44a0-b8de-6b50d6b149b9`; backend/session transcript accepted `version\r\n`, but the App screenshot still showed "no active sessions". Root cause: lifecycle event delivery can be missed by a starting renderer and `useSessionHydration` previously performed only one initial `session.list` snapshot.
+- After adding periodic renderer reconciliation and rebuilding/restarting, opened MCP RTT session `sess_438448a5-6066-45d6-9bd8-584851edf6ea`; the App screenshot showed an active `rtt-log` tab and terminal contents. Sending `help\r\n` through MCP appeared in the App terminal. `diagnose_rtt_log_session` still classified the hardware side as `target_input_unanswered` (`outboundWriteEvents=1`, `outboundBytes=6`, `deviceBytesAfterLastWrite=0`).

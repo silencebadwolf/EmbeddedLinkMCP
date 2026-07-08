@@ -137,6 +137,17 @@ describe('MCP UI surface', () => {
       expect(h.applyPatchSpy).toHaveBeenCalledWith(patch);
     });
 
+    it('open_connection_dialog with RTT log prefill is accepted', async () => {
+      const patch: UiStatePatch = {
+        action: 'open_connection_dialog',
+        prefill: { type: 'rtt-log', rttRoot: 'C:/work/FNA1000', rttChannel: '0' },
+      };
+      const out = await callTool(h.client, 'ui_configure', { patch });
+
+      expect(out.success).toBe(true);
+      expect(h.applyPatchSpy).toHaveBeenCalledWith(patch);
+    });
+
     it('close_connection_dialog dispatches patch', async () => {
       const out = await callTool(h.client, 'ui_configure', {
         patch: { action: 'close_connection_dialog' },
@@ -150,6 +161,18 @@ describe('MCP UI surface', () => {
         patch: { action: 'set_connection_type', type: 'ssh' },
       });
       expect(out.success).toBe(true);
+    });
+
+    it('set_connection_type dispatches RTT log patches', async () => {
+      const out = await callTool(h.client, 'ui_configure', {
+        patch: { action: 'set_connection_type', type: 'rtt-log' },
+      });
+
+      expect(out.success).toBe(true);
+      expect(h.applyPatchSpy).toHaveBeenCalledWith({
+        action: 'set_connection_type',
+        type: 'rtt-log',
+      });
     });
 
     it('mismatched schema version is refused (state-affecting)', async () => {

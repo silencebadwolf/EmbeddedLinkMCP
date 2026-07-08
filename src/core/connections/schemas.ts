@@ -42,10 +42,21 @@ const localShellSavedConfigSchema = z
   })
   .strict();
 
+const rttLogSavedConfigSchema = z
+  .object({
+    type: z.literal('rtt-log'),
+    root: z.string().min(1),
+    channelIndex: z.number().int().nonnegative(),
+    pollIntervalMs: z.number().int().min(10).max(10_000).optional(),
+    maxBytesPerRead: z.number().int().min(1).max(64 * 1024).optional(),
+  })
+  .strict();
+
 export const savedConnectionConfigSchema = z.discriminatedUnion('type', [
   serialSavedConfigSchema,
   sshSavedConfigSchema,
   localShellSavedConfigSchema,
+  rttLogSavedConfigSchema,
 ]);
 
 const encryptedCredentialSchema = z
@@ -60,7 +71,7 @@ export const savedConnectionProfileSchema = z
   .object({
     id: z.string().min(1).max(128),
     label: z.string().min(1).max(128),
-    type: z.enum(['serial', 'ssh', 'local-shell']),
+    type: z.enum(['serial', 'ssh', 'local-shell', 'rtt-log']),
     config: savedConnectionConfigSchema,
     encryptedCredential: encryptedCredentialSchema.optional(),
     createdAt: z.string().datetime(),

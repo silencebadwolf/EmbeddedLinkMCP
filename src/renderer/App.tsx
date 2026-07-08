@@ -20,6 +20,7 @@ import type { ControlProfileOpenedEvent } from './components/ControlProfilePanel
 import type {
   ControlProfileDownloadResultPayload,
   ControlProfileWorkflowStepPayload,
+  SavedControlProfileRecordPayload,
 } from '../shared/preload-api.js';
 import type { SessionId, SessionState } from '../shared/types.js';
 
@@ -32,6 +33,7 @@ export function App(): React.ReactElement {
   useSessionHydration();
 
   const t = useT();
+  const preloadUnavailableMessage = t('controlProfile.error.preloadUnavailable');
   const locale = useAppStore((s) => s.locale);
   const setLocale = useAppStore((s) => s.setLocale);
   const activeId = useAppStore((s) => s.activeSessionId);
@@ -47,31 +49,135 @@ export function App(): React.ReactElement {
     React.useState<ControlProfileDownloadState>({ phase: 'idle' });
   const [controlProfileConnecting, setControlProfileConnecting] = React.useState(false);
   const [controlProfileDisconnecting, setControlProfileDisconnecting] = React.useState(false);
+  const [controlProfileRecords, setControlProfileRecords] = React.useState<
+    ReadonlyArray<SavedControlProfileRecordPayload>
+  >([]);
+  const [controlProfileRecordsLoading, setControlProfileRecordsLoading] = React.useState(false);
+  const [controlProfileRecordsError, setControlProfileRecordsError] = React.useState<string | null>(
+    null,
+  );
+  const [openingControlProfileId, setOpeningControlProfileId] = React.useState<string | null>(null);
+  const [openedControlProfilesByRecordId, setOpenedControlProfilesByRecordId] = React.useState<
+    ReadonlyMap<string, ControlProfileOpenedEvent>
+  >(new Map());
   const sessionList = React.useMemo(() => Array.from(sessions.values()), [sessions]);
   const openedControlProfileSessionId = getControlProfileSessionId(openedControlProfile);
   const visibleControlProfile =
     openedControlProfileSessionId === null || sessions.has(openedControlProfileSessionId)
       ? openedControlProfile
       : null;
+  const activeControlProfileRecordId = React.useMemo(() => {
+    for (const [recordId, event] of openedControlProfilesByRecordId) {
+      if (getControlProfileSessionId(event) === activeId) return recordId;
+    }
+    return visibleControlProfile?.record.id ?? null;
+  }, [activeId, openedControlProfilesByRecordId, visibleControlProfile]);
+
+  const rememberOpenedControlProfile = React.useCallback((event: ControlProfileOpenedEvent) => {
+    setOpenedControlProfile(event);
+    setOpenedControlProfilesByRecordId((records) => {
+      const next = new Map(records);
+      next.set(event.record.id, event);
+      return next;
+    });
+    setControlProfileRecords((records) => upsertControlProfileRecord(records, event.record));
+  }, []);
+
+  const loadControlProfileRecords = React.useCallback(async (): Promise<void> => {
+    const api = getLinkterm();
+    if (!api) {
+      setControlProfileRecordsError(preloadUnavailableMessage);
+      return;
+    }
+    setControlProfileRecordsLoading(true);
+    setControlProfileRecordsError(null);
+    try {
+      const result = await api.controlProfile.listRecords();
+      if (result.success) {
+        setControlProfileRecords(result.data);
+        return;
+      }
+      setControlProfileRecordsError(result.error.message);
+    } finally {
+      setControlProfileRecordsLoading(false);
+    }
+  }, [preloadUnavailableMessage]);
 
   React.useEffect(() => {
-    if (openedControlProfile === null || openedControlProfileSessionId === null) return;
-    if (!sessions.has(openedControlProfileSessionId)) setOpenedControlProfile(null);
+    void loadControlProfileRecords();
+  }, [loadControlProfileRecords]);
+
+  React.useEffect(() => {
+    if (openedControlProfile !== null && openedControlProfileSessionId !== null) {
+      if (!sessions.has(openedControlProfileSessionId)) setOpenedControlProfile(null);
+    }
+    setOpenedControlProfilesByRecordId((records) => {
+      let next: Map<string, ControlProfileOpenedEvent> | null = null;
+      for (const [recordId, event] of records) {
+        const sessionId = getControlProfileSessionId(event);
+        if (sessionId !== null && !sessions.has(sessionId)) {
+          next ??= new Map(records);
+          next.delete(recordId);
+        }
+      }
+      return next ?? records;
+    });
   }, [openedControlProfile, openedControlProfileSessionId, sessions]);
 
   React.useEffect(() => {
     setControlProfileDownload({ phase: 'idle' });
   }, [openedControlProfile?.record.id]);
 
+  const openControlProfileRecord = React.useCallback(
+    async (recordId: string): Promise<void> => {
+      const existing = openedControlProfilesByRecordId.get(recordId);
+      const existingSessionId = getControlProfileSessionId(existing ?? null);
+      if (existing !== undefined && existingSessionId !== null && sessions.has(existingSessionId)) {
+        setOpenedControlProfile(existing);
+        setActive(existingSessionId);
+        return;
+      }
+
+      const api = getLinkterm();
+      if (!api) {
+        setControlProfileRecordsError(preloadUnavailableMessage);
+        return;
+      }
+      setOpeningControlProfileId(recordId);
+      setControlProfileRecordsError(null);
+      try {
+        const result = await api.controlProfile.openRecord({ recordId });
+        if (!result.success) {
+          setControlProfileRecordsError(result.error.message);
+          return;
+        }
+        const record = result.data.record;
+        setControlProfileRecords((records) => upsertControlProfileRecord(records, record));
+        const observation = await openObservationForRecord(api, record, addSession, setActive);
+        rememberOpenedControlProfile({ path: result.data.path, record, observation });
+      } finally {
+        setOpeningControlProfileId(null);
+      }
+    },
+    [
+      addSession,
+      openedControlProfilesByRecordId,
+      rememberOpenedControlProfile,
+      sessions,
+      setActive,
+      preloadUnavailableMessage,
+    ],
+  );
+
   const connectControlProfile = React.useCallback(async (): Promise<void> => {
     if (openedControlProfile === null) return;
     const api = getLinkterm();
     if (!api) {
-      setOpenedControlProfile({
+      rememberOpenedControlProfile({
         ...openedControlProfile,
         observation: {
           ...openedControlProfile.observation,
-          error: t('controlProfile.error.preloadUnavailable'),
+          error: preloadUnavailableMessage,
         },
       });
       return;
@@ -84,23 +190,26 @@ export function App(): React.ReactElement {
         addSession,
         setActive,
       );
-      setOpenedControlProfile({ ...openedControlProfile, observation });
+      rememberOpenedControlProfile({ ...openedControlProfile, observation });
     } finally {
       setControlProfileConnecting(false);
     }
-  }, [addSession, openedControlProfile, setActive, t]);
+  }, [
+    addSession,
+    openedControlProfile,
+    preloadUnavailableMessage,
+    rememberOpenedControlProfile,
+    setActive,
+  ]);
 
   const disconnectControlProfile = React.useCallback(async (): Promise<void> => {
-    if (openedControlProfileSessionId === null) {
-      setOpenedControlProfile(null);
-      return;
-    }
+    if (openedControlProfile === null || openedControlProfileSessionId === null) return;
     const api = getLinkterm();
     setControlProfileDisconnecting(true);
     try {
       if (api) {
         const result = await api.session.destroy({ sessionId: openedControlProfileSessionId });
-        if (!result.success && openedControlProfile !== null) {
+        if (!result.success) {
           setOpenedControlProfile({
             ...openedControlProfile,
             observation: { ...openedControlProfile.observation, error: result.error.message },
@@ -109,11 +218,19 @@ export function App(): React.ReactElement {
         }
       }
       removeSession(openedControlProfileSessionId);
-      setOpenedControlProfile(null);
+      rememberOpenedControlProfile({
+        ...openedControlProfile,
+        observation: disconnectObservation(openedControlProfile.observation),
+      });
     } finally {
       setControlProfileDisconnecting(false);
     }
-  }, [openedControlProfile, openedControlProfileSessionId, removeSession]);
+  }, [
+    openedControlProfile,
+    openedControlProfileSessionId,
+    rememberOpenedControlProfile,
+    removeSession,
+  ]);
 
   const downloadControlProfile = React.useCallback(async (): Promise<void> => {
     if (openedControlProfile === null) return;
@@ -180,6 +297,16 @@ export function App(): React.ReactElement {
       <SessionTabBar />
 
       <main className="flex min-h-0 flex-1 overflow-hidden">
+        <ControlProfileSidebar
+          records={controlProfileRecords}
+          loading={controlProfileRecordsLoading}
+          error={controlProfileRecordsError}
+          activeRecordId={activeControlProfileRecordId}
+          openingRecordId={openingControlProfileId}
+          onOpenRecord={(recordId) => void openControlProfileRecord(recordId)}
+          onRefresh={() => void loadControlProfileRecords()}
+          onConfigure={() => setControlPanelOpen(true)}
+        />
         {visibleControlProfile ? (
           <ControlProfileStatusPanel
             event={visibleControlProfile}
@@ -222,10 +349,114 @@ export function App(): React.ReactElement {
       <ControlProfilePanel
         open={controlPanelOpen}
         onOpenChange={setControlPanelOpen}
-        onProfileOpened={setOpenedControlProfile}
+        onProfileOpened={rememberOpenedControlProfile}
+        onRecordsChanged={() => void loadControlProfileRecords()}
       />
       <AgentIntegrationsPanel open={agentPanelOpen} onOpenChange={setAgentPanelOpen} />
     </div>
+  );
+}
+
+function ControlProfileSidebar({
+  records,
+  loading,
+  error,
+  activeRecordId,
+  openingRecordId,
+  onOpenRecord,
+  onRefresh,
+  onConfigure,
+}: {
+  records: ReadonlyArray<SavedControlProfileRecordPayload>;
+  loading: boolean;
+  error: string | null;
+  activeRecordId: string | null;
+  openingRecordId: string | null;
+  onOpenRecord(recordId: string): void;
+  onRefresh(): void;
+  onConfigure(): void;
+}): React.ReactElement {
+  const t = useT();
+
+  return (
+    <aside
+      className="flex w-64 shrink-0 flex-col border-r border-gray-800 bg-gray-950"
+      data-testid="control-profile-sidebar"
+    >
+      <div className="border-b border-gray-800 px-3 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="min-w-0 truncate text-sm font-semibold text-gray-100">
+            {t('controlProfile.sidebar.title')}
+          </h2>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button type="button" variant="ghost" size="sm" onClick={onRefresh}>
+              {t('controlProfile.sidebar.refresh')}
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={onConfigure}>
+              {t('controlProfile.sidebar.edit')}
+            </Button>
+          </div>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        {loading ? (
+          <div className="px-2 py-2 text-xs text-gray-500" data-testid="control-profile-loading">
+            {t('controlProfile.sidebar.loading')}
+          </div>
+        ) : null}
+        {error ? (
+          <div
+            className="mb-2 rounded border border-red-900 bg-red-950 px-2 py-2 text-xs text-red-100"
+            data-testid="control-profile-sidebar-error"
+          >
+            {error}
+          </div>
+        ) : null}
+        {!loading && records.length === 0 ? (
+          <div className="px-2 py-2 text-xs text-gray-500" data-testid="control-profile-empty">
+            {t('controlProfile.sidebar.empty')}
+          </div>
+        ) : null}
+        <div className="space-y-1">
+          {records.map((record) => {
+            const active = record.id === activeRecordId;
+            const opening = record.id === openingRecordId;
+            return (
+              <button
+                key={record.id}
+                type="button"
+                onClick={() => onOpenRecord(record.id)}
+                disabled={opening}
+                aria-current={active ? 'page' : undefined}
+                data-testid={`control-profile-sidebar-item-${record.id}`}
+                className={[
+                  'flex w-full min-w-0 flex-col rounded px-2 py-2 text-left transition-colors',
+                  active
+                    ? 'bg-blue-950 text-blue-50 ring-1 ring-blue-700'
+                    : 'text-gray-200 hover:bg-gray-900',
+                  opening ? 'opacity-70' : '',
+                ].join(' ')}
+              >
+                <span className="flex min-w-0 items-center justify-between gap-2">
+                  <span className="min-w-0 truncate text-sm font-medium">{record.label}</span>
+                  <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] uppercase text-gray-300">
+                    {record.source === 'ai'
+                      ? t('controlProfile.record.source.ai')
+                      : t('controlProfile.record.source.manual')}
+                  </span>
+                </span>
+                <span className="mt-1 truncate text-xs text-gray-500">
+                  {opening
+                    ? t('controlProfile.record.opening')
+                    : describeControlProfileRecord(record, t)}
+                </span>
+                <span className="mt-0.5 truncate text-[11px] text-gray-600">{record.root}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </aside>
   );
 }
 
@@ -254,6 +485,19 @@ function ControlProfileStatusPanel({
   const observation = event.observation;
   const stateLabel = sessionState !== null ? t(`session.state.${sessionState}`) : null;
   const canDisconnect = sessionId !== null;
+  const isSerialObservation = observation.type === 'serial';
+  const connectLabel = isSerialObservation
+    ? t('controlProfile.serial.open')
+    : t('controlProfile.connect');
+  const connectingLabel = isSerialObservation
+    ? t('controlProfile.serial.opening')
+    : t('controlProfile.connecting');
+  const disconnectLabel = isSerialObservation
+    ? t('controlProfile.serial.disconnect')
+    : t('controlProfile.disconnect');
+  const disconnectingLabel = isSerialObservation
+    ? t('controlProfile.serial.disconnecting')
+    : t('controlProfile.disconnecting');
 
   return (
     <section
@@ -285,7 +529,7 @@ function ControlProfileStatusPanel({
             onClick={onConnect}
             disabled={connecting || canDisconnect}
           >
-            {connecting ? t('controlProfile.connecting') : t('controlProfile.connect')}
+            {connecting ? connectingLabel : connectLabel}
           </Button>
           <Button
             type="button"
@@ -294,7 +538,7 @@ function ControlProfileStatusPanel({
             onClick={onDisconnect}
             disabled={disconnecting || !canDisconnect}
           >
-            {disconnecting ? t('controlProfile.disconnecting') : t('controlProfile.disconnect')}
+            {disconnecting ? disconnectingLabel : disconnectLabel}
           </Button>
         </div>
         <Button
@@ -519,6 +763,24 @@ function getControlProfileSessionId(event: ControlProfileOpenedEvent | null): Se
   return event.observation.sessionId ?? null;
 }
 
+function disconnectObservation(
+  observation: ControlProfileOpenedEvent['observation'],
+): ControlProfileOpenedEvent['observation'] {
+  switch (observation.type) {
+    case 'serial':
+      return { type: 'serial' };
+    case 'rtt':
+      return {
+        type: 'rtt',
+        channelIndex: observation.channelIndex,
+        ...(observation.probeId !== undefined ? { probeId: observation.probeId } : {}),
+        ...(observation.reused !== undefined ? { reused: observation.reused } : {}),
+      };
+    case 'none':
+      return observation;
+  }
+}
+
 function describeObservation(observation: ControlProfileOpenedEvent['observation']): string {
   switch (observation.type) {
     case 'serial':
@@ -528,4 +790,31 @@ function describeObservation(observation: ControlProfileOpenedEvent['observation
     case 'none':
       return 'No observation';
   }
+}
+
+function describeControlProfileRecord(
+  record: SavedControlProfileRecordPayload,
+  t: ReturnType<typeof useT>,
+): string {
+  if (record.profile.serial?.enabled === true) {
+    const port = record.profile.serial.port ?? '-';
+    const baudRate = record.profile.serial.baudRate;
+    return baudRate !== undefined
+      ? `${t('controlProfile.observation.serial')} / ${port} / ${baudRate}`
+      : `${t('controlProfile.observation.serial')} / ${port}`;
+  }
+  if (record.profile.rtt?.enabled === true) {
+    const channelIndex = record.profile.rtt.channels?.[0] ?? 0;
+    return `${t('controlProfile.observation.rtt')} / ch${channelIndex}`;
+  }
+  return 'No observation';
+}
+
+function upsertControlProfileRecord(
+  records: ReadonlyArray<SavedControlProfileRecordPayload>,
+  next: SavedControlProfileRecordPayload,
+): ReadonlyArray<SavedControlProfileRecordPayload> {
+  return [next, ...records.filter((record) => record.id !== next.id)].sort((a, b) =>
+    b.updatedAt.localeCompare(a.updatedAt),
+  );
 }

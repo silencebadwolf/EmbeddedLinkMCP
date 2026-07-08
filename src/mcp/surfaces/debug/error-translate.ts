@@ -3,7 +3,7 @@
  *
  * 所有 debug 工具 handler 包一层 {@link runJLink}，统一捕获 `JLinkError` 子类并按
  * `instanceof` 翻译为稳定 ToolError；其余异常原样抛出，由 registry 兜底归一为
- * INTERNAL。这避免 28 个 handler 各自重复 try/catch。
+ * INTERNAL。这避免 debug handler 各自重复 try/catch。
  *
  * 此外提供两个 surface 共享 helper：
  * - {@link ok}：构造 ToolHandlerSuccess（统一注入 `success: true`）；
@@ -150,7 +150,7 @@ export async function runJLink<T>(fn: () => Promise<T>): Promise<T> {
 
 /**
  * 简化 ToolHandlerSuccess 构造，避免每个 handler 重复 `success: true`。
- * Debug surface 28 个 handler 共用。
+ * Debug surface handler 共用。
  */
 export function ok(value: Omit<ToolHandlerSuccess, 'success'>): ToolHandlerSuccess {
   return { success: true, ...value };

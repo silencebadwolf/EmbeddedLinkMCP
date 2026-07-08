@@ -1,8 +1,8 @@
 /**
  * Phase 12 — 边界场景 9：高影响 J-Link 工具的 confirm 闸门。
  *
- * 验证 6 个工具（flash_download / flash_write / flash_erase / cpu_reset /
- * gdb_server_start / jlink_commander_script）× 3 种 confirm 状态：
+ * 验证高影响工具（flash_download / flash_write / flash_erase / cpu_reset /
+ * gdb_server_start / jlink_reboot / jlink_commander_script）× 3 种 confirm 状态：
  *
  * - confirm 缺失 → `{ success: false, error: { code: 'CONFIRMATION_REQUIRED', details: { tool } } }`
  *   且 backend ledger 显示对应方法**未被调用**（守门发生在调 backend 之前）；
@@ -87,6 +87,7 @@ async function callTool(
 const HIGH_IMPACT_TOOLS: Array<{
   tool: string;
   backendMethod: string;
+  needsProbeId?: boolean;
   baseArgs: () => Record<string, unknown>;
 }> = [
   { tool: 'flash_download', backendMethod: 'flashDownload', baseArgs: () => ({ binaryBase64: Buffer.from([0x01]).toString('base64') }) },
@@ -94,6 +95,7 @@ const HIGH_IMPACT_TOOLS: Array<{
   { tool: 'flash_erase', backendMethod: 'flashErase', baseArgs: () => ({}) },
   { tool: 'cpu_reset', backendMethod: 'cpuReset', baseArgs: () => ({ halt: true }) },
   { tool: 'gdb_server_start', backendMethod: 'gdbServerStart', baseArgs: () => ({ port: 2331 }) },
+  { tool: 'jlink_reboot', backendMethod: 'jlinkReboot', needsProbeId: false, baseArgs: () => ({}) },
   { tool: 'jlink_commander_script', backendMethod: 'runCommanderScript', baseArgs: () => ({ commands: ['r', 'mem 0x08080000, 64'] }) },
 ];
 
@@ -108,12 +110,12 @@ describe('Phase 12 / scenario 9 — high-impact confirm gate', () => {
     await teardown(h);
   });
 
-  for (const { tool, backendMethod, baseArgs } of HIGH_IMPACT_TOOLS) {
+  for (const { tool, backendMethod, needsProbeId = true, baseArgs } of HIGH_IMPACT_TOOLS) {
     describe(tool, () => {
       it('confirm 缺失 → CONFIRMATION_REQUIRED 且 backend 未被调用', async () => {
         const callsBefore = h.fake.callsOf(backendMethod).length;
         const out = await callTool(h.client, tool, {
-          probeId: h.probeId,
+          ...(needsProbeId ? { probeId: h.probeId } : {}),
           ...baseArgs(),
         });
         expect(out.success).toBe(false);
@@ -127,7 +129,7 @@ describe('Phase 12 / scenario 9 — high-impact confirm gate', () => {
       it('confirm: false → CONFIRMATION_REQUIRED 且 backend 未被调用', async () => {
         const callsBefore = h.fake.callsOf(backendMethod).length;
         const out = await callTool(h.client, tool, {
-          probeId: h.probeId,
+          ...(needsProbeId ? { probeId: h.probeId } : {}),
           ...baseArgs(),
           confirm: false,
         });
@@ -141,7 +143,7 @@ describe('Phase 12 / scenario 9 — high-impact confirm gate', () => {
       it('confirm: true → backend 被调用一次', async () => {
         const callsBefore = h.fake.callsOf(backendMethod).length;
         const out = await callTool(h.client, tool, {
-          probeId: h.probeId,
+          ...(needsProbeId ? { probeId: h.probeId } : {}),
           ...baseArgs(),
           confirm: true,
         });

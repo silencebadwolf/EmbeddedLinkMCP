@@ -8,13 +8,25 @@ import {
   JLinkInvalidStateError,
   ProbeNotFoundError,
 } from '@/jlink/index.js';
-import type { ProbeInfo } from '@/jlink/index.js';
+import type { CommanderScriptResult, JLinkRebootOptions, ProbeInfo } from '@/jlink/index.js';
 import type { JLinkCommanderClient } from '@/jlink/segger-command-runner.js';
 
 function commanderWithPhysicalProbes(probes: ProbeInfo[]): JLinkCommanderClient {
   return {
     async detectProbes() {
       return probes;
+    },
+  } as JLinkCommanderClient;
+}
+
+function commanderWithProbeReboot(calls: JLinkRebootOptions[]): JLinkCommanderClient {
+  return {
+    async detectProbes() {
+      return [];
+    },
+    async rebootProbe(opts?: JLinkRebootOptions): Promise<CommanderScriptResult> {
+      calls.push(opts ?? {});
+      return { exitCode: 0, signal: null, stdout: 'rebooted', stderr: '' };
     },
   } as JLinkCommanderClient;
 }
@@ -119,6 +131,18 @@ describe('JLinkAdapter', () => {
       const a2 = await a.probeConnect({ target: 'STM32F4', serialNumber: '22222222' });
       expect(a1.probeId).not.toBe(a2.probeId);
       expect(await a.probeDetect()).toHaveLength(2);
+    });
+
+    it('jlinkReboot defaults to force and retires matching probe handles', async () => {
+      const calls: JLinkRebootOptions[] = [];
+      const a = new JLinkAdapter({ commander: commanderWithProbeReboot(calls) });
+      const probe = await a.probeConnect({ target: 'STM32F4', serialNumber: '11111111' });
+
+      const result = await a.jlinkReboot({ serialNumber: '11111111' });
+
+      expect(result.stdout).toBe('rebooted');
+      expect(calls).toEqual([{ force: true, serialNumber: '11111111' }]);
+      await expect(a.probeStatus(probe.probeId)).rejects.toBeInstanceOf(ProbeNotFoundError);
     });
   });
 

@@ -24,10 +24,17 @@ export interface TerminalViewProps {
 
 /** Ctrl-C 字节序列。`\x03` 是 SIGINT 的标准 ASCII。 */
 const CTRL_C = '\x03';
+const CR = '\r';
+const CRLF = '\r\n';
 
 /** 判断当前会话类型是否接受终端键盘写入。 */
 export function isWritableConnectionType(connectionType: ConnectionType): boolean {
-  return connectionType !== 'rtt-log';
+  return ['serial', 'ssh', 'local-shell', 'rtt-log'].includes(connectionType);
+}
+
+function normalizeTerminalInput(connectionType: ConnectionType | undefined, data: string): string {
+  if (connectionType === 'rtt-log' && data === CR) return CRLF;
+  return data;
 }
 
 /**
@@ -75,6 +82,7 @@ export function TerminalView({ sessionId }: TerminalViewProps): React.ReactEleme
     term.loadAddon(fit);
     term.open(container);
     installTerminalCopyShortcut(term);
+    term.focus();
 
     const state: {
       term: Terminal;
@@ -138,18 +146,26 @@ export function TerminalView({ sessionId }: TerminalViewProps): React.ReactEleme
       const api = getLinkterm();
       if (!api) return;
       const isCtrlC = data === CTRL_C;
-      const dataBase64 = strToBase64(data);
+      const writeData = normalizeTerminalInput(connectionType, data);
+      const dataBase64 = strToBase64(writeData);
       void api.session
         .write({
           sessionId,
           dataBase64,
           priority: isCtrlC ? 'high' : 'normal',
         })
-        .then(() => {
+        .then((result) => {
+          if (!result.success) {
+            state.term.write(
+              `\r\n\x1b[31m[write failed: ${result.error.code}] ${result.error.message}\x1b[0m\r\n`,
+            );
+            return;
+          }
           markOriginActivity(sessionId, 'human');
         })
-        .catch(() => {
-          // 写入失败不在 xterm 显示——transcript 主进程侧若产生 error 事件会自然回放
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          state.term.write(`\r\n\x1b[31m[write failed] ${message}\x1b[0m\r\n`);
         });
     });
     state.onDataDispose = () => sub.dispose();
@@ -167,6 +183,7 @@ export function TerminalView({ sessionId }: TerminalViewProps): React.ReactEleme
       ref={containerRef}
       data-testid="terminal-view"
       className="h-full w-full bg-black"
+      onMouseDown={() => termRef.current?.term.focus()}
       style={{ minHeight: '300px' }}
     />
   );

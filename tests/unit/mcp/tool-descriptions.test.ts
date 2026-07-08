@@ -64,6 +64,7 @@ describe('high-impact MCP tool descriptions', () => {
       'flash_erase',
       'cpu_reset',
       'gdb_server_start',
+      'jlink_reboot',
       'jlink_commander_script',
       'run_control_workflow',
     ]) {

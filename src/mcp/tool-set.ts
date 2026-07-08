@@ -27,6 +27,7 @@ const CORE_TOOL_NAMES = [
   'probe_connect',
   'probe_disconnect',
   'probe_status',
+  'jlink_reboot',
   'cpu_reset',
   'cpu_halt',
   'cpu_run',

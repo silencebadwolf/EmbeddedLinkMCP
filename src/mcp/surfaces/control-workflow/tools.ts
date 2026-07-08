@@ -191,6 +191,7 @@ function toJobStartedData(job: ControlWorkflowJobSnapshot): Record<string, unkno
 }
 
 function toJobStatusData(job: ControlWorkflowJobSnapshot): Record<string, unknown> {
+  const currentStep = job.workflow?.steps.at(-1);
   return {
     jobId: job.jobId,
     state: job.state,
@@ -202,6 +203,7 @@ function toJobStatusData(job: ControlWorkflowJobSnapshot): Record<string, unknow
     ...(job.expiresAt !== undefined ? { expiresAt: job.expiresAt } : {}),
     updatedAt: job.updatedAt,
     ...(job.currentStepId !== undefined ? { currentStepId: job.currentStepId } : {}),
+    ...(currentStep !== undefined ? { currentStep } : {}),
     cancelRequested: job.cancelRequested,
     ...(job.workflow?.summary !== undefined ? { summary: job.workflow.summary } : {}),
     ...(job.workflow?.failedStep !== undefined ? { failedStep: job.workflow.failedStep } : {}),

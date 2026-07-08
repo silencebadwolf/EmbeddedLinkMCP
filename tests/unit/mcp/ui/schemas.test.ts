@@ -48,6 +48,17 @@ describe('uiConfigureInputSchema', () => {
 });
 
 describe('nonSensitivePrefillSchema', () => {
+  it('accepts RTT log prefill fields', () => {
+    const r = nonSensitivePrefillSchema.safeParse({
+      type: 'rtt-log',
+      rttRoot: 'C:/work/FNA1000',
+      rttProbeId: 'probe-1',
+      rttChannel: '0',
+    });
+
+    expect(r.success).toBe(true);
+  });
+
   it('accepts a fully populated whitelisted prefill', () => {
     const r = nonSensitivePrefillSchema.safeParse({
       type: 'ssh',
@@ -82,6 +93,11 @@ describe('nonSensitivePrefillSchema', () => {
 
   it('rejects non-numeric sshPort string', () => {
     const r = nonSensitivePrefillSchema.safeParse({ sshPort: 'twenty-two' });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects non-numeric rttChannel string', () => {
+    const r = nonSensitivePrefillSchema.safeParse({ rttChannel: '-1' });
     expect(r.success).toBe(false);
   });
 });

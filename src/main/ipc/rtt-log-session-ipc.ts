@@ -1,15 +1,8 @@
 import { electron } from '../electron-runtime.js';
-import { openRttLogSession } from '../../core/session/rtt-log-session-open.js';
-import {
-  prepareProfileRttLogTarget,
-  ProfileRttLogTargetError,
-} from '../../core/session/rtt-log-profile-target.js';
 import type { SessionManager } from '../../core/session/session-manager.js';
 import type { ControlProfileManager, HostPathResolver } from '../../core/workspace/index.js';
-import { JLinkError } from '../../jlink/errors.js';
 import type { IJLinkBackend } from '../../jlink/types.js';
 import type { JLinkDeviceCatalog } from '../../jlink/device-catalog.js';
-import { ERROR_CODES, type ErrorCode } from '../../shared/error-codes.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type {
   PreloadFail,
@@ -17,6 +10,10 @@ import type {
   RttLogOpenRequestPayload,
   RttLogOpenSuccess,
 } from '../../shared/preload-api.js';
+import {
+  openRttLogFromRequest,
+  rttLogOpenErrorCodeOf,
+} from './rtt-log-open-helper.js';
 
 const { ipcMain } = electron;
 
@@ -32,37 +29,17 @@ export function registerRttLogSessionIpc(
     IPC_CHANNELS.RTT_LOG_OPEN,
     async (_event, raw: RttLogOpenRequestPayload): Promise<PreloadResult<RttLogOpenSuccess>> => {
       try {
-        const input = normalizeRequest(raw);
-        const target = await resolveRttTarget(
-          input,
+        const result = await openRttLogFromRequest(raw, {
+          sessionManager,
           jlinkBackend,
           controlProfileManager,
           jlinkDeviceCatalog,
           hostPathResolver,
-        );
-        const result = await openRttLogSession({
-          sessionManager,
-          jlinkBackend,
-          probeId: target.probeId,
-          channelIndex: target.channelIndex,
-          pollIntervalMs: input.pollIntervalMs,
-          maxBytesPerRead: input.maxBytesPerRead,
-          label: input.label,
-          createdBy: 'human',
         });
-        return {
-          success: true,
-          data: {
-            sessionId: result.session.id,
-            state: result.session.state,
-            reused: result.reused,
-            probeId: target.probeId,
-            channelIndex: target.channelIndex,
-          },
-        };
+        return { success: true, data: result };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        return failOf(errorCodeOf(err), message);
+        return failOf(rttLogOpenErrorCodeOf(err), message);
       }
     },
   );
@@ -72,89 +49,6 @@ export function registerRttLogSessionIpc(
   };
 }
 
-class InvalidRttLogOpenRequestError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'InvalidRttLogOpenRequestError';
-  }
-}
-
-interface NormalizedRttLogOpenRequest {
-  probeId?: string;
-  root?: string;
-  channelIndex: number;
-  pollIntervalMs: number;
-  maxBytesPerRead: number;
-  label?: string;
-}
-
-interface ResolvedRttTarget {
-  probeId: string;
-  channelIndex: number;
-}
-
-function normalizeRequest(raw: RttLogOpenRequestPayload): NormalizedRttLogOpenRequest {
-  if (!raw || typeof raw !== 'object') {
-    throw new InvalidRttLogOpenRequestError('probeId is required');
-  }
-  const probeId = typeof raw.probeId === 'string' ? raw.probeId.trim() : '';
-  const root = typeof raw.root === 'string' ? raw.root.trim() : '';
-  if (!probeId && !root) {
-    throw new InvalidRttLogOpenRequestError('probeId or root is required');
-  }
-  return {
-    ...(probeId ? { probeId } : {}),
-    ...(root ? { root } : {}),
-    channelIndex: normalizeInteger(raw.channelIndex, 0, 0, Number.MAX_SAFE_INTEGER, 'channelIndex'),
-    pollIntervalMs: normalizeInteger(raw.pollIntervalMs, 100, 10, 10_000, 'pollIntervalMs'),
-    maxBytesPerRead: normalizeInteger(raw.maxBytesPerRead, 4096, 1, 64 * 1024, 'maxBytesPerRead'),
-    ...(raw.label !== undefined ? { label: raw.label } : {}),
-  };
-}
-
-async function resolveRttTarget(
-  input: NormalizedRttLogOpenRequest,
-  jlinkBackend: IJLinkBackend,
-  controlProfileManager: ControlProfileManager | undefined,
-  jlinkDeviceCatalog: JLinkDeviceCatalog | undefined,
-  hostPathResolver: HostPathResolver | undefined,
-): Promise<ResolvedRttTarget> {
-  if (input.probeId !== undefined) {
-    return { probeId: input.probeId, channelIndex: input.channelIndex };
-  }
-  if (controlProfileManager === undefined) {
-    throw new InvalidRttLogOpenRequestError('root-based RTT open requires a control profile manager');
-  }
-  if (input.root === undefined) {
-    throw new InvalidRttLogOpenRequestError('root is required');
-  }
-  return prepareProfileRttLogTarget(
-    { root: input.root, channelIndex: input.channelIndex },
-    { controlProfileManager, jlinkBackend, jlinkDeviceCatalog, hostPathResolver },
-  );
-}
-
-function normalizeInteger(
-  value: number | undefined,
-  fallback: number,
-  min: number,
-  max: number,
-  field: string,
-): number {
-  const resolved = value ?? fallback;
-  if (!Number.isInteger(resolved) || resolved < min || resolved > max) {
-    throw new InvalidRttLogOpenRequestError(`${field} must be an integer between ${min} and ${max}`);
-  }
-  return resolved;
-}
-
-function errorCodeOf(err: unknown): ErrorCode {
-  if (err instanceof InvalidRttLogOpenRequestError) return ERROR_CODES.INVALID_ARGUMENT;
-  if (err instanceof ProfileRttLogTargetError) return ERROR_CODES.INVALID_ARGUMENT;
-  if (err instanceof JLinkError) return err.code;
-  return ERROR_CODES.INTERNAL;
-}
-
-function failOf(code: ErrorCode, message: string): PreloadFail {
+function failOf(code: string, message: string): PreloadFail {
   return { success: false, error: { code, message } };
 }

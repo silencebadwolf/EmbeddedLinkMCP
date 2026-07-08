@@ -71,6 +71,22 @@ describe('renderEventToXterm', () => {
     expect(term.calls()).toEqual([]);
   });
 
+  it('renders human data locally for RTT log sessions', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    const event: SerializedTranscriptEvent = {
+      type: 'data',
+      origin: 'human',
+      sequence: 1,
+      timestamp: Date.now(),
+      dataBase64: b64('help\r\n'),
+    };
+    renderEventToXterm({ write: term.write }, event, state, SID, {
+      connectionType: 'rtt-log',
+    });
+    expect(term.calls().join('')).toBe('help\r\n');
+  });
+
   it('does not render ai data in UI to avoid duplicate device echo', () => {
     const term = makeWriteStub();
     const state = createRenderState();
@@ -87,6 +103,25 @@ describe('renderEventToXterm', () => {
       SID,
     );
     expect(term.calls()).toEqual([]);
+  });
+
+  it('renders ai data locally for RTT log sessions', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    renderEventToXterm(
+      { write: term.write },
+      {
+        type: 'data',
+        origin: 'ai',
+        sequence: 1,
+        timestamp: 0,
+        dataBase64: b64('version\r\n'),
+      },
+      state,
+      SID,
+      { connectionType: 'rtt-log' },
+    );
+    expect(term.calls().join('')).toBe('version\r\n');
   });
 
   it('does NOT prefix device data (raw passthrough)', () => {

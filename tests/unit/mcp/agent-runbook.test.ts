@@ -121,6 +121,9 @@ describe('agent runbook builder', () => {
     expect(runbook.markdown).toContain('diagnose_rtt_log_session');
     expect(runbook.markdown).toContain('continuous RTT log');
     expect(runbook.markdown).toContain('silent RTT');
+    expect(runbook.markdown).toContain('target_input_unanswered');
+    expect(runbook.markdown).toContain('bytesWritten');
+    expect(runbook.markdown).toContain('target firmware consumed RTT down-channel input');
     expect(runbook.markdown).toContain('rtt_read');
     expect(runbook.markdown).toContain('read-only');
     expect(runbook.markdown).toContain('core tool');
@@ -175,6 +178,8 @@ describe('agent runbook builder', () => {
         expect.objectContaining({ name: 'flash_erase', requiresConfirmation: true }),
         expect.objectContaining({ name: 'cpu_reset', requiresConfirmation: true }),
         expect.objectContaining({ name: 'gdb_server_start', requiresConfirmation: true }),
+        expect.objectContaining({ name: 'jlink_reboot', requiresConfirmation: true }),
+        expect.objectContaining({ name: 'jlink_commander_script', requiresConfirmation: true }),
       ]),
     );
   });
@@ -279,6 +284,9 @@ describe('MCP agent runbook tool', () => {
     expect(instructions).toContain('read_from_session');
     expect(instructions).toContain('diagnose_rtt_log_session');
     expect(instructions).toContain('SEGGER banner');
+    expect(instructions).toContain('target_input_unanswered');
+    expect(instructions).toContain('bytesWritten');
+    expect(instructions).toContain('host-side acceptance only');
     expect(instructions).toContain('read-only');
     expect(instructions).toContain('core tool-set diagnostics');
     expect(instructions).toContain('repair or restart the LinkTerm MCP runtime');

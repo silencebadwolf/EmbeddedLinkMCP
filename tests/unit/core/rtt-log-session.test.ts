@@ -3,11 +3,13 @@ import type { IJLinkBackend, RttReadResult } from '@/jlink/types.js';
 import { RttLogSession } from '@/core/session/rtt-log-session.js';
 import { openRttLogSession } from '@/core/session/rtt-log-session-open.js';
 import { SessionManager } from '@/core/session/session-manager.js';
-import { SessionNotWritableError } from '@/core/session/types.js';
+import { JLinkInvalidStateError } from '@/jlink/errors.js';
 
 class ScriptedRttBackend {
   readonly readCalls: Array<{ probeId: string; channelIndex: number; maxBytes: number }> = [];
+  readonly writeCalls: Array<{ probeId: string; channelIndex: number; data: Buffer }> = [];
   readonly chunks: Array<Buffer | Error>;
+  writeError: Error | undefined;
 
   constructor(chunks: Array<Buffer | Error>) {
     this.chunks = [...chunks];
@@ -26,6 +28,11 @@ class ScriptedRttBackend {
       data: next.subarray(0, maxBytes),
       truncated: next.byteLength > maxBytes,
     };
+  }
+
+  async rttWrite(probeId: string, channelIndex: number, data: Buffer): Promise<void> {
+    this.writeCalls.push({ probeId, channelIndex, data: Buffer.from(data) });
+    if (this.writeError !== undefined) throw this.writeError;
   }
 }
 
@@ -149,7 +156,7 @@ describe('RttLogSession', () => {
     expect(backend.readCalls).toHaveLength(callsAfterError);
   });
 
-  it('rejects writes as a non-writable read-only session', async () => {
+  it('writes terminal input to the RTT down-channel and records human audit bytes', async () => {
     const backend = new ScriptedRttBackend([Buffer.alloc(0)]);
     const session = new RttLogSession({
       id: 'sess_rtt',
@@ -161,10 +168,56 @@ describe('RttLogSession', () => {
     });
 
     await session.open();
+    await session.write(Buffer.from('help\r'), { origin: 'human' });
+    await flushMicrotasks();
 
-    await expect(session.write(Buffer.from('x'), { origin: 'human' })).rejects.toBeInstanceOf(
-      SessionNotWritableError,
+    expect(backend.writeCalls).toEqual([
+      { probeId: 'probe-1', channelIndex: 0, data: Buffer.from('help\r') },
+    ]);
+    expect(
+      session.read(0).events
+        .filter((event) => event.type === 'data' && event.origin === 'human')
+        .map((event) => Buffer.from(event.data ?? []).toString('utf8')),
+    ).toEqual(['help\r']);
+  });
+
+  it('records a visible writer error and no human audit when RTT down-channel write is rejected', async () => {
+    const backend = new ScriptedRttBackend([Buffer.alloc(0)]);
+    backend.writeError = new JLinkInvalidStateError(
+      'RTT down-channel 0 is not available; connected RTT channels are read-only',
+      {
+        expected: 'RTT down channel 0',
+        actual: 'up channel 0 only',
+      },
     );
+    const session = new RttLogSession({
+      id: 'sess_rtt',
+      jlinkBackend: backend as unknown as IJLinkBackend,
+      probeId: 'probe-1',
+      channelIndex: 0,
+      pollIntervalMs: 50,
+      maxBytesPerRead: 16,
+    });
+
+    await session.open();
+    await expect(
+      session.write(Buffer.from('help\r\n'), { origin: 'human' }),
+    ).rejects.toThrow(/down-channel 0 is not available/);
+    await flushMicrotasks();
+
+    expect(
+      session.read(0).events
+        .filter((event) => event.type === 'data' && event.origin === 'human'),
+    ).toEqual([]);
+    expect(
+      session.read(0).events
+        .filter((event) => event.type === 'error')
+        .map((event) => event.meta),
+    ).toContainEqual(expect.objectContaining({
+      source: 'writer',
+      fatal: false,
+      message: expect.stringContaining('down-channel 0 is not available'),
+    }));
   });
 
   it('records visible system guidance when the RTT channel opens but has no device bytes yet', async () => {

@@ -28,6 +28,7 @@ interface ControlProfilePanelProps {
   open: boolean;
   onOpenChange(open: boolean): void;
   onProfileOpened?(event: ControlProfileOpenedEvent): void;
+  onRecordsChanged?(): void;
 }
 
 const JLINK_SPEED_OPTIONS = ['auto', '50000', '25000', '10000', '8000', '4000', '1000'] as const;
@@ -60,6 +61,7 @@ export function ControlProfilePanel({
   open,
   onOpenChange,
   onProfileOpened,
+  onRecordsChanged,
 }: ControlProfilePanelProps): React.ReactElement {
   const t = useT();
   const addSession = useAppStore((s) => s.addSession);
@@ -191,8 +193,10 @@ export function ControlProfilePanel({
       if (result.success) {
         if (result.data.record) {
           setSavedRecords((records) => upsertRecord(records, result.data.record!));
+          onRecordsChanged?.();
         } else {
           void loadSavedRecords();
+          onRecordsChanged?.();
         }
         setMessage(`${t('controlProfile.saved')} ${result.data.path}`);
       } else {
@@ -291,6 +295,7 @@ export function ControlProfilePanel({
         setSavedRecords((records) => upsertRecord(records, record));
         const observation = await openObservationForRecord(api, record, addSession, setActive);
         onProfileOpened?.({ path: result.data.path, record, observation });
+        onRecordsChanged?.();
         onOpenChange(false);
         setMessage(`${t('controlProfile.record.opened')} ${record.label}`);
       } else {
@@ -315,6 +320,7 @@ export function ControlProfilePanel({
       const result = await api.controlProfile.deleteRecord({ recordId });
       if (result.success) {
         setSavedRecords((records) => records.filter((item) => item.id !== recordId));
+        onRecordsChanged?.();
         setMessage(`${t('controlProfile.record.deleted')} ${record?.label ?? recordId}`);
       } else {
         setError(result.error.message);

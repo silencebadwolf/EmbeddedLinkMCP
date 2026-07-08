@@ -24,6 +24,7 @@ import type {
   FlashDownloadOptions,
   GdbServerHandle,
   IJLinkBackend,
+  JLinkRebootOptions,
   MemoryRange,
   ProbeConnectOptions,
   ProbeInfo,
@@ -35,6 +36,7 @@ import type {
 import {
   JLinkAbortedError,
   JLinkInvalidStateError,
+  JLinkNotImplementedError,
   JLinkOperationError,
   ProbeBusyError,
   ProbeNotFoundError,
@@ -216,6 +218,26 @@ export class JLinkAdapter implements IJLinkBackend {
     return this.#toProbeInfo(handle);
   }
 
+  /** Reboot J-Link probe 本体；不要求 target connect 成功。 */
+  async jlinkReboot(
+    opts?: JLinkRebootOptions,
+    signal?: AbortSignal,
+  ): Promise<CommanderScriptResult> {
+    this.#throwIfAborted(signal);
+    const rebootProbe = this.#commander.rebootProbe;
+    if (rebootProbe === undefined) {
+      throw new JLinkNotImplementedError('jlinkReboot');
+    }
+    const normalizedOpts = this.#normalizeJLinkRebootOptions(opts);
+    const probeKey = this.#probeOperationKeyFromSerialNumber(normalizedOpts.serialNumber);
+    return this.#withProbeSelectionOperation(probeKey, async () => {
+      this.#throwIfAborted(signal);
+      const result = await rebootProbe.call(this.#commander, normalizedOpts, signal);
+      await this.#retireProbeHandlesAfterReboot(probeKey);
+      return result;
+    });
+  }
+
   // -- cpu control ----------------------------------------------------
 
   /** 通过 Commander 复位目标 CPU；halt=false 时复位后继续运行，供串口观察新启动输出。 */
@@ -345,7 +367,12 @@ export class JLinkAdapter implements IJLinkBackend {
       const result = await this.#commander.download(
         this.#toCommanderContext(handle),
         binary,
-        { address, verify: opts?.verify === true, timeoutMs: opts?.timeoutMs },
+        {
+          address,
+          verify: opts?.verify === true,
+          timeoutMs: opts?.timeoutMs,
+          onProgress: opts?.onProgress,
+        },
         signal,
       );
       if (opts?.verify === true) {
@@ -353,7 +380,7 @@ export class JLinkAdapter implements IJLinkBackend {
         const verifyResult = await this.#commander.verify(
           this.#toCommanderContext(handle),
           binary,
-          { address, timeoutMs: opts.timeoutMs },
+          { address, timeoutMs: opts.timeoutMs, onProgress: opts.onProgress },
           signal,
         );
         if (!verifyResult.ok) {
@@ -442,6 +469,11 @@ export class JLinkAdapter implements IJLinkBackend {
   async rttRead(probeId: string, channelIndex: number, maxBytes: number): Promise<RttReadResult> {
     const session = this.#requireRttSession(probeId);
     return session.read(channelIndex, maxBytes);
+  }
+
+  async rttWrite(probeId: string, channelIndex: number, data: Buffer): Promise<void> {
+    const session = this.#requireRttSession(probeId);
+    await session.write(channelIndex, Buffer.from(data));
   }
 
   async rttClear(probeId: string, channelIndex: number): Promise<void> {
@@ -605,6 +637,17 @@ export class JLinkAdapter implements IJLinkBackend {
     };
   }
 
+  /** 标准化 J-Link probe reboot 选项；默认 force=true 对齐恢复场景。 */
+  #normalizeJLinkRebootOptions(opts?: JLinkRebootOptions): JLinkRebootOptions {
+    const serialNumber = opts?.serialNumber?.trim();
+    return {
+      force: opts?.force ?? true,
+      ...(serialNumber !== undefined && serialNumber !== '' ? { serialNumber } : {}),
+      ...(opts?.reconnectTimeoutMs !== undefined ? { reconnectTimeoutMs: opts.reconnectTimeoutMs } : {}),
+      ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+    };
+  }
+
   /** 查找相同连接语义的已连接 handle，使控制配置反复激活保持幂等。 */
   #findReusableProbe(opts: ProbeConnectOptions): ProbeHandle | undefined {
     const probeKey = this.#probeOperationKey(opts);
@@ -640,8 +683,13 @@ export class JLinkAdapter implements IJLinkBackend {
 
   /** 生成物理 probe 级操作锁 key；未指定序列号时保守串行化所有默认选择操作。 */
   #probeOperationKey(opts: ProbeConnectOptions): string {
-    const serialNumber = opts.serialNumber?.trim();
-    return serialNumber === undefined || serialNumber === '' ? DEFAULT_PROBE_SELECTION_KEY : `serial:${serialNumber}`;
+    return this.#probeOperationKeyFromSerialNumber(opts.serialNumber);
+  }
+
+  /** 生成物理 probe 级操作锁 key；未指定序列号时保守串行化所有默认选择操作。 */
+  #probeOperationKeyFromSerialNumber(serialNumber: string | undefined): string {
+    const trimmed = serialNumber?.trim();
+    return trimmed === undefined || trimmed === '' ? DEFAULT_PROBE_SELECTION_KEY : `serial:${trimmed}`;
   }
 
   /** 判断 probe 选择器是否与当前忙碌操作冲突；默认选择必须与所有操作互斥。 */
@@ -666,6 +714,48 @@ export class JLinkAdapter implements IJLinkBackend {
       handle.busy = false;
       this.#busyProbeKeys.delete(handle.probeKey);
     }
+  }
+
+  /** 在尚未 connect 的物理 probe 选择器上串行化操作。 */
+  async #withProbeSelectionOperation<T>(probeKey: string, fn: () => Promise<T>): Promise<T> {
+    if (this.#isProbeSelectionBusy(probeKey)) {
+      throw new ProbeBusyError(probeKey);
+    }
+    this.#busyProbeKeys.add(probeKey);
+    try {
+      return await fn();
+    } finally {
+      this.#busyProbeKeys.delete(probeKey);
+    }
+  }
+
+  /** probe reboot 成功后，关联的旧 probeId / GDB / RTT 状态均不可继续复用。 */
+  async #retireProbeHandlesAfterReboot(probeKey: string): Promise<void> {
+    const handles = Array.from(this.#probes.values()).filter(
+      (handle) =>
+        probeKey === DEFAULT_PROBE_SELECTION_KEY ||
+        handle.probeKey === probeKey ||
+        handle.probeKey === DEFAULT_PROBE_SELECTION_KEY,
+    );
+    for (const handle of handles) {
+      await this.#closeProbeSessionsBestEffort(handle);
+      this.#probes.delete(handle.probeId);
+    }
+  }
+
+  async #closeProbeSessionsBestEffort(handle: ProbeHandle): Promise<void> {
+    try {
+      await handle.rttSession?.close();
+    } catch {
+      // Probe reboot already invalidates this transport; cleanup is best-effort.
+    }
+    try {
+      await handle.gdbServer?.stop();
+    } catch {
+      // Probe reboot already invalidates this process association; cleanup is best-effort.
+    }
+    handle.rttSession = undefined;
+    handle.gdbServer = undefined;
   }
 
   async #connectRttAfterTelnetReady(opts: JLinkRttConnectOptions): Promise<JLinkRttSession> {

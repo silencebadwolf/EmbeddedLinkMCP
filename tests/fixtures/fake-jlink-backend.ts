@@ -22,6 +22,7 @@ import type {
   FlashDownloadOptions,
   GdbServerHandle,
   IJLinkBackend,
+  JLinkRebootOptions,
   MemoryRange,
   ProbeConnectOptions,
   ProbeInfo,
@@ -142,6 +143,20 @@ export class FakeJLinkBackend implements IJLinkBackend {
     this.#record('probeStatus', probeId);
     const h = this.#requireProbe(probeId);
     return { probeId: h.probeId, target: h.target, connected: true };
+  }
+
+  async jlinkReboot(
+    opts?: JLinkRebootOptions,
+    signal?: AbortSignal,
+  ): Promise<CommanderScriptResult> {
+    this.#record('jlinkReboot', opts, signal);
+    await this.#abortableDelay(this.delayMs, signal);
+    return {
+      exitCode: 0,
+      signal: null,
+      stdout: 'synthetic J-Link reboot output',
+      stderr: '',
+    };
   }
 
   // -- cpu control --
@@ -274,6 +289,7 @@ export class FakeJLinkBackend implements IJLinkBackend {
     return {
       channels: [
         { index: 0, name: 'Terminal', direction: 'up', bufferSize: 1024 },
+        { index: 0, name: 'Terminal', direction: 'down', bufferSize: 1024 },
       ],
     };
   }
@@ -291,6 +307,11 @@ export class FakeJLinkBackend implements IJLinkBackend {
       channelIndex,
       truncated: data.byteLength > maxBytes,
     };
+  }
+
+  async rttWrite(probeId: string, channelIndex: number, data: Buffer): Promise<void> {
+    this.#record('rttWrite', probeId, channelIndex, Buffer.from(data));
+    this.#requireProbe(probeId);
   }
 
   async rttClear(probeId: string, channelIndex: number): Promise<void> {

@@ -204,6 +204,8 @@ class FakeGdbServer implements JLinkGdbServerClient {
 }
 
 class FakeRttSession implements JLinkRttSession {
+  readonly writeCalls: Array<{ channelIndex: number; data: Buffer }> = [];
+
   constructor(private buffer: Buffer) {}
 
   get channels() {
@@ -223,6 +225,10 @@ class FakeRttSession implements JLinkRttSession {
 
   async clear(_channelIndex: number): Promise<void> {
     this.buffer = Buffer.alloc(0);
+  }
+
+  async write(channelIndex: number, data: Buffer): Promise<void> {
+    this.writeCalls.push({ channelIndex, data: Buffer.from(data) });
   }
 
   async close(): Promise<void> {
@@ -836,6 +842,22 @@ describe('RTT operations', () => {
       data: Buffer.alloc(0),
       truncated: false,
     });
+  });
+
+  it('writes bytes to the active RTT session', async () => {
+    const commander = new FakeCommander();
+    const gdbServer = new FakeGdbServer();
+    const rttClient = new FakeRttClient();
+    const adapter = new JLinkAdapter({ commander, gdbServer, rttClient });
+    const probe = await adapter.probeConnect({ target: 'AT32F435RGT7' });
+
+    await adapter.gdbServerStart(probe.probeId);
+    await adapter.rttConnect(probe.probeId);
+    await adapter.rttWrite(probe.probeId, 0, Buffer.from('help\r'));
+
+    expect(rttClient.session.writeCalls).toEqual([
+      { channelIndex: 0, data: Buffer.from('help\r') },
+    ]);
   });
 
   it('rejects RTT read before connect', async () => {

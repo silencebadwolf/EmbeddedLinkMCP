@@ -57,7 +57,13 @@ describe('ConnectionDialog', () => {
   it('opens an RTT log session from the new connection dialog', async () => {
     mock.spies.rttLog.open.mockResolvedValueOnce({
       success: true,
-      data: { sessionId: 'sess_rtt_dialog', state: 'open', reused: false },
+      data: {
+        sessionId: 'sess_rtt_dialog',
+        state: 'open',
+        reused: false,
+        probeId: 'probe-1',
+        channelIndex: 2,
+      },
     });
     render(<ConnectionDialog />);
 
@@ -87,14 +93,160 @@ describe('ConnectionDialog', () => {
     expect(mock.spies.connections.saveAndOpen).not.toHaveBeenCalled();
   });
 
-  it('validates RTT log probe and channel before opening', async () => {
+  it('opens an RTT log session from a workspace control profile without a probe id', async () => {
+    mock.spies.rttLog.open.mockResolvedValueOnce({
+      success: true,
+      data: {
+        sessionId: 'sess_rtt_profile_dialog',
+        state: 'open',
+        reused: false,
+        probeId: 'probe-profile',
+        channelIndex: 0,
+      },
+    });
+    render(<ConnectionDialog />);
+
+    fireEvent.click(screen.getByTestId('conn-type-trigger'));
+    fireEvent.click(await screen.findByRole('option', { name: 'RTT Log' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Browse workspace' }));
+    await waitFor(() => expect(screen.getByLabelText('Workspace root')).toHaveValue('C:/repo'));
+    fireEvent.click(screen.getByText('Create'));
+
+    await waitFor(() =>
+      expect(mock.spies.rttLog.open).toHaveBeenCalledWith({
+        root: 'C:/repo',
+        channelIndex: 0,
+        label: 'RTT ch0',
+      }),
+    );
+    expect(useAppStore.getState().sessions.get('sess_rtt_profile_dialog')).toEqual({
+      id: 'sess_rtt_profile_dialog',
+      label: 'RTT ch0',
+      connectionType: 'rtt-log',
+      state: 'open',
+      rttLog: { probeId: 'probe-profile', channelIndex: 0 },
+    });
+  });
+
+  it('saves and opens an RTT log session from manually typed workspace root', async () => {
+    mock.spies.connections.saveAndOpen.mockResolvedValueOnce({
+      success: true,
+      data: {
+        profile: {
+          id: 'conn_rtt',
+          label: 'FNA1000 RTT',
+          type: 'rtt-log',
+          config: { type: 'rtt-log', root: 'C:/work/FNA1000', channelIndex: 0 },
+          hasCredential: false,
+          createdAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString(),
+        },
+        sessionId: 'sess_saved_rtt',
+        state: 'open',
+        rttLog: { probeId: 'probe-saved', channelIndex: 0 },
+      },
+    });
+    render(<ConnectionDialog />);
+
+    fireEvent.click(screen.getByTestId('conn-type-trigger'));
+    fireEvent.click(await screen.findByRole('option', { name: 'RTT Log' }));
+    fireEvent.change(screen.getByLabelText('Label (optional)'), { target: { value: 'FNA1000 RTT' } });
+    fireEvent.change(screen.getByLabelText('Workspace root'), { target: { value: 'C:/work/FNA1000' } });
+    fireEvent.click(screen.getByLabelText('Save as global connection'));
+    fireEvent.click(screen.getByText('Create'));
+
+    await waitFor(() =>
+      expect(mock.spies.connections.saveAndOpen).toHaveBeenCalledWith({
+        label: 'FNA1000 RTT',
+        config: { type: 'rtt-log', root: 'C:/work/FNA1000', channelIndex: 0 },
+        saveCredentials: false,
+      }),
+    );
+    expect(mock.spies.rttLog.open).not.toHaveBeenCalled();
+    expect(useAppStore.getState().sessions.get('sess_saved_rtt')).toEqual({
+      id: 'sess_saved_rtt',
+      label: 'FNA1000 RTT',
+      connectionType: 'rtt-log',
+      state: 'open',
+      rttLog: { probeId: 'probe-saved', channelIndex: 0 },
+    });
+  });
+
+  it('rejects saving an RTT log profile from a transient probe handle only', async () => {
+    render(<ConnectionDialog />);
+
+    fireEvent.click(screen.getByTestId('conn-type-trigger'));
+    fireEvent.click(await screen.findByRole('option', { name: 'RTT Log' }));
+    fireEvent.change(screen.getByLabelText('Probe id'), { target: { value: 'probe-1' } });
+    fireEvent.click(screen.getByLabelText('Save as global connection'));
+    fireEvent.click(screen.getByText('Create'));
+
+    expect(
+      await screen.findByText('Saved RTT connections require a workspace root.'),
+    ).toBeInTheDocument();
+    expect(mock.spies.connections.saveAndOpen).not.toHaveBeenCalled();
+    expect(mock.spies.rttLog.open).not.toHaveBeenCalled();
+  });
+
+  it('opens saved RTT log profiles from the saved connection list with RTT metadata', async () => {
+    mock.spies.connections.list.mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          id: 'conn_rtt',
+          label: 'Saved RTT',
+          type: 'rtt-log',
+          config: { type: 'rtt-log', root: 'C:/work/FNA1000', channelIndex: 0 },
+          hasCredential: false,
+          createdAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString(),
+        },
+      ],
+    });
+    mock.spies.connections.open.mockResolvedValueOnce({
+      success: true,
+      data: {
+        profile: {
+          id: 'conn_rtt',
+          label: 'Saved RTT',
+          type: 'rtt-log',
+          config: { type: 'rtt-log', root: 'C:/work/FNA1000', channelIndex: 0 },
+          hasCredential: false,
+          createdAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString(),
+        },
+        sessionId: 'sess_saved_open_rtt',
+        state: 'open',
+        rttLog: { probeId: 'probe-opened', channelIndex: 0 },
+      },
+    });
+
+    render(<ConnectionDialog />);
+
+    expect(await screen.findByText('Saved RTT')).toBeInTheDocument();
+    expect(screen.getByText('C:/work/FNA1000 · RTT ch0')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+
+    await waitFor(() =>
+      expect(mock.spies.connections.open).toHaveBeenCalledWith({ profileId: 'conn_rtt' }),
+    );
+    expect(useAppStore.getState().sessions.get('sess_saved_open_rtt')).toEqual({
+      id: 'sess_saved_open_rtt',
+      label: 'Saved RTT',
+      connectionType: 'rtt-log',
+      state: 'open',
+      rttLog: { probeId: 'probe-opened', channelIndex: 0 },
+    });
+  });
+
+  it('validates RTT log target and channel before opening', async () => {
     render(<ConnectionDialog />);
 
     fireEvent.click(screen.getByTestId('conn-type-trigger'));
     fireEvent.click(await screen.findByRole('option', { name: 'RTT Log' }));
     fireEvent.click(screen.getByText('Create'));
 
-    expect(await screen.findByText('Probe id is required.')).toBeInTheDocument();
+    expect(await screen.findByText('Workspace root or probe id is required.')).toBeInTheDocument();
     expect(mock.spies.rttLog.open).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText('Probe id'), { target: { value: 'probe-1' } });
@@ -211,6 +363,24 @@ describe('ConnectionDialog', () => {
     const shellInput = screen.getByLabelText('Shell (optional)') as HTMLInputElement;
     expect(shellInput.value).toBe('/bin/bash');
     // serial / ssh 字段不应渲染
+    expect(screen.queryByTestId('picker-select-trigger')).toBeNull();
+  });
+
+  it('applies RTT log prefill from MCP UI patches', () => {
+    useAppStore.setState({
+      dialogOpen: false,
+      connectionDialogPrefill: {
+        type: 'rtt-log',
+        rttRoot: 'C:/work/FNA1000',
+        rttChannel: '1',
+      },
+    });
+    const { rerender } = render(<ConnectionDialog />);
+    useAppStore.setState({ dialogOpen: true });
+    rerender(<ConnectionDialog />);
+
+    expect(screen.getByLabelText('Workspace root')).toHaveValue('C:/work/FNA1000');
+    expect(screen.getByLabelText('RTT channel')).toHaveValue('1');
     expect(screen.queryByTestId('picker-select-trigger')).toBeNull();
   });
 });

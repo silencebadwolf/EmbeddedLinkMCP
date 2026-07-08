@@ -235,6 +235,9 @@ export async function registerIpcHandlers(
   const unregisterConnectionProfiles = registerConnectionProfilesIpc(
     sessionManager,
     connectionProfileManager,
+    jlinkBackend,
+    controlProfileManager,
+    jlinkDeviceCatalog,
   );
   const unregisterAgentIntegrations = registerAgentIntegrationsIpc(agentIntegrationManager);
   const unregisterControlProfile = registerControlProfileIpc(

@@ -16,6 +16,7 @@ import {
   type FirmwareImageFormat,
 } from '../../../core/workspace/firmware-image.js';
 import type {
+  FlashProgressUpdate,
   IJLinkBackend,
   ProbeConnectOptions,
   ProbeInfo,
@@ -517,51 +518,56 @@ async function flashStep(
       throw new ToolError(ERROR_CODES.INVALID_ARGUMENT, 'flash workflow requires firmware');
     }
     const probeId = requireProbeId(ctx);
-    pushStep(
-      ctx,
-      'flash',
-      'running',
-      {
-        firmwarePath: firmware.absolutePath,
-        sourcePath: firmware.sourcePath,
-        address: firmware.baseAddress,
-        bytesTotal: firmware.binary.byteLength,
-        verify: firmware.verify,
-        firmwareFormat: firmware.format,
-        timeoutMs: firmware.timeoutMs,
-        parameterSources: firmware.parameterSources,
-      },
-      started,
-    );
+    const runningEvidence = {
+      firmwarePath: firmware.absolutePath,
+      sourcePath: firmware.sourcePath,
+      address: firmware.baseAddress,
+      bytesTotal: firmware.binary.byteLength,
+      verify: firmware.verify,
+      firmwareFormat: firmware.format,
+      timeoutMs: firmware.timeoutMs,
+      parameterSources: firmware.parameterSources,
+    };
+    let latestProgress: FlashProgressUpdate | undefined;
+    const updateProgress = (progress: FlashProgressUpdate): void => {
+      latestProgress = progress;
+      const last = ctx.steps[ctx.steps.length - 1];
+      if (last?.id !== 'flash' || last.status !== 'running') return;
+      last.durationMs = Math.max(0, Date.now() - started);
+      last.evidence = { ...runningEvidence, progress };
+      ctx.onUpdate?.(toData(ctx));
+    };
+    pushStep(ctx, 'flash', 'running', runningEvidence, started);
     const result = await jlinkBackend.flashDownload(
       probeId,
       firmware.binary,
-      { address: firmware.baseAddress, verify: firmware.verify, timeoutMs: firmware.timeoutMs },
+      {
+        address: firmware.baseAddress,
+        verify: firmware.verify,
+        timeoutMs: firmware.timeoutMs,
+        onProgress: updateProgress,
+      },
       ctx.signal,
     );
     ctx.summary.flashed = true;
     ctx.summary.verified = result.verified;
-    pushStep(
-      ctx,
-      'flash',
-      'passed',
-      {
-        firmwarePath: firmware.absolutePath,
-        sourcePath: firmware.sourcePath,
-        bytesWritten: result.bytesWritten,
-        verified: result.verified,
-        verification: {
-          requested: firmware.verify,
-          method: firmware.verify ? 'commander-verifybin-plus-savebin-readback' : 'not-requested',
-          postDownloadReadbackRequired: firmware.verify,
-        },
-        address: firmware.baseAddress,
-        firmwareFormat: firmware.format,
-        timeoutMs: firmware.timeoutMs,
-        parameterSources: firmware.parameterSources,
+    const passedEvidence = {
+      firmwarePath: firmware.absolutePath,
+      sourcePath: firmware.sourcePath,
+      bytesWritten: result.bytesWritten,
+      verified: result.verified,
+      verification: {
+        requested: firmware.verify,
+        method: firmware.verify ? 'commander-verifybin-plus-savebin-readback' : 'not-requested',
+        postDownloadReadbackRequired: firmware.verify,
       },
-      started,
-    );
+      address: firmware.baseAddress,
+      firmwareFormat: firmware.format,
+      timeoutMs: firmware.timeoutMs,
+      parameterSources: firmware.parameterSources,
+      ...(latestProgress !== undefined ? { progress: latestProgress } : {}),
+    };
+    pushStep(ctx, 'flash', 'passed', passedEvidence, started);
   } catch (err) {
     if (captureClassifiedStepFailure(ctx, 'flash', started, err)) return;
     failStepAndThrow(ctx, 'flash', started, err);

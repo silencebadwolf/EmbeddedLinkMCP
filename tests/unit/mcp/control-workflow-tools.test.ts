@@ -358,6 +358,79 @@ describe('MCP control workflow tool', () => {
     await waitForJobState(h.client, jobId, ['cancelled']);
   });
 
+  it('reports live flash progress in background job status while Commander is erasing', async () => {
+    class ProgressBackend extends FakeJLinkBackend {
+      override async flashDownload(
+        probeId: string,
+        binary: Buffer,
+        opts?: FlashDownloadOptions,
+        signal?: AbortSignal,
+      ): Promise<{ bytesWritten: number; verified: boolean }> {
+        opts?.onProgress?.({
+          phase: 'erasing',
+          message: 'Erasing flash sectors...',
+          percent: 12,
+          bytesTotal: binary.byteLength,
+        });
+        return super.flashDownload(probeId, binary, opts, signal);
+      }
+    }
+
+    const backend = new ProgressBackend();
+    backend.delayMs = 10_000;
+    await teardown(h);
+    h = await setup({ jlinkBackend: backend });
+    const firmware = cortexMVectorImage(0x08008000);
+    await writeFile(path.join(h.root, 'rtthread.bin'), firmware);
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        serial: { enabled: false },
+        jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'rtthread.bin', baseAddress: '0x08008000', verify: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      observe: { serial: false },
+      execution: { mode: 'background' },
+      confirm: true,
+    });
+    const jobId = (out.evidence as { data: { jobId: string } }).data.jobId;
+    await waitForJobStep(h.client, jobId, 'flash');
+
+    const status = await callTool(h.client, 'get_control_workflow_job_status', { jobId });
+    const data = (
+      status.evidence as {
+        data: {
+          currentStep?: {
+            id: string;
+            status: string;
+            evidence?: { progress?: Record<string, unknown> };
+          };
+        };
+      }
+    ).data;
+    expect(data.currentStep).toMatchObject({
+      id: 'flash',
+      status: 'running',
+      evidence: {
+        progress: {
+          phase: 'erasing',
+          message: 'Erasing flash sectors...',
+          percent: 12,
+          bytesTotal: firmware.byteLength,
+        },
+      },
+    });
+
+    const cancelled = await callTool(h.client, 'cancel_control_workflow_job', { jobId });
+    expect(cancelled.success).toBe(true);
+    await waitForJobState(h.client, jobId, ['cancelled']);
+  });
+
   it('applies schema version policy to background job tools by sensitivity', async () => {
     await initProfile(h);
 

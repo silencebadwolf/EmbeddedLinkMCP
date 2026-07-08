@@ -134,6 +134,36 @@ export interface RttLogOpenSuccess {
   channelIndex?: number;
 }
 
+/** 保存连接里可持久化的 RTT 日志目标配置。 */
+export interface RttLogConnectionConfig {
+  type: 'rtt-log';
+  root?: string;
+  probeId?: string;
+  channelIndex: number;
+  pollIntervalMs?: number;
+  maxBytesPerRead?: number;
+}
+
+/** 保存连接 profile 里的 RTT 日志目标；必须使用稳定 workspace root。 */
+export type RttLogSavedConnectionConfig = RttLogConnectionConfig & {
+  root: string;
+  probeId?: never;
+};
+
+/** 保存连接 profile 的入参配置；RTT 不属于 generic session:create，但允许保存。 */
+export type SaveConnectionProfileConfig = SessionCreateRequestConfig | RttLogSavedConnectionConfig;
+
+/** 保存连接打开后的统一结果；RTT 分支携带解析后的 runtime probe/channel 元信息。 */
+export interface SavedConnectionOpenSuccess {
+  profile: SavedConnectionSummary;
+  sessionId: SessionId;
+  state: SessionState;
+  rttLog?: {
+    probeId: string;
+    channelIndex: number;
+  };
+}
+
 /** session 命名空间下的方法。 */
 export interface SessionNamespace {
   /** 创建并尝试 open；open 失败时仍返回 success=true 但 state='errored'，由 UI 决定后续动作。 */
@@ -209,7 +239,7 @@ export interface TranscriptNamespace {
  * 未知键，类型层也保留同样的硬约束作为双层防护。
  */
 export interface NonSensitivePrefill {
-  type?: 'serial' | 'ssh' | 'local-shell';
+  type?: 'serial' | 'ssh' | 'local-shell' | 'rtt-log';
   label?: string;
   serialPort?: string;
   baudRate?: string;
@@ -220,6 +250,9 @@ export interface NonSensitivePrefill {
   sshAuth?: 'password' | 'privateKey';
   localShell?: string;
   localCwd?: string;
+  rttRoot?: string;
+  rttProbeId?: string;
+  rttChannel?: string;
 }
 
 /**
@@ -231,7 +264,7 @@ export interface NonSensitivePrefill {
  */
 export type UiStatePatch =
   | { action: 'set_locale'; locale: 'en' | 'zh' }
-  | { action: 'set_connection_type'; type: 'serial' | 'ssh' | 'local-shell' }
+  | { action: 'set_connection_type'; type: 'serial' | 'ssh' | 'local-shell' | 'rtt-log' }
   | { action: 'open_connection_dialog'; prefill?: NonSensitivePrefill }
   | { action: 'close_connection_dialog' };
 
@@ -261,7 +294,8 @@ export interface SavedConnectionSummary {
   config:
     | Omit<SerialSessionConfig, 'label'>
     | Omit<SshSessionConfig, 'label'>
-    | Omit<LocalShellSessionConfig, 'label' | 'env'>;
+    | Omit<LocalShellSessionConfig, 'label' | 'env'>
+    | RttLogSavedConnectionConfig;
   hasCredential: boolean;
   createdAt: string;
   updatedAt: string;
@@ -273,24 +307,12 @@ export interface ConnectionsNamespace {
   list(): Promise<PreloadResult<ReadonlyArray<SavedConnectionSummary>>>;
   /** 保存连接 profile 并立即打开同一配置。 */
   saveAndOpen(req: {
-    config: SessionCreateRequestConfig;
+    config: SaveConnectionProfileConfig;
     label: string;
     saveCredentials?: boolean;
-  }): Promise<
-    PreloadResult<{
-      profile: SavedConnectionSummary;
-      sessionId: SessionId;
-      state: SessionState;
-    }>
-  >;
+  }): Promise<PreloadResult<SavedConnectionOpenSuccess>>;
   /** 快捷打开已保存连接；SSH 凭据在主进程解密，不返回 renderer。 */
-  open(req: { profileId: ConnectionProfileId }): Promise<
-    PreloadResult<{
-      profile: SavedConnectionSummary;
-      sessionId: SessionId;
-      state: SessionState;
-    }>
-  >;
+  open(req: { profileId: ConnectionProfileId }): Promise<PreloadResult<SavedConnectionOpenSuccess>>;
   /** 删除已保存连接。 */
   delete(req: { profileId: ConnectionProfileId }): Promise<PreloadResult<{ deleted: true }>>;
 }

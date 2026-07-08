@@ -41,6 +41,10 @@ describe('NullJLinkBackend', () => {
     );
   });
 
+  it('rejects jlinkReboot with NoBackendError', async () => {
+    await expect(backend.jlinkReboot()).rejects.toBeInstanceOf(NoBackendError);
+  });
+
   it('rejects cpuReset with NoBackendError', async () => {
     await expect(backend.cpuReset('p', { halt: true })).rejects.toBeInstanceOf(NoBackendError);
   });
@@ -80,6 +84,7 @@ describe('NullJLinkBackend', () => {
   it('rejects RTT family with NoBackendError', async () => {
     await expect(backend.rttConnect('p')).rejects.toBeInstanceOf(NoBackendError);
     await expect(backend.rttRead('p', 0, 1)).rejects.toBeInstanceOf(NoBackendError);
+    await expect(backend.rttWrite('p', 0, Buffer.from('x'))).rejects.toBeInstanceOf(NoBackendError);
     await expect(backend.rttClear('p', 0)).rejects.toBeInstanceOf(NoBackendError);
     await expect(backend.rttSearch('p', 0, 'x', 1)).rejects.toBeInstanceOf(NoBackendError);
   });

@@ -1,4 +1,5 @@
 import { electron } from '../electron-runtime.js';
+import type { ControlProfileManager, HostPathResolver } from '../../core/workspace/index.js';
 import type { SessionManager } from '../../core/session/session-manager.js';
 import {
   ConnectionProfileManager,
@@ -6,21 +7,26 @@ import {
   CredentialDecryptFailedError,
   CredentialRequiredError,
   CredentialStorageUnavailableError,
+  savedConnectionConfigSchema,
   type SavedConnectionSummary,
 } from '../../core/connections/index.js';
 import { openSessionInputSchema } from '../../mcp/surfaces/terminal/schemas.js';
+import type { IJLinkBackend } from '../../jlink/types.js';
+import type { JLinkDeviceCatalog } from '../../jlink/device-catalog.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
-import type { PreloadResult, SessionCreateRequestConfig } from '../../shared/preload-api.js';
+import type {
+  PreloadResult,
+  SaveConnectionProfileConfig,
+  SavedConnectionOpenSuccess,
+  SessionCreateRequestConfig,
+} from '../../shared/preload-api.js';
 import type { SessionId, SessionState } from '../../shared/types.js';
 import { createAndOpenSession } from './session-open-helper.js';
+import { openRttLogFromRequest, rttLogOpenErrorCodeOf } from './rtt-log-open-helper.js';
 
 const { ipcMain } = electron;
 
-type SaveAndOpenResult = PreloadResult<{
-  profile: SavedConnectionSummary;
-  sessionId: SessionId;
-  state: SessionState;
-}>;
+type SaveAndOpenResult = PreloadResult<SavedConnectionOpenSuccess>;
 
 type OpenSavedResult = SaveAndOpenResult;
 
@@ -28,6 +34,10 @@ type OpenSavedResult = SaveAndOpenResult;
 export function registerConnectionProfilesIpc(
   sessionManager: SessionManager,
   profileManager: ConnectionProfileManager,
+  jlinkBackend?: IJLinkBackend,
+  controlProfileManager?: ControlProfileManager,
+  jlinkDeviceCatalog?: JLinkDeviceCatalog,
+  hostPathResolver?: HostPathResolver,
 ): () => void {
   ipcMain.handle(IPC_CHANNELS.CONNECTIONS_LIST, async (): Promise<PreloadResult<ReadonlyArray<SavedConnectionSummary>>> => {
     try {
@@ -43,7 +53,14 @@ export function registerConnectionProfilesIpc(
       try {
         const input = parseSaveAndOpen(raw);
         const profile = await profileManager.save(input);
-        const session = await createAndOpenSession(sessionManager, input.config, input.label);
+        const session = await openSavedConnectionConfig(input.config, {
+          label: input.label,
+          sessionManager,
+          jlinkBackend,
+          controlProfileManager,
+          jlinkDeviceCatalog,
+          hostPathResolver,
+        });
         return { success: true, data: { profile, ...session } };
       } catch (err) {
         return toIpcError(err);
@@ -59,7 +76,14 @@ export function registerConnectionProfilesIpc(
         const config = await profileManager.openConfig(profileId);
         const profile = (await profileManager.list()).find((p) => p.id === profileId);
         if (!profile) throw new ConnectionProfileNotFoundError(profileId);
-        const session = await createAndOpenSession(sessionManager, config, profile.label);
+        const session = await openSavedConnectionConfig(config, {
+          label: profile.label,
+          sessionManager,
+          jlinkBackend,
+          controlProfileManager,
+          jlinkDeviceCatalog,
+          hostPathResolver,
+        });
         return { success: true, data: { profile, ...session } };
       } catch (err) {
         return toIpcError(err);
@@ -89,20 +113,77 @@ export function registerConnectionProfilesIpc(
 
 function parseSaveAndOpen(raw: unknown): {
   label: string;
-  config: SessionCreateRequestConfig;
+  config: SaveConnectionProfileConfig;
   saveCredentials?: boolean;
 } {
   if (typeof raw !== 'object' || raw === null) throw new Error('Invalid payload');
   const r = raw as { config?: unknown; label?: unknown; saveCredentials?: unknown };
-  const parsed = openSessionInputSchema.safeParse({ config: r.config });
+  const parsed = parseSavedConnectionConfig(r.config);
   if (!parsed.success) throw new Error(parsed.error.issues.map((i) => i.message).join('; '));
   if (typeof r.label !== 'string' || r.label.trim().length === 0) {
     throw new Error('label is required');
   }
   return {
     label: r.label,
-    config: parsed.data.config as SessionCreateRequestConfig,
+    config: parsed.data,
     ...(typeof r.saveCredentials === 'boolean' ? { saveCredentials: r.saveCredentials } : {}),
+  };
+}
+
+type ParseSavedConnectionConfigResult =
+  | { success: true; data: SaveConnectionProfileConfig }
+  | { success: false; error: { issues: Array<{ message: string }> } };
+
+function parseSavedConnectionConfig(config: unknown): ParseSavedConnectionConfigResult {
+  if (typeof config === 'object' && config !== null && (config as { type?: unknown }).type === 'rtt-log') {
+    const parsed = savedConnectionConfigSchema.safeParse(config);
+    if (!parsed.success) return parsed;
+    if (parsed.data.type !== 'rtt-log') {
+      return { success: false, error: { issues: [{ message: 'config.type must be rtt-log' }] } };
+    }
+    return { success: true, data: parsed.data };
+  }
+  const parsed = openSessionInputSchema.safeParse({ config });
+  if (!parsed.success) return parsed;
+  return { success: true, data: parsed.data.config as SessionCreateRequestConfig };
+}
+
+async function openSavedConnectionConfig(
+  config: SaveConnectionProfileConfig,
+  deps: {
+    label: string;
+    sessionManager: SessionManager;
+    jlinkBackend?: IJLinkBackend;
+    controlProfileManager?: ControlProfileManager;
+    jlinkDeviceCatalog?: JLinkDeviceCatalog;
+    hostPathResolver?: HostPathResolver;
+  },
+): Promise<{ sessionId: SessionId; state: SessionState; rttLog?: { probeId: string; channelIndex: number } }> {
+  if (config.type !== 'rtt-log') {
+    return createAndOpenSession(deps.sessionManager, config as SessionCreateRequestConfig, deps.label);
+  }
+  if (deps.jlinkBackend === undefined) {
+    throw new Error('RTT saved profiles require a J-Link backend');
+  }
+  const result = await openRttLogFromRequest(
+    {
+      ...config,
+      label: deps.label,
+    },
+    {
+      sessionManager: deps.sessionManager,
+      jlinkBackend: deps.jlinkBackend,
+      controlProfileManager: deps.controlProfileManager,
+      jlinkDeviceCatalog: deps.jlinkDeviceCatalog,
+      hostPathResolver: deps.hostPathResolver,
+    },
+  );
+  return {
+    sessionId: result.sessionId,
+    state: result.state,
+    ...(result.probeId !== undefined && result.channelIndex !== undefined
+      ? { rttLog: { probeId: result.probeId, channelIndex: result.channelIndex } }
+      : {}),
   };
 }
 
@@ -125,6 +206,11 @@ function toIpcError<T>(err: unknown): PreloadResult<T> {
   }
   if (err instanceof ConnectionProfileNotFoundError) {
     return { success: false, error: { code: err.code, message: err.message } };
+  }
+  const rttCode = rttLogOpenErrorCodeOf(err);
+  if (rttCode !== 'INTERNAL') {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: { code: rttCode, message } };
   }
   const message = err instanceof Error ? err.message : String(err);
   return { success: false, error: { code: 'INVALID_PAYLOAD', message } };

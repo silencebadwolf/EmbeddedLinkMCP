@@ -82,6 +82,24 @@ export interface RttReadResult {
   truncated: boolean;
 }
 
+/** flashDownload 运行阶段。 */
+export type FlashProgressPhase =
+  | 'preparing'
+  | 'erasing'
+  | 'programming'
+  | 'verifying'
+  | 'readback'
+  | 'completed';
+
+/** flashDownload 实时进度快照；由后台 job 轮询面消费。 */
+export interface FlashProgressUpdate {
+  phase: FlashProgressPhase;
+  message: string;
+  percent?: number;
+  bytesWritten?: number;
+  bytesTotal?: number;
+}
+
 /** flashDownload 选项。 */
 export interface FlashDownloadOptions {
   /** 烧录目标地址；缺省让 backend 用 binary 自带的 image header 决定。 */
@@ -89,6 +107,20 @@ export interface FlashDownloadOptions {
   /** 烧录后是否再读回校验。 */
   verify?: boolean;
   /** 覆盖单次 Commander 烧录进程超时，单位毫秒；缺省使用 backend 默认值。 */
+  timeoutMs?: number;
+  /** 可选实时进度回调；仅在进程内使用，不跨 MCP JSON 边界传递。 */
+  onProgress?: (update: FlashProgressUpdate) => void;
+}
+
+/** J-Link probe 自身 reboot 选项；不要求先连接目标 MCU。 */
+export interface JLinkRebootOptions {
+  /** 多 J-Link 机器上指定要 reboot 的物理 probe；MCP 出参不得回显该值。 */
+  serialNumber?: string;
+  /** 是否强制 reboot；缺省 true，用于恢复卡死或被其它进程占用的 probe。 */
+  force?: boolean;
+  /** 传给 SEGGER Reboot 命令的重连等待时间，单位毫秒。 */
+  reconnectTimeoutMs?: number;
+  /** Commander 进程整体超时，单位毫秒。 */
   timeoutMs?: number;
 }
 
@@ -170,6 +202,12 @@ export interface IJLinkBackend {
    * @throws ProbeNotFoundError
    */
   probeStatus(probeId: string): Promise<ProbeInfo>;
+
+  /**
+   * Reboot J-Link probe 本体，不要求先成功 probeConnect/target connect。
+   * 用于恢复 J-Link 红灯卡死、USB transport 挂住或外部工具占用后的探针状态。
+   */
+  jlinkReboot(opts?: JLinkRebootOptions, signal?: AbortSignal): Promise<CommanderScriptResult>;
 
   // -- cpu control --
 
@@ -255,6 +293,11 @@ export interface IJLinkBackend {
    * 上层多次轮询即可。`maxBytes` 是本次返回的硬上限。
    */
   rttRead(probeId: string, channelIndex: number, maxBytes: number): Promise<RttReadResult>;
+
+  /**
+   * 写入指定 RTT down 通道。当前 SEGGER RTT telnet backend 使用同一 socket 写入目标。
+   */
+  rttWrite(probeId: string, channelIndex: number, data: Buffer): Promise<void>;
 
   /** 清空（drain）指定 RTT 通道当前缓冲。 */
   rttClear(probeId: string, channelIndex: number): Promise<void>;

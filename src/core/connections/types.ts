@@ -1,5 +1,4 @@
 import type {
-  ConnectionType,
   LocalShellSessionConfig,
   SerialDataBits,
   SerialMode,
@@ -8,7 +7,10 @@ import type {
   SerialStopBits,
   SshSessionConfig,
 } from '../../shared/types.js';
-import type { SessionCreateRequestConfig } from '../../shared/preload-api.js';
+import type {
+  RttLogSavedConnectionConfig,
+  SaveConnectionProfileConfig,
+} from '../../shared/preload-api.js';
 
 export type { SavedConnectionSummary } from '../../shared/preload-api.js';
 
@@ -66,11 +68,15 @@ export interface LocalShellSavedConnectionConfig {
   cols?: number;
 }
 
+/** RTT 日志保存配置；保存稳定 target，不保存敏感硬件序列号。 */
+export type { RttLogSavedConnectionConfig };
+
 /** 保存连接的非敏感配置联合。 */
 export type SavedConnectionConfig =
   | SerialSavedConnectionConfig
   | SshSavedConnectionConfig
-  | LocalShellSavedConnectionConfig;
+  | LocalShellSavedConnectionConfig
+  | RttLogSavedConnectionConfig;
 
 /** 加密后的凭据引用；不包含明文或凭据类型字符串。 */
 export interface EncryptedCredentialBlob {
@@ -83,7 +89,7 @@ export interface EncryptedCredentialBlob {
 export interface SavedConnectionProfile {
   id: ConnectionProfileId;
   label: string;
-  type: ConnectionType;
+  type: SavedConnectionConfig['type'];
   config: SavedConnectionConfig;
   encryptedCredential?: EncryptedCredentialBlob;
   createdAt: string;
@@ -99,12 +105,12 @@ export interface ConnectionsFile {
 /** 保存 profile 的入参。 */
 export interface SaveConnectionProfileInput {
   label: string;
-  config: SessionCreateRequestConfig;
+  config: SaveConnectionProfileConfig;
   saveCredentials?: boolean;
 }
 
 /** 将会话配置剥离为可安全落盘的非敏感配置。 */
-export function toSavedConfig(config: SessionCreateRequestConfig): SavedConnectionConfig {
+export function toSavedConfig(config: SaveConnectionProfileConfig): SavedConnectionConfig {
   switch (config.type) {
     case 'serial':
       return {
@@ -143,12 +149,22 @@ export function toSavedConfig(config: SessionCreateRequestConfig): SavedConnecti
         ...(config.rows !== undefined ? { rows: config.rows } : {}),
         ...(config.cols !== undefined ? { cols: config.cols } : {}),
       } satisfies LocalShellSavedConnectionConfig;
+    case 'rtt-log':
+      return {
+        type: 'rtt-log',
+        root: config.root,
+        channelIndex: config.channelIndex,
+        ...(config.pollIntervalMs !== undefined ? { pollIntervalMs: config.pollIntervalMs } : {}),
+        ...(config.maxBytesPerRead !== undefined
+          ? { maxBytesPerRead: config.maxBytesPerRead }
+          : {}),
+      } satisfies RttLogSavedConnectionConfig;
   }
 }
 
-/** 将脱敏保存配置转回 session 创建配置；SSH 凭据由调用者补入。 */
+/** 将脱敏保存配置转回可打开配置；SSH 凭据由调用者补入。 */
 export function toSessionConfig(
   config: SavedConnectionConfig,
-): SerialSessionConfig | LocalShellSessionConfig | SshSessionConfig {
+): SerialSessionConfig | LocalShellSessionConfig | SshSessionConfig | RttLogSavedConnectionConfig {
   return { ...config };
 }

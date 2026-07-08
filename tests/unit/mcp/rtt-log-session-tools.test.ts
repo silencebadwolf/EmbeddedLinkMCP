@@ -219,7 +219,7 @@ describe('MCP RTT log session tools', () => {
     ]);
   });
 
-  it('returns NOT_WRITABLE when generic MCP writes target a real RTT log session', async () => {
+  it('writes to a real RTT log session through the generic MCP terminal path', async () => {
     const probe = await harness.fake.probeConnect({ target: 'AT32F435VGT7' });
     const opened = await callTool(harness.client, 'open_rtt_log_session', {
       probeId: probe.probeId,
@@ -232,8 +232,13 @@ describe('MCP RTT log session tools', () => {
       payload: { encoding: 'utf-8', data: 'x' },
     });
 
-    expect(out.success).toBe(false);
-    expect((out.error as { code: string }).code).toBe('NOT_WRITABLE');
+    expect(out.success).toBe(true);
+    expect(harness.fake.callsOf('rttWrite')).toEqual([
+      {
+        method: 'rttWrite',
+        args: [probe.probeId, 0, Buffer.from('x')],
+      },
+    ]);
   });
 
   it('diagnoses a banner-only RTT log session without touching hardware again', async () => {

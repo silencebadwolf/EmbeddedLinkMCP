@@ -16,6 +16,7 @@ import type {
   FlashDownloadOptions,
   GdbServerHandle,
   IJLinkBackend,
+  JLinkRebootOptions,
   MemoryRange,
   ProbeConnectOptions,
   ProbeInfo,
@@ -29,7 +30,7 @@ import { NoBackendError } from './errors.js';
 /**
  * 一律拒绝的 J-Link backend。每个方法均抛 {@link NoBackendError}。
  *
- * Phase 9 默认注册到 MCP server，确保 28 个 debug 工具对 AI 客户端始终可见，
+ * Phase 9 默认注册到 MCP server，确保 debug 工具对 AI 客户端始终可见，
  * 但不会真的执行任何硬件操作（req §4.6）。
  */
 export class NullJLinkBackend implements IJLinkBackend {
@@ -48,6 +49,13 @@ export class NullJLinkBackend implements IJLinkBackend {
   }
 
   async probeStatus(_probeId: string): Promise<ProbeInfo> {
+    throw new NoBackendError();
+  }
+
+  async jlinkReboot(
+    _opts?: JLinkRebootOptions,
+    _signal?: AbortSignal,
+  ): Promise<CommanderScriptResult> {
     throw new NoBackendError();
   }
 
@@ -152,6 +160,10 @@ export class NullJLinkBackend implements IJLinkBackend {
   }
 
   async rttRead(_probeId: string, _channelIndex: number, _maxBytes: number): Promise<RttReadResult> {
+    throw new NoBackendError();
+  }
+
+  async rttWrite(_probeId: string, _channelIndex: number, _data: Buffer): Promise<void> {
     throw new NoBackendError();
   }
 

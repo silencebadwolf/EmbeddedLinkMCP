@@ -3,7 +3,7 @@
  * useSessionHydration hook 单测.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAppStore } from '../../../../src/renderer/store/app-store.js';
 import { installMockPreload, type MockPreloadAPI } from '../../../fixtures/mock-preload-api.js';
@@ -26,6 +26,10 @@ describe('useSessionHydration', () => {
   beforeEach(() => {
     resetStore();
     mock = installMockPreload();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('hydrates backend-created sessions into the renderer store', async () => {
@@ -231,5 +235,54 @@ describe('useSessionHydration', () => {
       rttLog: { probeId: 'probe-1', channelIndex: 0 },
     });
     expect(useAppStore.getState().activeSessionId).toBe('sess_ai_rtt');
+  });
+
+  it('periodically reconciles missed MCP-created RTT sessions into the App store', async () => {
+    vi.useFakeTimers();
+    mock.spies.session.list
+      .mockResolvedValueOnce({
+        success: true,
+        data: { sessions: [] },
+      } as never)
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          sessions: [
+            {
+              sessionId: 'sess_missed_rtt',
+              label: 'Missed RTT ch0',
+              connectionType: 'rtt-log',
+              state: 'open',
+              createdBy: 'ai',
+              rttLog: { probeId: 'probe-2', channelIndex: 0 },
+            },
+          ],
+        },
+      } as never);
+
+    const { useSessionHydration } = await import(
+      '../../../../src/renderer/hooks/useSessionHydration.js'
+    );
+
+    renderHook(() => useSessionHydration());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(useAppStore.getState().sessions.has('sess_missed_rtt')).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(useAppStore.getState().sessions.get('sess_missed_rtt')).toEqual({
+      id: 'sess_missed_rtt',
+      label: 'Missed RTT ch0',
+      connectionType: 'rtt-log',
+      state: 'open',
+      rttLog: { probeId: 'probe-2', channelIndex: 0 },
+    });
+    expect(useAppStore.getState().activeSessionId).toBe('sess_missed_rtt');
   });
 });

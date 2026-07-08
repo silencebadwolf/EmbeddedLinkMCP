@@ -44,6 +44,9 @@ export function useTranscript(
   const updateSessionState = useAppStore((s) => s.updateSessionState);
   const removeSession = useAppStore((s) => s.removeSession);
   const markOriginActivity = useAppStore((s) => s.markOriginActivity);
+  const connectionType = useAppStore((s) =>
+    sessionId ? s.sessions.get(sessionId)?.connectionType : undefined,
+  );
 
   // 渲染状态跨重渲染保留：不能放在 useEffect 局部，否则 StrictMode 双 mount 会丢失行状态
   const renderStateRef = useRef<RenderState | null>(null);
@@ -85,7 +88,7 @@ export function useTranscript(
           return;
         }
         const event = envelope.event;
-        renderEventToXterm(terminal, event, renderState, sessionId);
+        renderEventToXterm(terminal, event, renderState, sessionId, { connectionType });
         tickOriginActivity(event.origin);
         // state 事件：同步 UI store 上的 state 字段
         if (event.type === 'state') {
@@ -100,7 +103,7 @@ export function useTranscript(
       if (cancelled) return;
       if (subResult.success) {
         for (const event of subResult.data.events) {
-          renderEventToXterm(terminal, event, renderState, sessionId);
+          renderEventToXterm(terminal, event, renderState, sessionId, { connectionType });
           // 历史回放不触发呼吸灯（lastOriginAt 不更新），避免视觉突兀
         }
       }
@@ -116,5 +119,5 @@ export function useTranscript(
       // 不主动 unsubscribe 主进程：那是 webContents.destroyed 时机的事；
       // 多组件共用同一 sessionId 的订阅时，提前 unsubscribe 会让其它组件失去推送
     };
-  }, [sessionId, terminal, updateSessionState, removeSession, markOriginActivity]);
+  }, [sessionId, terminal, updateSessionState, removeSession, markOriginActivity, connectionType]);
 }

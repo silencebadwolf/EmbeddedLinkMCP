@@ -124,6 +124,61 @@ describe('ConnectionProfileManager', () => {
     });
   });
 
+  it('saves RTT log profiles with workspace root targets and restores them for RTT open', async () => {
+    const manager = new ConnectionProfileManager({ filePath, secretCodec: new ReversibleCodec() });
+
+    const saved = await manager.save({
+      label: 'FNA1000 RTT',
+      config: {
+        type: 'rtt-log',
+        root: 'C:/work/FNA1000',
+        channelIndex: 0,
+        pollIntervalMs: 100,
+        maxBytesPerRead: 4096,
+      },
+    });
+
+    expect(saved).toMatchObject({
+      label: 'FNA1000 RTT',
+      type: 'rtt-log',
+      hasCredential: false,
+      config: {
+        type: 'rtt-log',
+        root: 'C:/work/FNA1000',
+        channelIndex: 0,
+        pollIntervalMs: 100,
+        maxBytesPerRead: 4096,
+      },
+    });
+
+    const persisted = await readFile(filePath, 'utf-8');
+    expect(persisted).toContain('"type": "rtt-log"');
+    expect(persisted).toContain('"root": "C:/work/FNA1000"');
+
+    await expect(manager.openConfig(saved.id)).resolves.toEqual({
+      type: 'rtt-log',
+      root: 'C:/work/FNA1000',
+      channelIndex: 0,
+      pollIntervalMs: 100,
+      maxBytesPerRead: 4096,
+    });
+  });
+
+  it('rejects RTT log saved profiles without a stable workspace root', async () => {
+    const manager = new ConnectionProfileManager({ filePath, secretCodec: new ReversibleCodec() });
+
+    await expect(
+      manager.save({
+        label: 'Transient RTT',
+        config: {
+          type: 'rtt-log',
+          probeId: 'probe-1',
+          channelIndex: 0,
+        },
+      }),
+    ).rejects.toThrow(/root/i);
+  });
+
   it('rejects saving ssh credentials when secure storage is unavailable', async () => {
     const manager = new ConnectionProfileManager({
       filePath,
