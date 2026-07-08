@@ -3,9 +3,7 @@
 ## Purpose
 
 Define LinkTerm's runtime-generated MCP operation runbook for AI clients. This capability lets packaged LinkTerm installations teach AI clients safe workflows, confirmation rules, and sanitized runtime/profile context without relying on source-repository documentation or external skills.
-
 ## Requirements
-
 ### Requirement: Runtime-generated agent runbook tool
 
 LinkTerm SHALL expose an always-registered read-only MCP tool named `get_agent_runbook` that returns an AI operation runbook generated from packaged runtime code and current non-sensitive runtime state.
@@ -44,11 +42,13 @@ The `get_agent_runbook` result SHALL include both human-readable Markdown and ma
 - **WHEN** `get_agent_runbook` succeeds
 - **THEN** the structured evidence includes a Markdown field that explains safe AI operation of LinkTerm
 - **AND** the Markdown covers terminal/serial, control profile, control workflow, J-Link debug, flash, RTT/GDB, and UI capabilities at workflow level
+- **AND** the Markdown directs agents diagnosing silent RTT logs to use `diagnose_rtt_log_session` before considering flash, reset, or external-tool recovery
 
 #### Scenario: Structured workflow data is returned
 - **WHEN** `get_agent_runbook` succeeds
 - **THEN** the structured evidence includes workflow entries with stable identifiers
 - **AND** each workflow entry identifies recommended MCP tools, risk level, whether confirmation is required, and expected evidence kind
+- **AND** the RTT observation workflow includes `diagnose_rtt_log_session` alongside `open_rtt_log_session` and `read_from_session`
 
 ### Requirement: Safety and confirmation guidance
 
@@ -104,3 +104,36 @@ The runbook tool SHALL return a normal LinkTerm MCP tool result that follows exi
 - **WHEN** `get_agent_runbook` is called with a mismatched client schema version
 - **THEN** LinkTerm follows the existing read-only version mismatch policy
 - **AND** the warning is attached to the runbook evidence metadata when the call is allowed
+
+### Requirement: Stale runtime recovery is executable through MCP
+
+When LinkTerm MCP detects that compiled runtime artifacts changed after the process started, it SHALL expose a safe MCP recovery action instead of only textual restart guidance.
+
+#### Scenario: App status recommends the runtime restart tool
+
+- **GIVEN** runtime diagnostics report `code.fresh=false`
+- **WHEN** `get_app_status` or `get_agent_runbook` returns recommended next actions
+- **THEN** the recommendations SHALL name `restart_mcp_runtime`
+- **AND** they SHALL say to call `get_app_status` again after restart before hardware operations
+
+#### Scenario: Normal state-affecting tools remain blocked while stale
+
+- **GIVEN** runtime diagnostics report `code.fresh=false`
+- **WHEN** an ordinary state-affecting tool such as `run_control_workflow` or `probe_disconnect` is called
+- **THEN** LinkTerm SHALL reject the call before backend invocation
+- **AND** the error SHALL include the stale artifact list
+
+#### Scenario: Runtime restart tool can run while stale
+
+- **GIVEN** runtime diagnostics report `code.fresh=false`
+- **WHEN** `restart_mcp_runtime` is called with `confirm=true`
+- **THEN** LinkTerm SHALL schedule a runtime restart
+- **AND** the tool SHALL return structured evidence before the process exits
+- **AND** the tool SHALL NOT touch probes, flash, reset, serial sessions, RTT, or GDB
+
+#### Scenario: Runtime restart requires confirmation
+
+- **GIVEN** `restart_mcp_runtime` is called without `confirm=true`
+- **WHEN** LinkTerm handles the request
+- **THEN** LinkTerm SHALL return `CONFIRMATION_REQUIRED`
+- **AND** it SHALL NOT schedule a restart
