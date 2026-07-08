@@ -79,6 +79,9 @@ export function normalizeRttLogOpenRequest(
   if (!probeId && !root) {
     throw new InvalidRttLogOpenRequestError('probeId or root is required');
   }
+  if (probeId && root) {
+    throw new InvalidRttLogOpenRequestError('probeId and root are mutually exclusive');
+  }
   return {
     ...(probeId ? { probeId } : {}),
     ...(root ? { root } : {}),

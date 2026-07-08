@@ -174,6 +174,39 @@ describe('registerRttLogSessionIpc', () => {
     }
   });
 
+  it('rejects RTT log open input that includes both probeId and root', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lt-rtt-ipc-mutual-'));
+    try {
+      const sessionManager = new SessionManager();
+      const backend = new FakeJLinkBackend();
+      const controlProfileManager = new ControlProfileManager();
+      await controlProfileManager.init(root, {
+        jlink: { enabled: true, target: 'AT32F435RGT7', interface: 'swd', speedKHz: 4000 },
+        rtt: { enabled: true },
+      } as Parameters<ControlProfileManager['init']>[1]);
+      registerRttLogSessionIpc(sessionManager, backend, controlProfileManager);
+      const handler = handlers.get(IPC_CHANNELS.RTT_LOG_OPEN)!;
+
+      const result = await handler(undefined, {
+        probeId: 'probe-existing',
+        root,
+        channelIndex: 0,
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          code: 'INVALID_ARGUMENT',
+        },
+      });
+      expect(backend.callsOf('probeConnect')).toEqual([]);
+      expect(backend.callsOf('rttConnect')).toEqual([]);
+      expect(sessionManager.listSummaries()).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('returns a structured failure for invalid RTT log open input', async () => {
     const sessionManager = new SessionManager();
     const backend = new FakeJLinkBackend();

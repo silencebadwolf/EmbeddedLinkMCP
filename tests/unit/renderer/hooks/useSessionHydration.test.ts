@@ -285,4 +285,73 @@ describe('useSessionHydration', () => {
     });
     expect(useAppStore.getState().activeSessionId).toBe('sess_missed_rtt');
   });
+
+  it('does not reactivate an already-known AI-created session during periodic reconciliation', async () => {
+    vi.useFakeTimers();
+    mock.spies.session.list
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          sessions: [
+            {
+              sessionId: 'sess_ai_rtt',
+              label: 'RTT ch0',
+              connectionType: 'rtt-log',
+              state: 'open',
+              createdBy: 'ai',
+              rttLog: { probeId: 'probe-1', channelIndex: 0 },
+            },
+            {
+              sessionId: 'sess_manual_serial',
+              label: 'COM6',
+              connectionType: 'serial',
+              state: 'open',
+            },
+          ],
+        },
+      } as never)
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          sessions: [
+            {
+              sessionId: 'sess_ai_rtt',
+              label: 'RTT ch0',
+              connectionType: 'rtt-log',
+              state: 'open',
+              createdBy: 'ai',
+              rttLog: { probeId: 'probe-1', channelIndex: 0 },
+            },
+            {
+              sessionId: 'sess_manual_serial',
+              label: 'COM6',
+              connectionType: 'serial',
+              state: 'open',
+            },
+          ],
+        },
+      } as never);
+
+    const { useSessionHydration } = await import(
+      '../../../../src/renderer/hooks/useSessionHydration.js'
+    );
+
+    renderHook(() => useSessionHydration());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(useAppStore.getState().activeSessionId).toBe('sess_ai_rtt');
+
+    act(() => {
+      useAppStore.getState().setActive('sess_manual_serial');
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(useAppStore.getState().activeSessionId).toBe('sess_manual_serial');
+  });
 });

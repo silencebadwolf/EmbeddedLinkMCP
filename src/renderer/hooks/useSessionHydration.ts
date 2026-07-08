@@ -49,8 +49,9 @@ export function useSessionHydration(): void {
       const result = await api.session.list();
       if (cancelled || !result.success) return;
       for (const summary of result.data.sessions) {
+        const isKnownSession = useAppStore.getState().sessions.has(summary.sessionId);
         upsertSummary(summary);
-        if (summary.createdBy === 'ai') {
+        if (!isKnownSession && summary.createdBy === 'ai') {
           setActive(summary.sessionId);
         }
       }
