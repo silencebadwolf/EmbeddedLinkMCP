@@ -75,9 +75,29 @@ export const activateControlProfileInputSchema = z
   })
   .strict();
 
+/** connect_control_profile_chip 入参。 */
+export const connectControlProfileChipInputSchema = z
+  .object({
+    ...commonSchema,
+    root: requiredRoot,
+  })
+  .strict();
+
+/** disconnect_control_profile_chip 入参。 */
+export const disconnectControlProfileChipInputSchema = z
+  .object({
+    ...commonSchema,
+    probeId: z.string().uuid(),
+  })
+  .strict();
+
 export type InitControlProfileInput = z.infer<typeof initControlProfileInputSchema>;
 export type GetControlProfileInput = z.infer<typeof getControlProfileInputSchema>;
 export type InspectControlProfileInput = z.infer<typeof inspectControlProfileInputSchema>;
 export type PrepareControlProfileQuestionsInput = z.infer<typeof prepareControlProfileQuestionsInputSchema>;
 export type ApplyControlProfileAnswerInput = z.infer<typeof applyControlProfileAnswerInputSchema>;
 export type ActivateControlProfileInput = z.infer<typeof activateControlProfileInputSchema>;
+export type ConnectControlProfileChipInput = z.infer<typeof connectControlProfileChipInputSchema>;
+export type DisconnectControlProfileChipInput = z.infer<
+  typeof disconnectControlProfileChipInputSchema
+>;

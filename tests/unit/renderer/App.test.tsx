@@ -617,6 +617,82 @@ describe('App', () => {
     expect(screen.getByTestId('terminal-sess_reconnect_profile')).toBeVisible();
   });
 
+  it('connects and disconnects the chip separately from the opened session', async () => {
+    const record = {
+      id: 'ctrl_chip_lifecycle',
+      label: 'repo - Chip Lifecycle',
+      root: 'C:/repo',
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' as const },
+        jlink: {
+          enabled: true,
+          target: 'STM32H743II',
+          interface: 'swd' as const,
+          speedKHz: 'auto' as const,
+        },
+        flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    const connectChip = vi.fn(async () => ({
+      success: true as const,
+      data: {
+        probe: {
+          probeId: '11111111-1111-4111-8111-111111111111',
+          target: 'STM32H743II',
+          connected: true,
+        },
+      },
+    }));
+    const disconnectChip = vi.fn(async () => ({
+      success: true as const,
+      data: { probeId: '11111111-1111-4111-8111-111111111111', disconnected: true },
+    }));
+    Object.assign(mock.api.controlProfile as Record<string, unknown>, {
+      connectChip,
+      disconnectChip,
+    });
+    mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
+    mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
+      success: true,
+      data: { path: 'C:/repo/.linkterm/control-profile.json', record },
+    });
+    mock.spies.session.create.mockResolvedValueOnce({
+      success: true,
+      data: { sessionId: 'sess_chip_lifecycle', state: 'open' },
+    });
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId('control-profile-open'));
+    expect(
+      within(await screen.findByRole('dialog')).getByText('repo - Chip Lifecycle'),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
+
+    const statusPanel = await screen.findByTestId('control-profile-status');
+    fireEvent.click(within(statusPanel).getByRole('button', { name: 'Connect chip' }));
+
+    await waitFor(() => expect(connectChip).toHaveBeenCalledWith({ root: 'C:/repo' }));
+    expect(mock.spies.session.create).toHaveBeenCalledTimes(1);
+    expect(statusPanel).toHaveTextContent('Chip connected');
+    expect(statusPanel).toHaveTextContent('11111111-1111-4111-8111-111111111111');
+
+    fireEvent.click(within(statusPanel).getByRole('button', { name: 'Disconnect chip' }));
+
+    await waitFor(() =>
+      expect(disconnectChip).toHaveBeenCalledWith({
+        probeId: '11111111-1111-4111-8111-111111111111',
+      }),
+    );
+    expect(mock.spies.session.destroy).not.toHaveBeenCalled();
+    expect(statusPanel).toHaveTextContent('Chip disconnected');
+  });
+
   it('opens a saved RTT control profile and shows resolved RTT details', async () => {
     const record = {
       id: 'ctrl_rtt',

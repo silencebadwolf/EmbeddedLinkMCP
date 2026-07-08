@@ -20,6 +20,7 @@ import type { ControlProfileOpenedEvent } from './components/ControlProfilePanel
 import type {
   ControlProfileDownloadJobPayload,
   ControlProfileDownloadResultPayload,
+  ControlProfileChipProbePayload,
   ControlProfileNamespace,
   ControlProfileWorkflowStepPayload,
   SavedControlProfileRecordPayload,
@@ -51,6 +52,8 @@ export function App(): React.ReactElement {
     React.useState<ControlProfileOpenedEvent | null>(null);
   const [controlProfileDownload, setControlProfileDownload] =
     React.useState<ControlProfileDownloadState>({ phase: 'idle' });
+  const [controlProfileChip, setControlProfileChip] =
+    React.useState<ControlProfileChipState>({ phase: 'idle' });
   const [controlProfileConnecting, setControlProfileConnecting] = React.useState(false);
   const [controlProfileDisconnecting, setControlProfileDisconnecting] = React.useState(false);
   const [controlProfileRecords, setControlProfileRecords] = React.useState<
@@ -130,6 +133,7 @@ export function App(): React.ReactElement {
 
   React.useEffect(() => {
     setControlProfileDownload({ phase: 'idle' });
+    setControlProfileChip({ phase: 'idle' });
   }, [openedControlProfile?.record.id]);
 
   const openControlProfileRecord = React.useCallback(
@@ -235,6 +239,43 @@ export function App(): React.ReactElement {
     rememberOpenedControlProfile,
     removeSession,
   ]);
+
+  const connectControlProfileChip = React.useCallback(async (): Promise<void> => {
+    if (openedControlProfile === null) return;
+    const api = getLinkterm();
+    if (!api) {
+      setControlProfileChip({ phase: 'failed', error: preloadUnavailableMessage });
+      return;
+    }
+    setControlProfileChip({ phase: 'connecting' });
+    const result = await api.controlProfile.connectChip({ root: openedControlProfile.record.root });
+    if (result.success) {
+      setControlProfileChip({ phase: 'connected', probe: result.data.probe });
+      return;
+    }
+    setControlProfileChip({ phase: 'failed', error: result.error.message });
+  }, [openedControlProfile, preloadUnavailableMessage]);
+
+  const disconnectControlProfileChip = React.useCallback(async (): Promise<void> => {
+    if (controlProfileChip.phase !== 'connected') return;
+    const api = getLinkterm();
+    if (!api) {
+      setControlProfileChip({
+        phase: 'failed',
+        error: preloadUnavailableMessage,
+        probe: controlProfileChip.probe,
+      });
+      return;
+    }
+    const probe = controlProfileChip.probe;
+    setControlProfileChip({ phase: 'disconnecting', probe });
+    const result = await api.controlProfile.disconnectChip({ probeId: probe.probeId });
+    if (result.success) {
+      setControlProfileChip({ phase: 'disconnected' });
+      return;
+    }
+    setControlProfileChip({ phase: 'failed', error: result.error.message, probe });
+  }, [controlProfileChip, preloadUnavailableMessage]);
 
   const downloadControlProfile = React.useCallback(async (): Promise<void> => {
     if (openedControlProfile === null) return;
@@ -367,10 +408,13 @@ export function App(): React.ReactElement {
           <ControlProfileStatusPanel
             event={visibleControlProfile}
             download={controlProfileDownload}
+            chip={controlProfileChip}
             connecting={controlProfileConnecting}
             disconnecting={controlProfileDisconnecting}
             onConnect={() => void connectControlProfile()}
             onDisconnect={() => void disconnectControlProfile()}
+            onConnectChip={() => void connectControlProfileChip()}
+            onDisconnectChip={() => void disconnectControlProfileChip()}
             onDownload={() => void downloadControlProfile()}
           />
         ) : null}
@@ -519,18 +563,24 @@ function ControlProfileSidebar({
 function ControlProfileStatusPanel({
   event,
   download,
+  chip,
   connecting,
   disconnecting,
   onConnect,
   onDisconnect,
+  onConnectChip,
+  onDisconnectChip,
   onDownload,
 }: {
   event: ControlProfileOpenedEvent;
   download: ControlProfileDownloadState;
+  chip: ControlProfileChipState;
   connecting: boolean;
   disconnecting: boolean;
   onConnect(): void;
   onDisconnect(): void;
+  onConnectChip(): void;
+  onDisconnectChip(): void;
   onDownload(): void;
 }): React.ReactElement {
   const t = useT();
@@ -554,6 +604,8 @@ function ControlProfileStatusPanel({
   const disconnectingLabel = isSerialObservation
     ? t('controlProfile.serial.disconnecting')
     : t('controlProfile.disconnecting');
+  const chipConnected = chip.phase === 'connected';
+  const chipBusy = chip.phase === 'connecting' || chip.phase === 'disconnecting';
 
   return (
     <section
@@ -597,6 +649,30 @@ function ControlProfileStatusPanel({
             {disconnecting ? disconnectingLabel : disconnectLabel}
           </Button>
         </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={onConnectChip}
+            disabled={chipBusy || chipConnected}
+          >
+            {chip.phase === 'connecting'
+              ? t('controlProfile.chip.connecting')
+              : t('controlProfile.chip.connect')}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={onDisconnectChip}
+            disabled={chipBusy || !chipConnected}
+          >
+            {chip.phase === 'disconnecting'
+              ? t('controlProfile.chip.disconnecting')
+              : t('controlProfile.chip.disconnect')}
+          </Button>
+        </div>
         <Button
           type="button"
           size="sm"
@@ -608,6 +684,8 @@ function ControlProfileStatusPanel({
             : t('controlProfile.download')}
         </Button>
       </div>
+
+      <ChipStatusPanel chip={chip} />
 
       <StatusBar download={download} />
 
@@ -664,6 +742,56 @@ type ControlProfileDownloadState =
   | { phase: 'running'; job?: ControlProfileDownloadJobPayload }
   | { phase: 'succeeded'; result: ControlProfileDownloadResultPayload }
   | { phase: 'failed'; error: string; result?: ControlProfileDownloadResultPayload };
+
+type ControlProfileChipState =
+  | { phase: 'idle' }
+  | { phase: 'connecting' }
+  | { phase: 'connected'; probe: ControlProfileChipProbePayload }
+  | { phase: 'disconnecting'; probe: ControlProfileChipProbePayload }
+  | { phase: 'disconnected' }
+  | { phase: 'failed'; error: string; probe?: ControlProfileChipProbePayload };
+
+function ChipStatusPanel({ chip }: { chip: ControlProfileChipState }): React.ReactElement {
+  const t = useT();
+  const probe = 'probe' in chip ? chip.probe : undefined;
+  const status = describeChipPhase(chip, t);
+  return (
+    <div className="mt-3 rounded border border-gray-800 bg-gray-950/50 px-3 py-2 text-xs text-gray-200">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-gray-400">{t('controlProfile.chip.status')}</span>
+        <span className="shrink-0 text-gray-100">{status}</span>
+      </div>
+      {probe ? (
+        <div className="mt-1 min-w-0 truncate text-gray-400">
+          {probe.target ? `${probe.target} / ${probe.probeId}` : probe.probeId}
+        </div>
+      ) : null}
+      {chip.phase === 'failed' ? (
+        <div className="mt-1 break-words text-red-200">{chip.error}</div>
+      ) : null}
+    </div>
+  );
+}
+
+function describeChipPhase(
+  chip: ControlProfileChipState,
+  t: ReturnType<typeof useT>,
+): string {
+  switch (chip.phase) {
+    case 'idle':
+      return t('controlProfile.chip.idle');
+    case 'connecting':
+      return t('controlProfile.chip.connecting');
+    case 'connected':
+      return t('controlProfile.chip.connected');
+    case 'disconnecting':
+      return t('controlProfile.chip.disconnecting');
+    case 'disconnected':
+      return t('controlProfile.chip.disconnected');
+    case 'failed':
+      return t('controlProfile.chip.failed');
+  }
+}
 
 function StatusBar({ download }: { download: ControlProfileDownloadState }): React.ReactElement {
   const t = useT();

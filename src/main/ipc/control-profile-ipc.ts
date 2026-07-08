@@ -20,7 +20,12 @@ import {
   decodeFirmwareImageByPath,
   isSelfDescribingFirmwareImagePath,
 } from '../../core/workspace/firmware-image.js';
+import {
+  ControlProfileChipConfigError,
+  connectControlProfileChip,
+} from '../../core/workspace/control-profile-chip.js';
 import { formatHexAddress } from '../../core/workspace/intel-hex.js';
+import { JLinkError } from '../../jlink/errors.js';
 import type { IJLinkBackend, JLinkDeviceCatalog } from '../../jlink/index.js';
 import type { SessionManager } from '../../core/session/session-manager.js';
 import { defaultOpenSerial } from '../../mcp/surfaces/control-profile/tools.js';
@@ -33,6 +38,7 @@ import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type {
   ControlProfileDownloadJobPayload,
   ControlProfileDownloadResultPayload,
+  ControlProfileChipProbePayload,
   ControlProfileFilePayload,
   ControlProfilePayload,
   PreloadResult,
@@ -218,6 +224,43 @@ export function registerControlProfileIpc(
   );
 
   ipcMain.handle(
+    IPC_CHANNELS.CONTROL_PROFILE_CONNECT_CHIP,
+    async (_event, raw: unknown): Promise<PreloadResult<{ probe: ControlProfileChipProbePayload }>> => {
+      try {
+        if (!options.jlinkBackend) throw new Error('J-Link runtime is unavailable');
+        const root = parseRootPayload(raw);
+        const profile = await manager.load(root);
+        const probe = await connectControlProfileChip(profile, options.jlinkBackend);
+        if (probe === undefined) {
+          throw new ControlProfileChipConfigError(
+            'jlink.enabled=true is required in control-profile.json',
+          );
+        }
+        return { success: true, data: { probe } };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTROL_PROFILE_DISCONNECT_CHIP,
+    async (
+      _event,
+      raw: unknown,
+    ): Promise<PreloadResult<{ probeId: string; disconnected: true }>> => {
+      try {
+        if (!options.jlinkBackend) throw new Error('J-Link runtime is unavailable');
+        const probeId = parseProbeIdPayload(raw);
+        await options.jlinkBackend.probeDisconnect(probeId);
+        return { success: true, data: { probeId, disconnected: true } };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
     IPC_CHANNELS.CONTROL_PROFILE_LOAD,
     async (
       _event,
@@ -257,6 +300,8 @@ export function registerControlProfileIpc(
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_STATUS);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_READ);
+    ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_CONNECT_CHIP);
+    ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_DISCONNECT_CHIP);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_PICK_WORKSPACE_ROOT);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_PICK_FIRMWARE_FILE);
   };
@@ -502,6 +547,14 @@ function parseJobIdPayload(raw: unknown): string {
   return jobId;
 }
 
+function parseProbeIdPayload(raw: unknown): string {
+  if (typeof raw !== 'object' || raw === null) throw new Error('Invalid payload');
+  const probeId = (raw as { probeId?: unknown }).probeId;
+  if (typeof probeId !== 'string' || probeId.trim().length === 0)
+    throw new Error('probeId is required');
+  return probeId;
+}
+
 function toIpcError<T>(err: unknown): PreloadResult<T> {
   if (err instanceof ToolError) {
     return { success: false, error: { code: err.code, message: err.message } };
@@ -522,6 +575,12 @@ function toIpcError<T>(err: unknown): PreloadResult<T> {
     return { success: false, error: { code: err.code, message: err.message } };
   }
   if (err instanceof WorkspaceInvalidRootError) {
+    return { success: false, error: { code: err.code, message: err.message } };
+  }
+  if (err instanceof ControlProfileChipConfigError) {
+    return { success: false, error: { code: err.code, message: err.message } };
+  }
+  if (err instanceof JLinkError) {
     return { success: false, error: { code: err.code, message: err.message } };
   }
   const message = err instanceof Error ? err.message : String(err);

@@ -18,6 +18,8 @@ const CORE_TOOL_NAMES = [
   'prepare_control_profile_questions',
   'apply_control_profile_answer',
   'activate_control_profile',
+  'connect_control_profile_chip',
+  'disconnect_control_profile_chip',
   'run_control_workflow',
   'get_control_workflow_job_status',
   'read_control_workflow_job',

@@ -296,6 +296,62 @@ describe('MCP control profile tools', () => {
     expect(evidence.data.flash?.baseAddress).toBe('0x08000000');
   });
 
+  it('connect_control_profile_chip connects J-Link from the profile without opening observation', async () => {
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        serial: { enabled: true, port: 'COM7', baudRate: 921600, mode: 'terminal' },
+        jlink: { enabled: true, target: 'STM32H743IIT6', interface: 'swd', speedKHz: 4000 },
+        flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+      },
+    });
+
+    const out = await callTool(h.client, 'connect_control_profile_chip', { root: h.root });
+
+    expect(out.success).toBe(true);
+    expect(h.openedSerialConfigs).toEqual([]);
+    expect(h.fake.callsOf('probeConnect')).toHaveLength(1);
+    expect(h.fake.callsOf('probeConnect')[0]!.args[0]).toEqual({
+      target: 'STM32H743II',
+      interface: 'swd',
+      speedKHz: 4000,
+    });
+    expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
+
+    const evidence = out.evidence as {
+      data: { root: string; jlink?: { probeId: string; target?: string; serialNumber?: string } };
+    };
+    expect(evidence.data.root).toBe(h.root);
+    expect(evidence.data.jlink?.probeId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(evidence.data.jlink?.target).toBe('STM32H743II');
+    expect(evidence.data.jlink?.serialNumber).toBeUndefined();
+  });
+
+  it('disconnect_control_profile_chip disconnects a profile-connected probe', async () => {
+    await callTool(h.client, 'init_control_profile', {
+      root: h.root,
+      profile: {
+        jlink: { enabled: true, target: 'STM32F407VG', interface: 'swd', speedKHz: 4000 },
+      },
+    });
+    const connected = await callTool(h.client, 'connect_control_profile_chip', { root: h.root });
+    const probeId = (
+      connected.evidence as {
+        data: { jlink: { probeId: string } };
+      }
+    ).data.jlink.probeId;
+
+    const out = await callTool(h.client, 'disconnect_control_profile_chip', { probeId });
+
+    expect(out.success).toBe(true);
+    expect(h.fake.callsOf('probeDisconnect')).toHaveLength(1);
+    expect(h.fake.callsOf('probeDisconnect')[0]!.args[0]).toBe(probeId);
+    expect(out.evidence).toMatchObject({
+      kind: 'debug_output',
+      data: { probeId, disconnected: true },
+    });
+  });
+
   it('activate_control_profile tries descending J-Link speeds when profile speed is auto', async () => {
     h.fake.failOnce.set(
       'probeConnect',

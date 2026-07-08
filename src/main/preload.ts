@@ -32,6 +32,7 @@ import type {
   JLinkDeviceInfoPayload,
   JLinkDeviceSearchResultPayload,
   ControlProfileDownloadJobPayload,
+  ControlProfileChipProbePayload,
   ControlProfileFilePayload,
   ControlProfileDownloadResultPayload,
   SavedControlProfileRecordPayload,
@@ -156,6 +157,16 @@ const api: PreloadAPI = {
       invoke<ControlProfileDownloadJobPayload>(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_STATUS, req),
     readDownload: (req) =>
       invoke<ControlProfileDownloadJobPayload>(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_READ, req),
+    connectChip: (req) =>
+      invoke<{ probe: ControlProfileChipProbePayload }>(
+        IPC_CHANNELS.CONTROL_PROFILE_CONNECT_CHIP,
+        req,
+      ),
+    disconnectChip: (req) =>
+      invoke<{ probeId: string; disconnected: true }>(
+        IPC_CHANNELS.CONTROL_PROFILE_DISCONNECT_CHIP,
+        req,
+      ),
     pickWorkspaceRoot: () =>
       invoke<{ root: string | null }>(IPC_CHANNELS.CONTROL_PROFILE_PICK_WORKSPACE_ROOT),
     pickFirmwareFile: () =>

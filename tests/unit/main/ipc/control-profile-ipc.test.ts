@@ -334,4 +334,65 @@ describe('registerControlProfileIpc', () => {
       data: expect.objectContaining({ workflow }),
     });
   });
+
+  it('connects and disconnects the profile chip over IPC without opening sessions', async () => {
+    const savedProfile = {
+      schemaVersion: 'linkterm-control/1.0.0' as const,
+      serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' as const },
+      jlink: {
+        enabled: true,
+        target: 'STM32H743IIT6',
+        interface: 'swd' as const,
+        speedKHz: 4000,
+      },
+      flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+    };
+    const manager = {
+      load: vi.fn(async () => savedProfile),
+    } as unknown as ControlProfileManager;
+    const jlinkBackend = {
+      probeConnect: vi.fn(async () => ({
+        probeId: '11111111-1111-4111-8111-111111111111',
+        serialNumber: 'JLINK-SERIAL-SHOULD-NOT-LEAK',
+        target: 'STM32H743II',
+        connected: true,
+      })),
+      probeDisconnect: vi.fn(async () => undefined),
+    };
+    registerControlProfileIpc(manager, undefined, {
+      jlinkBackend,
+    } as never);
+
+    const connect = handlers.get((IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_CONNECT_CHIP)!;
+    const connected = await connect({}, { root: 'C:/repo' });
+
+    expect(connected).toEqual({
+      success: true,
+      data: {
+        probe: {
+          probeId: '11111111-1111-4111-8111-111111111111',
+          target: 'STM32H743II',
+          connected: true,
+        },
+      },
+    });
+    expect(jlinkBackend.probeConnect).toHaveBeenCalledWith({
+      target: 'STM32H743II',
+      interface: 'swd',
+      speedKHz: 4000,
+    });
+
+    const disconnect = handlers.get(
+      (IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_DISCONNECT_CHIP,
+    )!;
+    await expect(
+      disconnect({}, { probeId: '11111111-1111-4111-8111-111111111111' }),
+    ).resolves.toEqual({
+      success: true,
+      data: { probeId: '11111111-1111-4111-8111-111111111111', disconnected: true },
+    });
+    expect(jlinkBackend.probeDisconnect).toHaveBeenCalledWith(
+      '11111111-1111-4111-8111-111111111111',
+    );
+  });
 });

@@ -50,6 +50,8 @@ export const IPC_CHANNELS = {
   CONTROL_PROFILE_START_DOWNLOAD: 'controlProfile:startDownload',
   CONTROL_PROFILE_DOWNLOAD_STATUS: 'controlProfile:downloadStatus',
   CONTROL_PROFILE_DOWNLOAD_READ: 'controlProfile:downloadRead',
+  CONTROL_PROFILE_CONNECT_CHIP: 'controlProfile:connectChip',
+  CONTROL_PROFILE_DISCONNECT_CHIP: 'controlProfile:disconnectChip',
   CONTROL_PROFILE_PICK_WORKSPACE_ROOT: 'controlProfile:pickWorkspaceRoot',
   CONTROL_PROFILE_PICK_FIRMWARE_FILE: 'controlProfile:pickFirmwareFile',
 } as const;

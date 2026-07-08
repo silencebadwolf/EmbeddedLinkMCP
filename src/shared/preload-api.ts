@@ -475,6 +475,12 @@ export interface ControlProfileDownloadJobPayload {
   workflow?: ControlProfileDownloadResultPayload;
 }
 
+export interface ControlProfileChipProbePayload {
+  probeId: string;
+  target?: string;
+  connected: boolean;
+}
+
 /** 工作区控制配置命名空间。 */
 export interface ControlProfileNamespace {
   /** 保存/覆盖 `<root>/.linkterm/control-profile.json`。 */
@@ -514,6 +520,14 @@ export interface ControlProfileNamespace {
   getDownloadStatus(req: { jobId: string }): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
   /** 读取后台下载/烧录 job 的完整结构化证据。 */
   readDownload(req: { jobId: string }): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
+  /** 按当前工作区 control-profile.json 只连接芯片/J-Link，不创建串口或 RTT 会话。 */
+  connectChip(req: {
+    root: string;
+  }): Promise<PreloadResult<{ probe: ControlProfileChipProbePayload }>>;
+  /** 断开芯片/J-Link 连接，不关闭串口或 RTT 会话。 */
+  disconnectChip(req: {
+    probeId: string;
+  }): Promise<PreloadResult<{ probeId: string; disconnected: true }>>;
   /** 选择工作区目录；用户取消时 root 为 null。 */
   pickWorkspaceRoot(): Promise<PreloadResult<{ root: string | null }>>;
   /** 选择固件文件；用户取消时 path 为 null；Intel HEX/ELF 可附带检测出的 baseAddress。 */

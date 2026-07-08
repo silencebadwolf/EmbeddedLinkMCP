@@ -20,6 +20,7 @@ import type {
   AgentIntegrationDiagnosticResult,
   JLinkDeviceSearchResultPayload,
   ControlProfileDownloadJobPayload,
+  ControlProfileChipProbePayload,
   ControlProfileFilePayload,
   ControlProfileDownloadResultPayload,
   SavedControlProfileRecordPayload,
@@ -91,6 +92,8 @@ export interface MockPreloadAPI {
       startDownload: ReturnType<typeof vi.fn>;
       getDownloadStatus: ReturnType<typeof vi.fn>;
       readDownload: ReturnType<typeof vi.fn>;
+      connectChip: ReturnType<typeof vi.fn>;
+      disconnectChip: ReturnType<typeof vi.fn>;
       pickWorkspaceRoot: ReturnType<typeof vi.fn>;
       pickFirmwareFile: ReturnType<typeof vi.fn>;
     };
@@ -325,6 +328,23 @@ export function createMockPreloadAPI(): MockPreloadAPI {
     async (): Promise<PreloadResult<ControlProfileDownloadJobPayload>> =>
       okEmpty(defaultControlProfileDownloadJob),
   );
+  const controlProfileConnectChip = vi.fn(
+    async (): Promise<PreloadResult<{ probe: ControlProfileChipProbePayload }>> =>
+      okEmpty({
+        probe: {
+          probeId: '11111111-1111-4111-8111-111111111111',
+          target: 'STM32H743II',
+          connected: true,
+        },
+      }),
+  );
+  const controlProfileDisconnectChip = vi.fn(
+    async (): Promise<PreloadResult<{ probeId: string; disconnected: true }>> =>
+      okEmpty({
+        probeId: '11111111-1111-4111-8111-111111111111',
+        disconnected: true,
+      }),
+  );
   const controlProfilePickWorkspaceRoot = vi.fn(async () => okEmpty({ root: 'C:/repo' }));
   const controlProfilePickFirmwareFile = vi.fn(async () => okEmpty({ path: 'build/app.bin' }));
 
@@ -379,6 +399,8 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       startDownload: controlProfileStartDownload,
       getDownloadStatus: controlProfileGetDownloadStatus,
       readDownload: controlProfileReadDownload,
+      connectChip: controlProfileConnectChip,
+      disconnectChip: controlProfileDisconnectChip,
       pickWorkspaceRoot: controlProfilePickWorkspaceRoot,
       pickFirmwareFile: controlProfilePickFirmwareFile,
     },
@@ -433,6 +455,8 @@ export function createMockPreloadAPI(): MockPreloadAPI {
         startDownload: controlProfileStartDownload,
         getDownloadStatus: controlProfileGetDownloadStatus,
         readDownload: controlProfileReadDownload,
+        connectChip: controlProfileConnectChip,
+        disconnectChip: controlProfileDisconnectChip,
         pickWorkspaceRoot: controlProfilePickWorkspaceRoot,
         pickFirmwareFile: controlProfilePickFirmwareFile,
       },

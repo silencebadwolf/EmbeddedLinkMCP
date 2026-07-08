@@ -22,10 +22,13 @@ import {
   type HostPathResolver,
 } from '../../../core/workspace/index.js';
 import { decodeFirmwareImageByPath } from '../../../core/workspace/firmware-image.js';
+import {
+  ControlProfileChipConfigError,
+  connectControlProfileChip,
+} from '../../../core/workspace/control-profile-chip.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
-import type { IJLinkBackend, ProbeConnectOptions, ProbeInfo } from '../../../jlink/types.js';
+import type { IJLinkBackend } from '../../../jlink/types.js';
 import type { JLinkDeviceCatalog, JLinkDeviceInfo } from '../../../jlink/device-catalog.js';
-import { JLinkOperationError } from '../../../jlink/errors.js';
 import type { SerialSessionConfig, SessionState } from '../../../shared/types.js';
 import type { SessionCreateRequestConfig } from '../../../shared/preload-api.js';
 import { classifyJLinkTargetName } from '../../../shared/jlink-target-name.js';
@@ -37,12 +40,16 @@ import { checkFirmwareVectorTable } from '../debug/firmware-sanity.js';
 import {
   activateControlProfileInputSchema,
   applyControlProfileAnswerInputSchema,
+  connectControlProfileChipInputSchema,
+  disconnectControlProfileChipInputSchema,
   getControlProfileInputSchema,
   initControlProfileInputSchema,
   inspectControlProfileInputSchema,
   prepareControlProfileQuestionsInputSchema,
   type ActivateControlProfileInput,
   type ApplyControlProfileAnswerInput,
+  type ConnectControlProfileChipInput,
+  type DisconnectControlProfileChipInput,
   type GetControlProfileInput,
   type InitControlProfileInput,
   type InspectControlProfileInput,
@@ -71,8 +78,6 @@ export interface ControlProfileToolsDeps {
   controlProfileOpenSerial?: ControlProfileOpenSerial;
 }
 
-/** J-Link auto speed 从最高速向下尝试，避免最高速不稳定时直接失败。 */
-const AUTO_JLINK_SPEEDS_KHZ = [50_000, 25_000, 10_000, 8_000, 4_000, 1_000] as const;
 const FIRMWARE_DIAGNOSTIC_READ_BYTES = 1024 * 1024;
 
 interface ControlProfileDiagnostic {
@@ -286,6 +291,57 @@ export function registerControlProfileTools(
       }
     },
   });
+
+  registerTool(server, {
+    name: 'connect_control_profile_chip',
+    description:
+      'Read <root>/.linkterm/control-profile.json and connect only the configured J-Link chip target. ' +
+      'This does not open serial/RTT sessions and never flashes, erases, resets, halts, or starts GDB.',
+    sensitivity: 'state-affecting',
+    inputSchema: connectControlProfileChipInputSchema,
+    handler: async (input: ConnectControlProfileChipInput): Promise<ToolHandlerResult> => {
+      try {
+        const rootContext = await resolveControlRoot(input.root, hostPathResolver);
+        const profile = await deps.controlProfileManager.load(rootContext.hostRoot);
+        const jlink = await runJLink(() =>
+          connectControlProfileChip(profile, deps.jlinkBackend),
+        );
+        return {
+          success: true,
+          evidence: {
+            kind: 'debug_output',
+            data: {
+              ...rootEvidence(rootContext),
+              jlink,
+              connected: jlink !== undefined,
+            },
+            cursor: 0,
+          },
+        };
+      } catch (err) {
+        translateControlProfileError(err);
+      }
+    },
+  });
+
+  registerTool(server, {
+    name: 'disconnect_control_profile_chip',
+    description:
+      'Disconnect a J-Link probe previously connected for a workspace control profile. This only releases the chip connection and does not close serial or RTT sessions.',
+    sensitivity: 'state-affecting',
+    inputSchema: disconnectControlProfileChipInputSchema,
+    handler: async (input: DisconnectControlProfileChipInput): Promise<ToolHandlerResult> => {
+      await runJLink(() => deps.jlinkBackend.probeDisconnect(input.probeId));
+      return {
+        success: true,
+        evidence: {
+          kind: 'debug_output',
+          data: { probeId: input.probeId, disconnected: true },
+          cursor: 0,
+        },
+      };
+    },
+  });
 }
 
 /**
@@ -345,22 +401,8 @@ async function activateSerial(
 async function activateJLink(
   profile: ControlProfile,
   jlinkBackend: IJLinkBackend,
-): Promise<Omit<ProbeInfo, 'serialNumber'> | undefined> {
-  if (profile.jlink?.enabled !== true) return undefined;
-  const { target } = profile.jlink;
-  if (target === undefined) {
-    throw new ToolError(
-      ERROR_CODES.INVALID_ARGUMENT,
-      'jlink.enabled=true requires jlink.target in control-profile.json',
-    );
-  }
-  const targetClassification = classifyJLinkTargetName(target);
-  const opts: ProbeConnectOptions = { target: targetClassification.normalizedTarget };
-  if (profile.jlink.interface !== undefined) opts.interface = profile.jlink.interface;
-  const probe = await runJLink(() =>
-    connectProbeWithConfiguredSpeed(jlinkBackend, opts, profile.jlink?.speedKHz),
-  );
-  return sanitizeProbeForMcp(probe);
+): ReturnType<typeof connectControlProfileChip> {
+  return runJLink(() => connectControlProfileChip(profile, jlinkBackend));
 }
 
 async function inspectControlProfileDiagnostics(
@@ -431,53 +473,6 @@ async function inspectControlProfileDiagnostics(
     });
     return diagnostics;
   }
-}
-
-/**
- * 按 control-profile 中配置的速度连接 J-Link；auto 会从最高速向下回退。
- *
- * @param jlinkBackend J-Link backend
- * @param baseOpts 不含 speedKHz 的连接选项
- * @param speedKHz 数字速度或 auto
- * @returns backend 返回的 probe 信息
- */
-async function connectProbeWithConfiguredSpeed(
-  jlinkBackend: IJLinkBackend,
-  baseOpts: ProbeConnectOptions,
-  speedKHz: number | 'auto' | undefined,
-): Promise<ProbeInfo> {
-  if (speedKHz === undefined) return jlinkBackend.probeConnect(baseOpts);
-  if (typeof speedKHz === 'number') {
-    return jlinkBackend.probeConnect({ ...baseOpts, speedKHz });
-  }
-
-  let lastError: JLinkOperationError | undefined;
-  for (const candidate of AUTO_JLINK_SPEEDS_KHZ) {
-    try {
-      return await jlinkBackend.probeConnect({ ...baseOpts, speedKHz: candidate });
-    } catch (err) {
-      if (!(err instanceof JLinkOperationError)) throw err;
-      lastError = err;
-    }
-  }
-  throw (
-    lastError ??
-    new JLinkOperationError('Unable to connect J-Link with auto speed', {
-      operation: 'probeConnect',
-    })
-  );
-}
-
-/**
- * 去掉 MCP 边界不应暴露的 J-Link serialNumber.
- *
- * @param p backend 返回的 probe 信息
- * @returns 不含 serialNumber 的 probe 信息
- */
-function sanitizeProbeForMcp(p: ProbeInfo): Omit<ProbeInfo, 'serialNumber'> {
-  const { serialNumber: _serialNumber, ...rest } = p;
-  void _serialNumber;
-  return rest;
 }
 
 interface ControlRootContext {
@@ -622,6 +617,9 @@ function translateControlProfileError(err: unknown): never {
     throw new ToolError(ERROR_CODES.INVALID_ARGUMENT, err.message, {
       root: err.root,
     });
+  }
+  if (err instanceof ControlProfileChipConfigError) {
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENT, err.message);
   }
   if (err instanceof ZodError) {
     const safeIssues = err.issues.map((i) => ({
