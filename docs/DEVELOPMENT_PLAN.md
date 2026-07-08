@@ -2,7 +2,7 @@
 
 ## Context
 
-LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形成单一运行时的桌面终端 + MCP 自动化平台。当前项目为完全绿地状态，仅有 `PROJECT_REQUIREMENTS.md`。本计划将需求拆分为 13 个可交付、可测试的阶段，按依赖顺序推进。
+LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形成单一运行时的桌面终端 + MCP 自动化平台。本计划起草时项目为完全绿地状态，仅有需求文档；当前状态以阶段记录、工程卫生追记和 README 为准。本计划将需求拆分为 13 个可交付、可测试的阶段，按依赖顺序推进。
 
 ---
 
@@ -206,7 +206,7 @@ link-terminal-demo/
 ├── tsconfig.json / tsconfig.main.json / tsconfig.renderer.json
 ├── vite.config.ts
 ├── electron-builder.yml
-└── PROJECT_REQUIREMENTS.md
+└── docs/PROJECT_REQUIREMENTS.md
 ```
 
 ---
@@ -1301,6 +1301,12 @@ OpenSpec change `add-rtt-log-terminal-session` 在现有 backend-owned RTT clien
 | `pnpm test` | ✅ 59 文件 / **542 个测试通过** |
 | `pnpm run validate:licenses` | ✅ PASS: All 19 dependencies have valid license entries |
 
+### 工程卫生追记（2026-07-08）
+
+- GitNexus 索引已刷新到当前 HEAD：`node .gitnexus/run.cjs analyze` 成功，`node .gitnexus/run.cjs status` 显示 indexed/current commit 与本轮文档提交一致，规模为 5,879 nodes / 12,855 edges / 351 clusters / 300 flows。
+- README 状态已对齐当前生产 MCP runtime：完整生产依赖注入时注册 61 个 MCP 工具；`src/mcp/tool-set.ts` 的核心诊断契约追踪 55 个核心工具。
+- 当前测试基线：`pnpm test` 通过 106 个测试文件 / 1024 个 Vitest 用例。
+
 ### 相对工作量：2x（实际符合预估）
 
 🎉 **LinkTerm v2 13 个 Phase 全部完成。**
@@ -1394,7 +1400,7 @@ OpenSpec change `add-rtt-log-terminal-session` 在现有 backend-owned RTT clien
 ## 验证方式
 
 每个阶段完成后执行：
-1. `npm run build` — TypeScript 编译通过
-2. `npm test` — 所有新增测试通过
+1. `pnpm run build` — TypeScript 编译通过
+2. `pnpm test` — 所有新增测试通过
 3. 阶段验收标准逐条检查
 4. 最终 Phase 12 执行需求文档第 7 节全部验收标准

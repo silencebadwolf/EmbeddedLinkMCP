@@ -1,6 +1,6 @@
 # LinkTerm v2
 
-LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端 与 MCP 自动化平台，作为旧 Qt/C++ 终端的重写版本。它在单一运行时内同时服务四类用户：**桌面终端用户**（本地 Shell / SSH / 串口）、**嵌入式固件开发者**（终端模式 + sendAndWait + RTT/J-Link 工作流）、**AI Host / MCP 客户端**（通过 41 个 MCP 工具读写同一会话、抓取截图、烧录调试），以及**项目维护者**（pure-TS core、依赖注入式 transport、双向许可证校验）。
+LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端 与 MCP 自动化平台，作为旧 Qt/C++ 终端的重写版本。它在单一运行时内同时服务四类用户：**桌面终端用户**（本地 Shell / SSH / 串口）、**嵌入式固件开发者**（终端模式 + sendAndWait + RTT/J-Link 工作流）、**AI Host / MCP 客户端**（通过生产运行时的 61 个 MCP 工具读写同一会话、抓取截图、烧录调试），以及**项目维护者**（pure-TS core、依赖注入式 transport、双向许可证校验）。
 
 - 包名：`linkterm-v2`
 - 版本：`0.1.0`
@@ -12,7 +12,7 @@ LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端 与 MCP 自动
 
 ## 当前状态
 
-13 / 13 Phase 全部完成（详见 [`DEVELOPMENT_PLAN.md`](./DEVELOPMENT_PLAN.md)）。
+13 / 13 Phase 全部完成（详见 [`DEVELOPMENT_PLAN.md`](./docs/DEVELOPMENT_PLAN.md)）。
 
 | 阶段 | 状态 |
 | --- | --- |
@@ -25,12 +25,12 @@ LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端 与 MCP 自动
 | Phase 6 — Electron Renderer UI（xterm.js + shadcn + i18n） | 已完成 |
 | Phase 7 — 嵌入式终端规则 + sendAndWait FSM | 已完成 |
 | Phase 8 — 工作区配置持久化（`.linkterm/config.json`） | 已完成 |
-| Phase 9 — J-Link MCP 调试面（28 个工具 + NullBackend 兜底） | 已完成 |
+| Phase 9 — J-Link MCP 调试面（30 个工具 + NullBackend 兜底） | 已完成 |
 | Phase 10 — UI MCP 面（`ui_configure` + `ui_screenshot`） | 已完成 |
 | Phase 11 — 双向许可证校验脚本 | 已完成 |
 | Phase 12 — 集成覆盖 + 高敏感工具 confirm gate + 性能基线 | 已完成 |
 
-测试：500 个 Vitest 用例 / 49 个测试文件。
+测试：1024 个 Vitest 用例 / 106 个测试文件。
 
 ---
 
@@ -49,28 +49,33 @@ LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端 与 MCP 自动
 
 `WriteQueue` 是唯一的串行化瓶颈，保证 AI 与人输入的全局顺序、产生审计踪迹。`TranscriptBuffer` 仅追加，配以单调递增的 sequence cursor；`clear` 也以事件形式入档（`meta.kind: 'clear'`），以保留 AI 的可读历史。**MCP 工具与 IPC handler 不允许直接触碰 transport**（需求 §4.4 / §5.1）。
 
-### MCP 三个隔离 Surface（共 41 个工具）
+### MCP 隔离 Surface（生产运行时共 61 个工具）
 
 | Surface | 工具数 | 工具名 | Evidence Kind |
 | --- | --- | --- | --- |
+| Runtime / Agent | 3 | `restart_mcp_runtime`、`get_agent_runbook`、`get_app_status` | `agent_runbook` / `app_status` |
 | Terminal | 8 | `list_sessions`、`open_session`、`close_session`、`write_to_session`、`read_from_session`、`send_and_wait`、`discover_serial_ports`、`get_session_status` | `terminal_output` |
-| Debug (J-Link) | 28 | `probe_detect/connect/disconnect/status`、`cpu_reset/halt/run/step`、`breakpoint_set/clear/list`、`register_read/write/list`、`memory_read/write`、`flash_download/write/verify/erase`、`rtt_connect/clear/read/search`、`gdb_server_start/stop`、`snapshot_capture`、`crash_diagnose` | `debug_output` |
-| UI | 2 | `ui_configure`（4-action discriminatedUnion）、`ui_screenshot`（PNG，16 MiB 上限） | `ui_screenshot` |
 | Workspace | 3 | `init_workspace`、`get_workspace_config`、`update_workspace_config` | `workspace_config` |
+| Control Profile | 6 | `init_control_profile`、`get_control_profile`、`inspect_control_profile`、`prepare_control_profile_questions`、`apply_control_profile_answer`、`activate_control_profile` | `workspace_config` |
+| Control Workflow | 5 | `run_control_workflow`、`get_control_workflow_job_status`、`read_control_workflow_job`、`cancel_control_workflow_job`、`cleanup_control_workflow_jobs` | `debug_output` |
+| Debug (J-Link) | 30 | `probe_detect/connect/disconnect/status`、`jlink_reboot`、`cpu_reset/halt/run/step`、`breakpoint_set/clear/list`、`register_read/write/list`、`memory_read/write`、`flash_download/write/verify/erase`、`rtt_connect/clear/read/search`、`gdb_server_start/stop`、`snapshot_capture`、`crash_diagnose`、`jlink_commander_script` | `debug_output` |
+| RTT Log Session | 2 | `open_rtt_log_session`、`diagnose_rtt_log_session` | `terminal_output` / `debug_output` |
+| J-Link Device Catalog | 2 | `jlink_device_catalog_search`、`jlink_device_catalog_get` | `debug_output` |
+| UI | 2 | `ui_configure`（4-action discriminatedUnion）、`ui_screenshot`（PNG，16 MiB 上限） | `ui_screenshot` |
 
-每个 MCP 工具都返回 `{ success, sessionId?, state?, evidence: { kind, data, cursor }, error?, correlationId, origin: 'ai' }`。
+每个 MCP 工具都返回 `{ success, sessionId?, state?, evidence: { kind, data, cursor }, error?, correlationId, origin: 'ai', schemaVersion }`。
 
 #### 高敏感工具 confirm gate（Phase 12）
 
-下列 5 个 J-Link 工具要求入参显式声明 `confirm: true`，否则返回 `{ code: 'CONFIRMATION_REQUIRED' }` 且 backend 方法**不会被调用**：
+下列 7 个 J-Link 工具要求入参显式声明 `confirm: true`，否则返回 `{ code: 'CONFIRMATION_REQUIRED' }` 且 backend 方法**不会被调用**：
 
-`flash_download`、`flash_write`、`flash_erase`、`cpu_reset`、`gdb_server_start`
+`flash_download`、`flash_write`、`flash_erase`、`cpu_reset`、`gdb_server_start`、`jlink_reboot`、`jlink_commander_script`
 
 #### Backend 兜底策略
 
-- 没有真实 J-Link backend 注入时，`createMcpServer` 默认使用 `NullJLinkBackend`，所有 28 个工具仍会注册，但每次调用返回 `{ code: 'NO_BACKEND' }`。
+- 没有真实 J-Link backend 注入时，`createMcpServer` 默认使用 `NullJLinkBackend`，所有 30 个 debug 工具仍会注册，但每次调用返回 `{ code: 'NO_BACKEND' }`。
 - 没有 UI bridge 注入时，`ui_configure` / `ui_screenshot` 仍会注册，调用返回 `{ code: 'UI_NOT_AVAILABLE' }`。
-- 工作区工具的 `WorkspaceConfigManager` 是**可选注入**：未注入时 3 个 workspace 工具不会注册（与 J-Link / UI 的 always-register 策略不同）。
+- 工作区、控制配置、控制工作流和 J-Link 设备库工具依赖对应 manager/catalog 注入；生产 main runtime 会注入这些依赖，精简测试 server 可省略。
 
 ---
 
@@ -101,8 +106,8 @@ src/
 ├── mcp/
 │   ├── server.ts、registry.ts、transport.ts、limits.ts
 │   ├── versioning/
-│   └── surfaces/{terminal,debug,ui,workspace}/
-├── jlink/                       # IJLinkBackend (28 方法) + 8 域错误 + NullJLinkBackend
+│   └── surfaces/{terminal,debug,ui,workspace,control-profile,control-workflow,rtt-log-session,...}/
+├── jlink/                       # IJLinkBackend 调试/烧录/RTT/GDB 抽象 + 域错误 + NullJLinkBackend
 ├── renderer/                    # React + xterm.js + shadcn primitives
 │   ├── components/              # ConnectionDialog / TerminalView / SessionTabBar / ...
 │   ├── hooks/                   # useSession / useTranscript / useUiPatchSubscription
@@ -182,7 +187,7 @@ pnpm start              # 另起 Electron
 - 默认 `environment: 'node'`；renderer 测试通过文件首行 `// @vitest-environment happy-dom` 切换。
 - Setup：`tests/unit/setup.ts` + `tests/setup-renderer.ts`。
 - Coverage 范围（v8 provider）：`src/core/**`、`src/transports/**`、`src/mcp/**`。
-- 当前规模：**500 用例 / 49 测试文件**。组织：
+- 当前规模：**1024 用例 / 106 测试文件**。组织：
 
 ```
 tests/
@@ -243,7 +248,7 @@ tests/
 
 ## 关键参考文档
 
-- [`PROJECT_REQUIREMENTS.md`](./PROJECT_REQUIREMENTS.md) — 权威需求规格
-- [`DEVELOPMENT_PLAN.md`](./DEVELOPMENT_PLAN.md) — 13 阶段计划与历史决策
+- [`PROJECT_REQUIREMENTS.md`](./docs/PROJECT_REQUIREMENTS.md) — 权威需求规格
+- [`DEVELOPMENT_PLAN.md`](./docs/DEVELOPMENT_PLAN.md) — 13 阶段计划与历史决策
 - [`CLAUDE.md`](./CLAUDE.md) — 给代码助手的工程边界与不变量摘要
 - [`docs/phase-decisions/`](./docs/phase-decisions/) — Phase 5 / 6 / 7 / 8 / 9 / 10 / 11 / 12 的 review 记录
