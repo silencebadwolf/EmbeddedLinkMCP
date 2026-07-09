@@ -111,8 +111,8 @@ export function createMainWindow(): BrowserWindowType {
   installCspHeaders();
 
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1440,
+    height: 900,
     minWidth: 800,
     minHeight: 600,
     title: 'LinkTerm v2',

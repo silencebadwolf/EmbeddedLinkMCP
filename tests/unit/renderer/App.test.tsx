@@ -260,7 +260,7 @@ describe('App', () => {
     expect(screen.getByTestId('control-profile-status')).toHaveTextContent('repo - Switch Serial');
   });
 
-  it('runs download from the opened control profile status area and shows progress data', async () => {
+  it('shows download progress as a simple status bar without step details', async () => {
     const record = {
       id: 'ctrl_serial_download',
       label: 'repo - Download',
@@ -413,6 +413,7 @@ describe('App', () => {
     expect(statusPanel).toHaveTextContent('Downloading...');
     expect(statusPanel).toHaveTextContent('Erasing sectors');
     expect(statusPanel).toHaveTextContent('12%');
+    expect(screen.queryByTestId('control-profile-download-result')).not.toBeInTheDocument();
 
     resolveNextStatus({ success: true, data: succeededJob });
 
@@ -422,18 +423,13 @@ describe('App', () => {
         'succeeded',
       ),
     );
-    expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent(
-      'Download complete',
-    );
-    expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent(
-      'flash_download',
-    );
-    expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent('passed');
-    expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent('1250 ms');
-    expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent(
-      'Flash download completed',
-    );
-    expect(screen.getByTestId('control-profile-download-result')).toHaveTextContent('4096');
+    expect(statusPanel).toHaveTextContent('Download complete');
+    expect(screen.queryByTestId('control-profile-download-result')).not.toBeInTheDocument();
+    expect(statusPanel).not.toHaveTextContent('flash_download');
+    expect(statusPanel).not.toHaveTextContent('passed');
+    expect(statusPanel).not.toHaveTextContent('1250 ms');
+    expect(statusPanel).not.toHaveTextContent('4096');
+    expect(statusPanel).not.toHaveTextContent('probeConnected');
   });
 
   it('opens a saved serial control profile when serial mode is omitted', async () => {

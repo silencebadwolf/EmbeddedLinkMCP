@@ -111,6 +111,8 @@ const ORIGIN_PREFIX: Readonly<Record<string, string>> = {
   system: '\x1b[90m[S]\x1b[0m ',
 };
 
+const ANSI_RESET = '\x1b[0m';
+
 /** 把 HH:MM:SS 格式时间戳转字符串。 */
 function formatTime(epochMs: number): string {
   const d = new Date(epochMs);
@@ -196,6 +198,23 @@ function applyLineStatePrefix(
   return { out, atLineStart: chunk.endsWith('\n') };
 }
 
+function shouldResetAnsiAtEmbeddedLineBreaks(
+  origin: Origin,
+  connectionType: ConnectionType | undefined,
+): boolean {
+  return origin === 'device' && (connectionType === 'serial' || connectionType === 'rtt-log');
+}
+
+function resetAnsiAtLineBreaks(text: string): string {
+  return text.replace(/(\x1b\[0m)?(\r\n|\n|\r)/gu, (_match, reset: string | undefined, lineBreak: string) =>
+    `${reset ?? ANSI_RESET}${lineBreak}`,
+  );
+}
+
+function moveEmbeddedShellPromptToLineStart(text: string): string {
+  return text.replace(/([^\r\n])(msh\s*>)/gu, `$1${ANSI_RESET}\r\n$2`);
+}
+
 /**
  * 把单条 transcript 事件渲染到 Terminal。
  *
@@ -223,7 +242,10 @@ export function renderEventToXterm(
       const bytes = decodeBase64(event.dataBase64);
       // 流式解码：跨 chunk 的多字节字符不会被 U+FFFD 替换
       const decoder = getDecoder(state, sessionId, event.origin);
-      const text = decoder.decode(bytes, { stream: true });
+      const decodedText = decoder.decode(bytes, { stream: true });
+      const text = shouldResetAnsiAtEmbeddedLineBreaks(event.origin, options.connectionType)
+        ? resetAnsiAtLineBreaks(moveEmbeddedShellPromptToLineStart(decodedText))
+        : decodedText;
       if (text.length === 0) return;
       const ls = getLineState(state, sessionId);
       const prefix = ORIGIN_PREFIX[event.origin] ?? '';

@@ -143,6 +143,86 @@ describe('renderEventToXterm', () => {
     expect(out).toBe('output');
   });
 
+  it('resets unterminated ANSI color at line breaks for embedded terminal output', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    renderEventToXterm(
+      { write: term.write },
+      {
+        type: 'data',
+        origin: 'device',
+        sequence: 1,
+        timestamp: 0,
+        dataBase64: b64('\x1b[32m[I/main] ready\nmsh >'),
+      },
+      state,
+      SID,
+      { connectionType: 'serial' },
+    );
+    const out = term.calls().join('');
+    expect(out).toBe('\x1b[32m[I/main] ready\x1b[0m\nmsh >');
+  });
+
+  it('keeps SSH device ANSI streams unchanged', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    renderEventToXterm(
+      { write: term.write },
+      {
+        type: 'data',
+        origin: 'device',
+        sequence: 1,
+        timestamp: 0,
+        dataBase64: b64('\x1b[32mremote\nprompt'),
+      },
+      state,
+      SID,
+      { connectionType: 'ssh' },
+    );
+    const out = term.calls().join('');
+    expect(out).toBe('\x1b[32mremote\nprompt');
+  });
+
+  it('moves embedded shell prompt to a new line when device output omits the final line break', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    renderEventToXterm(
+      { write: term.write },
+      {
+        type: 'data',
+        origin: 'device',
+        sequence: 1,
+        timestamp: 0,
+        dataBase64: b64('\x1b[32mlna=DISABLED softwarert_statusmsh >'),
+      },
+      state,
+      SID,
+      { connectionType: 'serial' },
+    );
+    const out = term.calls().join('');
+    expect(out).toBe('\x1b[32mlna=DISABLED softwarert_status\x1b[0m\r\nmsh >');
+  });
+
+  it('keeps SSH prompt-like text unchanged when it arrives mid-line', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    renderEventToXterm(
+      { write: term.write },
+      {
+        type: 'data',
+        origin: 'device',
+        sequence: 1,
+        timestamp: 0,
+        dataBase64: b64('remote outputmsh >'),
+      },
+      state,
+      SID,
+      { connectionType: 'ssh' },
+    );
+    const out = term.calls().join('');
+    expect(out).toBe('remote outputmsh >');
+  });
+
   it('renders clear event as gray separator', () => {
     const term = makeWriteStub();
     const state = createRenderState();

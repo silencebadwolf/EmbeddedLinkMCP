@@ -827,112 +827,8 @@ function DownloadResultPanel({
 }: {
   download: ControlProfileDownloadState;
 }): React.ReactElement | null {
-  const t = useT();
-  if (download.phase === 'idle') return null;
-  if (download.phase === 'running') {
-    const workflow = download.job?.workflow;
-    const steps = workflow?.steps ?? (download.job?.currentStep ? [download.job.currentStep] : []);
-    const progress = getCurrentFlashProgress(download);
-    if (download.job === undefined && steps.length === 0) return null;
-    return (
-      <div
-        className="mt-3 space-y-3 rounded border border-gray-800 bg-gray-950/60 px-3 py-2 text-xs text-gray-200"
-        data-testid="control-profile-download-result"
-      >
-        <div className="font-medium text-blue-200">{t('controlProfile.download.downloading')}</div>
-        {progress ? (
-          <div className="rounded border border-blue-900 bg-blue-950/40 px-2 py-2 text-blue-50">
-            <div className="flex items-center justify-between gap-2">
-              <span className="min-w-0 truncate">{progress.message}</span>
-              {progress.percent !== undefined ? (
-                <span className="shrink-0 font-medium">{progress.percent}%</span>
-              ) : null}
-            </div>
-            {formatProgressBytes(progress) ? (
-              <div className="mt-1 text-[11px] text-blue-200">{formatProgressBytes(progress)}</div>
-            ) : null}
-          </div>
-        ) : null}
-        {steps.length > 0 ? (
-          <div className="space-y-2">
-            {steps.map((step) => (
-              <DownloadStep key={step.id} step={step} />
-            ))}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-  if (download.phase === 'failed') {
-    return (
-      <div
-        className="mt-3 rounded border border-red-900 bg-red-950 px-3 py-2 text-xs text-red-100"
-        data-testid="control-profile-download-result"
-      >
-        <div className="font-medium">{t('controlProfile.download.failed')}</div>
-        <div className="mt-1 break-words">{download.error}</div>
-        {download.result?.steps.length ? (
-          <div className="mt-2 space-y-2">
-            {download.result.steps.map((step) => (
-              <DownloadStep key={step.id} step={step} />
-            ))}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  const summaryFacts = summarizeDownload(download.result);
-  return (
-    <div
-      className="mt-3 space-y-3 rounded border border-gray-800 bg-gray-950/60 px-3 py-2 text-xs text-gray-200"
-      data-testid="control-profile-download-result"
-    >
-      <div className="font-medium text-emerald-200">{t('controlProfile.download.complete')}</div>
-      {summaryFacts.length > 0 ? (
-        <div className="flex flex-wrap gap-1">
-          {summaryFacts.map((fact) => (
-            <span key={fact} className="rounded bg-gray-800 px-2 py-0.5">
-              {fact}
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {download.result.steps.length > 0 ? (
-        <div className="space-y-2">
-          {download.result.steps.map((step) => (
-            <DownloadStep key={step.id} step={step} />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function DownloadStep({ step }: { step: ControlProfileWorkflowStepPayload }): React.ReactElement {
-  const progress = getStepFlashProgress(step);
-  const details = step.error?.message ?? formatEvidence(step.evidence);
-  return (
-    <div className="rounded border border-gray-800 bg-gray-900 px-2 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="min-w-0 truncate font-medium text-gray-100">{step.id}</span>
-        <span className="shrink-0 text-gray-400">
-          {step.status} / {step.durationMs} ms
-        </span>
-      </div>
-      {progress ? (
-        <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-blue-200">
-          <span className="min-w-0 truncate">{progress.message}</span>
-          {progress.percent !== undefined ? <span className="shrink-0">{progress.percent}%</span> : null}
-        </div>
-      ) : null}
-      {details ? (
-        <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-950 p-2 font-mono text-[11px] text-gray-300">
-          {details}
-        </pre>
-      ) : null}
-    </div>
-  );
+  void download;
+  return null;
 }
 
 function ProfileFact({
@@ -1034,14 +930,6 @@ function getStepFlashProgress(
   };
 }
 
-function formatProgressBytes(progress: FlashProgressView): string | null {
-  if (progress.bytesWritten !== undefined && progress.bytesTotal !== undefined) {
-    return `${progress.bytesWritten} / ${progress.bytesTotal} bytes`;
-  }
-  if (progress.bytesTotal !== undefined) return `${progress.bytesTotal} bytes`;
-  return null;
-}
-
 function clampPercent(value: number): number {
   return Math.min(100, Math.max(0, Math.round(value)));
 }
@@ -1069,23 +957,6 @@ function describeDownloadJobFailure(job: ControlProfileDownloadJobPayload): stri
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
-}
-
-function summarizeDownload(result: ControlProfileDownloadResultPayload): string[] {
-  return Object.entries(result.summary)
-    .filter(([, value]) => value)
-    .map(([key]) => key);
-}
-
-function formatEvidence(value: unknown): string | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
 }
 
 function useControlProfileSessionState(event: ControlProfileOpenedEvent): SessionState | null {
