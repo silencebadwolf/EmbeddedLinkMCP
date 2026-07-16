@@ -50,9 +50,17 @@ import {
   registerRuntimeControlTools,
   type RuntimeRestartScheduler,
 } from './surfaces/runtime-control/tools.js';
-import { getRegisteredToolNames, setRuntimeDiagnosticsProvider } from './registry.js';
+import {
+  getRegisteredToolNames,
+  setOperationAdmissionCoordinator,
+  setOperationRecorderProvider,
+  setRuntimeDiagnosticsProvider,
+} from './registry.js';
 import { buildToolSetDiagnostics } from './tool-set.js';
 import { baseDiagnostics, type RuntimeDiagnosticsProvider } from './runtime-diagnostics.js';
+import type { OperationRecorderProvider } from '../core/activity/operation-recorder.js';
+import type { VerifiedDeploymentEvidence } from '../core/compensation/index.js';
+import type { OperationAdmissionCoordinator } from '../core/operation-admission/operation-admission-coordinator.js';
 
 /** {@link createMcpServer} 的依赖容器。 */
 export interface CreateMcpServerOptions {
@@ -108,6 +116,12 @@ export interface CreateMcpServerOptions {
   runtimeDiagnostics?: RuntimeDiagnosticsProvider;
   /** Runtime restart scheduler used by restart_mcp_runtime; omitted runtimes expose a safe NOT_IMPLEMENTED result. */
   runtimeRestartScheduler?: RuntimeRestartScheduler;
+  /** Best-effort Operation recorder provider. Observation failures must not change tool behavior. */
+  operationRecorderProvider?: OperationRecorderProvider;
+  /** Main-owned serialized operation admission coordinator. */
+  operationAdmissionCoordinator?: OperationAdmissionCoordinator;
+  /** Main-owned verified deployment recorder; receives evidence only after workflow success. */
+  onVerifiedDeployment?: (evidence: VerifiedDeploymentEvidence) => void;
 }
 
 /** {@link createMcpServer} 返回的句柄；start/stop 操控生命周期。 */
@@ -156,6 +170,12 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
     options.runtimeDiagnostics ??
     (() => baseDiagnostics(activeTransport === null ? 'not-started' : 'stdio'));
   setRuntimeDiagnosticsProvider(server, runtimeDiagnostics);
+  if (options.operationRecorderProvider !== undefined) {
+    setOperationRecorderProvider(server, options.operationRecorderProvider);
+  }
+  if (options.operationAdmissionCoordinator !== undefined) {
+    setOperationAdmissionCoordinator(server, options.operationAdmissionCoordinator);
+  }
   registerRuntimeControlTools(server, {
     runtimeRestartScheduler: options.runtimeRestartScheduler,
   });
@@ -213,6 +233,7 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
       hostPathResolver: options.hostPathResolver,
       controlProfileOpenSerial: options.controlProfileOpenSerial,
       controlWorkflowJobManager: options.controlWorkflowJobManager,
+      onVerifiedDeployment: options.onVerifiedDeployment,
     });
   }
 

@@ -126,11 +126,12 @@
 - 选中：**(a) renderer 内**
 - 理由：本期文案只在 renderer 用；main 进程暂无 user-facing 文案；如未来 MCP `ui_configure` 需要枚举可选语言再考虑提到 shared
 
-### 决策 12：origin 视觉指示
+### 决策 12：origin 视觉指示（2026-07-15 修订）
 
 - 候选项：(a) 在 transcript 行首加图标（人/AI/系统） (b) 整行底色区分 (c) 仅在 OriginIndicator 组件统一显示当前会话最近来源
-- 选中：**(a) + (c)** —— xterm 行首前缀 `[A]` / `[H]` / `[S]` 用 ANSI 颜色（人=蓝、AI=黄、系统=灰）；OriginIndicator 在 tab bar 显示当前会话最近写入来源（透明度循环呼吸）
-- 理由：req §4.5 要求 AI/人输入可视区分；xterm 内行级标识让滚屏历史也能区分；OriginIndicator 让 tab 不点开就能感知活动
+- 原选方案 **(a) + (c)** 的 xterm 行首 `[A]` / `[H]` 前缀已按用户反馈废止。
+- 当前选中：**仅保留 (c)** —— 终端画面使用设备/PTY 的正常 echo，不显示人类或 AI 来源标签；来源仍记录在 transcript、Activity Center 和 OriginIndicator，供协作感知与审计使用。
+- 理由：共享终端应保持普通 shell 体验；serial/SSH/local-shell 本地再次回显会造成命令重复，且可见 `[H]`/`[AI]` 破坏可读性。RTT log 无可靠上行 echo 时继续使用原始本地回显。
 
 ### 决策 13：测试基础设施补充时机
 
@@ -269,7 +270,7 @@
 - **C1 [A+B] `src/renderer/hooks/useTranscript.ts:37-67` 启动期 read+subscribe 竞态丢事件**：read({cursor:0}) 与 subscribers.set 之间产生的 sequence > read.cursor 事件被显式忽略。修：以 `subscribe()` 返回 events 作为唯一快照（删除 read 调用），或保留 read 后用 subscribe events 中 sequence>readCursor 部分做 gap-fill。
 
 #### High（必修）
-- **H1 [B] `src/renderer/lib/render-event.ts:66-96` 跨事件前缀重复注入**：同 origin 多事件未感知行尾，第二事件起始仍加 `[H]/[A]`。修：(sessionId+origin) 维护"上次以 \\n 结尾"状态，仅行首加前缀。
+- **H1 [B] `src/renderer/lib/render-event.ts:66-96` 跨事件前缀重复注入**：系统消息多事件未感知行尾，第二事件起始仍重复加 `[S]`。修：仅对 system 维护行状态；human/ai 出站事件不在 serial/SSH/local-shell 终端本地渲染。
 - **H2 [A+B+C] `src/renderer/components/ConnectionDialog.tsx:117` 双层 cast 走私 SSH 凭据**：`as unknown as AnySessionConfig`。修：`shared/preload-api.ts` 引入 `SessionCreateRequestConfig`（含 SSH credentials）联合类型，消除 cast。
 - **H3 [A] MCP serializeEvent 与 IPC serializeEvent schema 不一致**：MCP `data+dataEncoding:'base64'` vs IPC `dataBase64`。修：收敛到 `shared/transcript-ipc-types.ts` 单一 serializer。
 - **H4 [A] `IpcResult<T>` 与 `PreloadResult<T>` 双写**。修：删 `IpcResult`，main 直接 import shared。

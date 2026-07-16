@@ -11,7 +11,7 @@ import {
 } from '@/jlink/errors.js';
 import { ERROR_CODES } from '@/shared/error-codes.js';
 import { ToolError } from '@/mcp/registry.js';
-import { ConfirmationRequiredError, translateJLinkError } from '@/mcp/surfaces/debug/error-translate.js';
+import { translateJLinkError } from '@/mcp/surfaces/debug/error-translate.js';
 
 function translated(err: unknown): ToolError {
   try {
@@ -63,10 +63,4 @@ describe('debug J-Link error taxonomy', () => {
     }
   });
 
-  it('maps MCP-layer confirmation failures into CONFIRMATION_REQUIRED', () => {
-    const out = translated(new ConfirmationRequiredError('flash_download'));
-
-    expect(out.code).toBe(ERROR_CODES.CONFIRMATION_REQUIRED);
-    expect(out.details).toEqual({ tool: 'flash_download' });
-  });
 });

@@ -13,7 +13,12 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
 import type { ISession } from '../../../core/session/types.js';
-import { SessionNotOpenError, SessionNotFoundError, SessionNotWritableError } from '../../../core/session/types.js';
+import {
+  SessionNotOpenError,
+  SessionNotFoundError,
+  SessionNotWritableError,
+  SessionUnresponsiveError,
+} from '../../../core/session/types.js';
 import type { TranscriptEvent } from '../../../core/transcript/types.js';
 import {
   parseMarkerSpec,
@@ -180,6 +185,15 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
             sessionId: input.sessionId,
           });
         }
+        if (err instanceof SessionUnresponsiveError) {
+          throw new ToolError(ERROR_CODES.DEVICE_UNRESPONSIVE, err.message, {
+            sessionId: err.sessionId,
+            cursorBefore: err.cursorBefore,
+            cursorAfter: err.cursorAfter,
+            retryable: err.retryable,
+            recoveryRequired: err.recoveryRequired,
+          });
+        }
         throw err;
       }
       return successOk({
@@ -283,6 +297,15 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
             sessionId: input.sessionId,
           });
         }
+        if (err instanceof SessionUnresponsiveError) {
+          throw new ToolError(ERROR_CODES.DEVICE_UNRESPONSIVE, err.message, {
+            sessionId: err.sessionId,
+            cursorBefore: err.cursorBefore,
+            cursorAfter: err.cursorAfter,
+            retryable: err.retryable,
+            recoveryRequired: err.recoveryRequired,
+          });
+        }
         throw err;
       }
 
@@ -297,6 +320,8 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
               cursorAfter: result.cursorAfter,
               receivedBase64: result.receivedBase64,
               bytesWritten: result.bytesWritten,
+              retryable: false,
+              recoveryRequired: true,
             },
           );
         }

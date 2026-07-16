@@ -25,6 +25,10 @@ export interface OriginIndicatorProps {
   now?: number;
   /** 多久内的活动算"活跃"，超过则显示低透明度。缺省 5_000ms。 */
   recentMs?: number;
+  /** 提供时，OriginIndicator 作为 Activity Center 的可激活入口渲染。 */
+  activityEntryLabel?: string;
+  /** 激活 Activity Center 入口。 */
+  onOpenActivity?: () => void;
   className?: string;
 }
 
@@ -76,23 +80,46 @@ export function OriginIndicator({
   activity,
   now,
   recentMs = 5_000,
+  activityEntryLabel,
+  onOpenActivity,
   className,
 }: OriginIndicatorProps): React.ReactElement {
   // 在客户端使用动态 now（每次渲染调用）；测试时通过 prop 注入固定时间确保可断言
   const t = now ?? Date.now();
   const origins: Array<'ai' | 'human' | 'system'> = ['ai', 'human', 'system'];
+  const dots = origins.map((o) => {
+    const ts = activity?.[o];
+    const op = opacityFor(t, ts, recentMs);
+    const pulse = ts !== undefined && t - ts < recentMs;
+    return <OriginDot key={o} origin={o} opacity={op} pulse={pulse} />;
+  });
+
+  if (onOpenActivity !== undefined && activityEntryLabel !== undefined) {
+    return (
+      <button
+        type="button"
+        aria-label={activityEntryLabel}
+        className={cn(
+          'inline-flex items-center gap-1 rounded px-1 py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
+          className,
+        )}
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenActivity();
+        }}
+      >
+        {dots}
+      </button>
+    );
+  }
+
   return (
     <span
       role="img"
       aria-label="origin-indicator"
       className={cn('inline-flex items-center gap-1', className)}
     >
-      {origins.map((o) => {
-        const ts = activity?.[o];
-        const op = opacityFor(t, ts, recentMs);
-        const pulse = ts !== undefined && t - ts < recentMs;
-        return <OriginDot key={o} origin={o} opacity={op} pulse={pulse} />;
-      })}
+      {dots}
     </span>
   );
 }

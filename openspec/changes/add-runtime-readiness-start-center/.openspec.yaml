@@ -1,0 +1,8 @@
+schema: spec-driven
+created: 2026-07-13
+goal: Add the Phase 3 Runtime Readiness and Start Center slice: safe read-only
+  runtime/serial/workspace/profile/session facts, display-safe device
+  candidates and ConnectionDrafts, generation-based readiness IPC/preload,
+  versioned renderer preferences, and a task-oriented Start Center that falls
+  back to existing connection flows until the Phase 4 first-signal journey is
+  implemented.

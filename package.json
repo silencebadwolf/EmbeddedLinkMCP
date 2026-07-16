@@ -15,10 +15,12 @@
     "doctor:jlink": "node scripts/doctor-jlink.mjs",
     "pretest": "node scripts/doctor-wsl.mjs",
     "test": "vitest run",
+    "test:coverage": "node scripts/doctor-wsl.mjs && vitest run --coverage",
     "test:watch": "vitest",
     "lint": "eslint src/ tests/",
     "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\"",
     "validate:licenses": "tsx scripts/validate-licenses.ts",
+    "ci:check": "pnpm run lint && pnpm run build && pnpm run test && pnpm run validate:licenses",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },
@@ -52,6 +54,7 @@
     "@types/react-dom": "^19.1.0",
     "@types/ssh2": "^1.15.0",
     "@vitejs/plugin-react": "^6.0.3",
+    "@vitest/coverage-v8": "4.1.8",
     "autoprefixer": "^10.4.21",
     "electron": "^42.4.0",
     "electron-builder": "^26.15.3",
@@ -67,7 +70,7 @@
     "vitest": "^4.1.8"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": "^22.13.0 || >=24.0.0",
     "pnpm": ">=9.0.0"
   },
   "pnpm": {

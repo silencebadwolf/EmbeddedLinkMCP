@@ -19,7 +19,7 @@ import type { HostPathResolver } from '../../../core/workspace/index.js';
 import type { IJLinkBackend, ProbeInfo } from '../../../jlink/types.js';
 import { normalizeJLinkTargetName } from '../../../shared/jlink-target-name.js';
 import { registerTool, type ToolHandlerResult } from '../../registry.js';
-import { ok, runJLink, withAbortableTimeout, ConfirmationRequiredError } from './error-translate.js';
+import { ok, runJLink, withAbortableTimeout } from './error-translate.js';
 import {
   breakpointClearInputSchema,
   breakpointListInputSchema,
@@ -179,13 +179,12 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
       'Use this when probe discovery or target attach is stuck, for example a red LED / USB transport lockup. ' +
       'serialNumber can select a specific physical probe; it is never echoed in evidence. ' +
       'force defaults to true for recovery. ' +
-      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned. ' +
+      'High-impact operations execute immediately and remain visible in Activity Center and audit records. ' +
       'No external CLI fallback.',
     sensitivity: 'state-affecting',
     inputSchema: jlinkRebootInputSchema,
     handler: async (input: JLinkRebootInput): Promise<ToolHandlerResult> => {
       return runJLink(async () => {
-        if (input.confirm !== true) throw new ConfirmationRequiredError('jlink_reboot');
         const force = input.force ?? true;
         const result = await withAbortableTimeout(input.timeoutMs, (signal) =>
           jlinkBackend.jlinkReboot(
@@ -225,13 +224,12 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
     name: 'cpu_reset',
     description:
       'Reset the CPU. halt=true holds at the first instruction after reset. ' +
-      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned. ' +
+      'High-impact operations execute immediately and remain visible in Activity Center and audit records. ' +
       'No external CLI fallback.',
     sensitivity: 'state-affecting',
     inputSchema: cpuResetInputSchema,
     handler: async (input: CpuResetInput): Promise<ToolHandlerResult> => {
       await runJLink(async () => {
-        if (input.confirm !== true) throw new ConfirmationRequiredError('cpu_reset');
         await jlinkBackend.cpuReset(
           input.probeId,
           input.halt !== undefined ? { halt: input.halt } : undefined,
@@ -378,7 +376,7 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
     name: 'flash_erase',
     description:
       'Erase flash; with no address/length, erases the whole chip. ' +
-      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned. ' +
+      'High-impact operations execute immediately and remain visible in Activity Center and audit records. ' +
       'No external CLI fallback.',
     sensitivity: 'state-affecting',
     inputSchema: flashEraseInputSchema,
@@ -387,7 +385,6 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
       if (input.address !== undefined) opts.address = input.address;
       if (input.length !== undefined) opts.length = input.length;
       await runJLink(async () => {
-        if (input.confirm !== true) throw new ConfirmationRequiredError('flash_erase');
         await jlinkBackend.flashErase(
           input.probeId,
           Object.keys(opts).length > 0 ? opts : undefined,
@@ -443,13 +440,12 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
     description:
       'Start a GDB server bound to the given host/port. timeoutMs aborts the operation if the ' +
       'server fails to bind in time. ' +
-      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned. ' +
+      'High-impact operations execute immediately and remain visible in Activity Center and audit records. ' +
       'No external CLI fallback.',
     sensitivity: 'state-affecting',
     inputSchema: gdbServerStartInputSchema,
     handler: async (input: GdbServerStartInput): Promise<ToolHandlerResult> => {
       return runJLink(async () => {
-        if (input.confirm !== true) throw new ConfirmationRequiredError('gdb_server_start');
         const opts: { port?: number; host?: string } = {};
         if (input.port !== undefined) opts.port = input.port;
         if (input.host !== undefined) opts.host = input.host;
@@ -498,13 +494,12 @@ export function registerDebugTools(server: McpServer, deps: DebugToolsDeps): voi
     description:
       'Run a LinkTerm-controlled J-Link Commander diagnostic script. Connection lines are generated ' +
       'from the probe handle; commands are restricted to a safe whitelist. ' +
-      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned. ' +
+      'High-impact operations execute immediately and remain visible in Activity Center and audit records. ' +
       'No external CLI fallback.',
     sensitivity: 'state-affecting',
     inputSchema: commanderScriptInputSchema,
     handler: async (input: CommanderScriptInput): Promise<ToolHandlerResult> => {
       return runJLink(async () => {
-        if (input.confirm !== true) throw new ConfirmationRequiredError('jlink_commander_script');
         const opts = input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : undefined;
         const result = await jlinkBackend.runCommanderScript(input.probeId, input.commands, opts);
         return ok({

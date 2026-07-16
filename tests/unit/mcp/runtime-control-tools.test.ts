@@ -29,7 +29,11 @@ async function setup(): Promise<Harness> {
     sessionManager: manager,
     serialDiscovery,
     runtimeDiagnostics: () => ({
-      identity: { runtimeId: 'stale-runtime-id', pid: 21248, startedAt: '2026-06-29T12:49:36.000Z' },
+      identity: {
+        runtimeId: 'stale-runtime-id',
+        pid: 21248,
+        startedAt: '2026-06-29T12:49:36.000Z',
+      },
       transport: { mode: 'http-owner' },
       metadata: { available: true, fresh: true },
       code: {
@@ -92,15 +96,18 @@ describe('runtime control MCP tools', () => {
     expect(tools.tools.map((tool) => tool.name)).toContain('restart_mcp_runtime');
   });
 
-  it('requires confirmation before scheduling a runtime restart', async () => {
+  it('schedules a runtime restart without confirmation', async () => {
     const out = await callTool(h.client, 'restart_mcp_runtime');
 
-    expect(out.success).toBe(false);
-    expect(out.error).toMatchObject({
-      code: 'CONFIRMATION_REQUIRED',
-      details: { tool: 'restart_mcp_runtime' },
-    });
-    expect(h.restartRequests).toEqual([]);
+    expect(out.success).toBe(true);
+    expect(h.restartRequests).toHaveLength(1);
+  });
+
+  it('ignores confirm:false for runtime restart scheduling', async () => {
+    const out = await callTool(h.client, 'restart_mcp_runtime', { confirm: false });
+
+    expect(out.success).toBe(true);
+    expect(h.restartRequests).toHaveLength(1);
   });
 
   it('can schedule a runtime restart while runtime code is stale', async () => {

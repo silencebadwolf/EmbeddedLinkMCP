@@ -35,18 +35,11 @@ export function registerRuntimeControlTools(server: McpServer, deps: RuntimeCont
   registerTool(server, {
     name: 'restart_mcp_runtime',
     description:
-      'Runtime recovery: requires confirm=true and schedules a LinkTerm MCP runtime restart after returning structured evidence. Does not touch probes, flash, reset, serial sessions, RTT, GDB, or UI control. After restart, call get_app_status before hardware operations.',
+      'Runtime recovery schedules a LinkTerm MCP runtime restart after returning structured evidence. Does not touch probes, flash, reset, serial sessions, RTT, GDB, or UI control. After restart, call get_app_status before hardware operations.',
     sensitivity: 'state-affecting',
     allowWhenRuntimeStale: true,
     inputSchema: restartMcpRuntimeInputSchema,
     handler: async (input: RestartMcpRuntimeInput): Promise<ToolHandlerResult> => {
-      if (input.confirm !== true) {
-        throw new ToolError(
-          ERROR_CODES.CONFIRMATION_REQUIRED,
-          'restart_mcp_runtime requires confirm=true before scheduling a runtime restart.',
-          { tool: 'restart_mcp_runtime' },
-        );
-      }
       if (deps.runtimeRestartScheduler === undefined) {
         throw new ToolError(
           ERROR_CODES.NOT_IMPLEMENTED,

@@ -18,6 +18,9 @@ import type {
   SshSessionConfig,
   SerialPortInfo,
   ConnectionType,
+  SerialDataBits,
+  SerialStopBits,
+  SerialParity,
 } from './types.js';
 import type { TranscriptEventEnvelope, SerializedTranscriptEvent } from './transcript-ipc-types.js';
 import type {
@@ -27,6 +30,36 @@ import type {
   AgentIntegrationStatus,
   AgentIntegrationTargetId,
 } from './agent-integrations.js';
+import type {
+  ActivityCursorRequest,
+  ActivityEventView,
+  ActivitySnapshotView,
+} from './activity-contract.js';
+import type {
+  AuditClearResult,
+  AuditClearRequest,
+  AuditExportRequest,
+  AuditExportResult,
+  AuditStoreStatus,
+} from './audit-contract.js';
+import type {
+  ReadinessEvent,
+  ReadinessSeverity,
+  RuntimeReadinessSnapshot,
+  SafeReadinessCode,
+  SerialConnectionDraft,
+} from './readiness-contract.js';
+import type {
+  FirstSignalEvent,
+  FirstSignalStartRequest,
+  FirstSignalStartResult,
+  FirstSignalStatusRequest,
+  FirstSignalStatusResult,
+  FirstSignalStopRequest,
+  FirstSignalStopResult,
+  FirstSignalSubscribeRequest,
+} from './first-signal-contract.js';
+import type { CancellationCapability } from './control-workflow-contract.js';
 export type {
   AgentIntegrationInstallResult,
   AgentIntegrationUninstallResult,
@@ -42,8 +75,11 @@ export type {
  * `IpcOk` / `IpcErr`，Phase 6 评审统一收敛到 shared 命名空间，避免双写漂移。
  */
 export type PreloadOk<T> = { success: true; data: T };
-/** IPC 标准失败结果（与 wrap() 输出对齐）。 */
-export type PreloadFail = { success: false; error: { code: string; message: string } };
+/** IPC 标准失败结果（与 wrap()/ToolError display-safe 输出对齐）。 */
+export type PreloadFail = {
+  success: false;
+  error: { code: string; message: string; details?: unknown };
+};
 /** 主进程任意 invoke 的统一返回壳。 */
 export type PreloadResult<T> = PreloadOk<T> | PreloadFail;
 
@@ -244,6 +280,15 @@ export interface NonSensitivePrefill {
   serialPort?: string;
   baudRate?: string;
   serialMode?: 'normal' | 'terminal';
+  dataBits?: `${SerialDataBits}`;
+  stopBits?: `${SerialStopBits}`;
+  parity?: SerialParity;
+  readinessDraftId?: SafeReadinessCode;
+  readinessDraftSource?: SerialConnectionDraft['source'];
+  readinessDraftCandidateId?: SafeReadinessCode;
+  readinessDraftValidationStatus?: SerialConnectionDraft['validation']['status'];
+  readinessDraftMayResetBoard?: boolean;
+  readinessDraftSendsPayloadOnConnect?: boolean;
   sshHost?: string;
   sshPort?: string;
   sshUsername?: string;
@@ -281,6 +326,80 @@ export interface UiNamespace {
    * 与 transcript subscriber 同生命周期：webContents 销毁时主进程自动清理订阅.
    */
   onStatePatch(handler: (patch: UiStatePatch) => void): Unsubscribe;
+}
+
+/** Operation/Event Ledger 活动流命名空间。 */
+export interface ActivityNamespace {
+  /** 订阅 activity 增量事件，并返回指定 cursor 后的初始快照。 */
+  subscribe(req?: ActivityCursorRequest): Promise<PreloadResult<ActivitySnapshotView>>;
+  /** 只读取指定 cursor 后的快照，不建立长期订阅。 */
+  snapshot(req?: ActivityCursorRequest): Promise<PreloadResult<ActivitySnapshotView>>;
+  /** 显式解除当前 renderer 对 activity 增量事件的订阅。 */
+  unsubscribe(): Promise<PreloadResult<{ unsubscribed: true }>>;
+  /** 订阅 Main 推送的 display-safe activity 事件。 */
+  onEvent(handler: (event: ActivityEventView) => void): Unsubscribe;
+  /** 读取 Main-owned durable audit 状态；只返回 display-safe 统计。 */
+  status(): Promise<PreloadResult<{ readonly status: AuditStoreStatus }>>;
+  /** 由 Main 写出脱敏审计导出，不接受 renderer 文件路径。 */
+  export(req?: AuditExportRequest): Promise<PreloadResult<AuditExportResult>>;
+  /** 删除本机 activity 数据；preload 只发送固定的本地删除确认标记。 */
+  clear(req: AuditClearRequest): Promise<PreloadResult<AuditClearResult>>;
+}
+
+/** Runtime Readiness cursor used by renderer hydration. */
+export interface ReadinessCursorRequest {
+  cursor?: {
+    snapshotId: SafeReadinessCode;
+    generation: number;
+  };
+}
+
+/** Display-safe preload-local diagnostic for malformed readiness push payloads. */
+export interface ReadinessEventDiagnostic {
+  readonly code: SafeReadinessCode;
+  readonly severity: ReadinessSeverity;
+}
+
+/** Runtime Readiness 快照与增量事件命名空间。 */
+export interface ReadinessNamespace {
+  /** 读取当前 readiness 快照，不触发刷新。 */
+  get(): Promise<PreloadResult<RuntimeReadinessSnapshot>>;
+  /** 请求 Main 重新收集只读 readiness facts，并返回最新快照。 */
+  refresh(): Promise<PreloadResult<RuntimeReadinessSnapshot>>;
+  /** 订阅 readiness 增量事件，并返回当前快照。 */
+  subscribe(req?: ReadinessCursorRequest): Promise<PreloadResult<RuntimeReadinessSnapshot>>;
+  /** 显式解除当前 renderer 对 readiness 增量事件的订阅。 */
+  unsubscribe(): Promise<PreloadResult<{ unsubscribed: true }>>;
+  /** 订阅 Main 推送的 display-safe readiness event。 */
+  onEvent(
+    handler: (event: ReadinessEvent) => void,
+    onInvalidPayload?: (diagnostic: ReadinessEventDiagnostic) => void,
+  ): Unsubscribe;
+}
+
+/** Display-safe preload-local diagnostic for malformed first-signal push payloads. */
+export interface FirstSignalEventDiagnostic {
+  readonly code: SafeReadinessCode;
+  readonly severity: ReadinessSeverity;
+}
+
+/** Serial First Signal 观察生命周期命名空间。 */
+export interface FirstSignalNamespace {
+  /** 启动一个 Main-owned first-signal observation attempt。 */
+  start(req: FirstSignalStartRequest): Promise<FirstSignalStartResult>;
+  /** 读取指定 attempt 的最新 observation。 */
+  status(req: FirstSignalStatusRequest): Promise<FirstSignalStatusResult>;
+  /** 显式停止指定 first-signal observation。 */
+  stop(req: FirstSignalStopRequest): Promise<FirstSignalStopResult>;
+  /** 订阅 first-signal 增量事件，并返回当前 observation。 */
+  subscribe(req: FirstSignalSubscribeRequest): Promise<FirstSignalStatusResult>;
+  /** 解除当前 renderer 对 first-signal 增量事件的订阅。 */
+  unsubscribe(): Promise<PreloadResult<{ unsubscribed: true }>>;
+  /** 订阅 Main 推送的 display-safe first-signal event。 */
+  onEvent(
+    handler: (event: FirstSignalEvent) => void,
+    onInvalidPayload?: (diagnostic: FirstSignalEventDiagnostic) => void,
+  ): Unsubscribe;
 }
 
 /** renderer/preload 可见的保存连接 id。 */
@@ -469,10 +588,26 @@ export interface ControlProfileDownloadJobPayload {
   currentStepId?: string;
   currentStep?: ControlProfileWorkflowStepPayload;
   cancelRequested: boolean;
+  cancellationCapability?: CancellationCapability;
+  stopState?:
+    | 'stop-requested'
+    | 'cancelled'
+    | 'failed-after-stop-request'
+    | 'succeeded-after-stop-request';
   summary?: ControlProfileDownloadResultPayload['summary'];
   failedStep?: string;
   failureCode?: string;
   workflow?: ControlProfileDownloadResultPayload;
+}
+
+export interface ControlProfileDownloadRequestPayload {
+  root: string;
+  timeoutMs?: number;
+}
+
+export interface ControlProfileCompensationReflashRequestPayload {
+  candidateId: string;
+  timeoutMs?: number;
 }
 
 export interface ControlProfileChipProbePayload {
@@ -484,10 +619,7 @@ export interface ControlProfileChipProbePayload {
 /** 工作区控制配置命名空间。 */
 export interface ControlProfileNamespace {
   /** 保存/覆盖 `<root>/.linkterm/control-profile.json`。 */
-  save(req: {
-    root: string;
-    profile: ControlProfilePayload;
-  }): Promise<
+  save(req: { root: string; profile: ControlProfilePayload }): Promise<
     PreloadResult<{
       path: string;
       profile: ControlProfileFilePayload;
@@ -507,19 +639,35 @@ export interface ControlProfileNamespace {
   /** 删除一套保存的控制配置记录。 */
   deleteRecord(req: { recordId: string }): Promise<PreloadResult<{ deleted: true }>>;
   /** 按当前工作区 control-profile.json 执行人工下载/烧录。 */
-  runDownload(req: {
-    root: string;
-    timeoutMs?: number;
-  }): Promise<PreloadResult<ControlProfileDownloadResultPayload>>;
+  runDownload(
+    req: ControlProfileDownloadRequestPayload,
+  ): Promise<PreloadResult<ControlProfileDownloadResultPayload>>;
   /** 启动后台下载/烧录 job，并立即返回可轮询的 job 状态。 */
-  startDownload(req: {
-    root: string;
-    timeoutMs?: number;
-  }): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
+  startDownload(
+    req: ControlProfileDownloadRequestPayload,
+  ): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
+  /** 从 Main-only known-good summary 直接启动一次可观察的 reflash job。 */
+  startCompensationReflash(
+    req: ControlProfileCompensationReflashRequestPayload,
+  ): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
+  /** 保存 verified J-Link/RTT profile suggestion；不触发任何硬件操作。 */
+  saveProfileSuggestion(req: { suggestionId: string }): Promise<
+    PreloadResult<{
+      path: string;
+      profile: ControlProfileFilePayload;
+      record?: SavedControlProfileRecordPayload;
+    }>
+  >;
   /** 读取后台下载/烧录 job 的轻量状态与最新进度。 */
-  getDownloadStatus(req: { jobId: string }): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
+  getDownloadStatus(req: {
+    jobId: string;
+  }): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
   /** 读取后台下载/烧录 job 的完整结构化证据。 */
   readDownload(req: { jobId: string }): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
+  /** 请求后台下载/烧录 job 通过既有 AbortSignal 路径停止；不承诺硬件状态复原。 */
+  cancelDownload(req: {
+    jobId: string;
+  }): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
   /** 按当前工作区 control-profile.json 只连接芯片/J-Link，不创建串口或 RTT 会话。 */
   connectChip(req: {
     root: string;
@@ -545,6 +693,9 @@ export interface PreloadAPI {
   serial: SerialNamespace;
   transcript: TranscriptNamespace;
   ui: UiNamespace;
+  activity: ActivityNamespace;
+  readiness: ReadinessNamespace;
+  firstSignal: FirstSignalNamespace;
   connections: ConnectionsNamespace;
   agentIntegrations: AgentIntegrationsNamespace;
   jlinkDevices: JLinkDevicesNamespace;

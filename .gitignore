@@ -31,8 +31,15 @@ npm-debug.log*
 pnpm-debug.log*
 .claude/
 
+# Test coverage reports
+coverage/
+
 # LinkTerm workspace-local files
 .linkterm/
+
+# Local browser profiles used only to render design previews
+.tmp-edge-profile*/
+.superpowers/brainstorm/
 
 # Python
 .venv/

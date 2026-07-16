@@ -13,6 +13,7 @@ import { buildTerminalCommandToolsStatus } from '@/mcp/surfaces/agent-runbook/to
 import { createMcpServer } from '@/mcp/index.js';
 import type { ToolSetDiagnostics } from '@/mcp/tool-set.js';
 import { LINKTERM_MCP_SCHEMA_VERSION } from '@/mcp/versioning/version-check.js';
+import { RuntimeReadinessSnapshotSchema } from '@/shared/readiness-contract.js';
 import type { LinkTermMcpServer } from '@/mcp/server.js';
 import type { CapturableWindow } from '@/mcp/surfaces/ui/types.js';
 import { SerialDiscovery } from '@/transports/serial/serial-discovery.js';
@@ -34,13 +35,14 @@ interface SetupOptions {
   getActiveWindow?: () => CapturableWindow | null;
   controlProfileManager?: ControlProfileManager;
   jlinkBackend?: IJLinkBackend;
+  serialDiscovery?: SerialDiscovery;
   hostPathResolver?: { toHostPath(inputPath: string): Promise<string> };
 }
 
 async function setup(options: SetupOptions = {}): Promise<Harness> {
   const root = await mkdtemp(path.join(tmpdir(), 'lt-agent-runbook-mcp-'));
   const manager = new SessionManager();
-  const serialDiscovery = new SerialDiscovery({ listFn: async () => [] });
+  const serialDiscovery = options.serialDiscovery ?? new SerialDiscovery({ listFn: async () => [] });
   const controlProfileManager = options.controlProfileManager ?? new ControlProfileManager();
   const { server: serverTransport, client: clientTransport } = createInMemoryMcpTransportPair();
   const includeControlProfileManager = options.includeControlProfileManager ?? true;
@@ -96,7 +98,7 @@ async function callTool(
 }
 
 describe('agent runbook builder', () => {
-  it('generates markdown and structured workflows with confirmation metadata', () => {
+  it('generates markdown and structured workflows with observe-only metadata', () => {
     const runbook = createAgentRunbook({ schemaVersion: LINKTERM_MCP_SCHEMA_VERSION });
 
     expect(runbook.markdown).toContain('LinkTerm MCP Agent Runbook');
@@ -104,7 +106,8 @@ describe('agent runbook builder', () => {
     expect(runbook.markdown).toContain('J-Link');
     expect(runbook.markdown).toContain('RTT');
     expect(runbook.markdown).toContain('UI');
-    expect(runbook.markdown).toContain('CONFIRMATION_REQUIRED');
+    expect(runbook.markdown).toContain('observe-only');
+    expect(runbook.markdown).not.toContain('CONFIRMATION_REQUIRED');
     expect(runbook.markdown).toContain('MUST NOT bypass LinkTerm');
     expect(runbook.markdown).toContain('JLink.exe');
     expect(runbook.markdown).toContain('gdb');
@@ -117,6 +120,8 @@ describe('agent runbook builder', () => {
     expect(runbook.markdown).toContain('write_to_session');
     expect(runbook.markdown).toContain('send_and_wait');
     expect(runbook.markdown).toContain('read_from_session');
+    expect(runbook.markdown).toContain('retryable=false');
+    expect(runbook.markdown).toContain('DEVICE_UNRESPONSIVE');
     expect(runbook.markdown).toContain('open_rtt_log_session');
     expect(runbook.markdown).toContain('diagnose_rtt_log_session');
     expect(runbook.markdown).toContain('continuous RTT log');
@@ -167,19 +172,19 @@ describe('agent runbook builder', () => {
           'cancel_control_workflow_job',
         ]),
         riskLevel: 'high',
-        requiresConfirmation: true,
+        requiresConfirmation: false,
         expectedEvidenceKind: 'debug_output',
       }),
     );
     expect(runbook.highImpactTools).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: 'flash_download', requiresConfirmation: true }),
-        expect.objectContaining({ name: 'flash_write', requiresConfirmation: true }),
-        expect.objectContaining({ name: 'flash_erase', requiresConfirmation: true }),
-        expect.objectContaining({ name: 'cpu_reset', requiresConfirmation: true }),
-        expect.objectContaining({ name: 'gdb_server_start', requiresConfirmation: true }),
-        expect.objectContaining({ name: 'jlink_reboot', requiresConfirmation: true }),
-        expect.objectContaining({ name: 'jlink_commander_script', requiresConfirmation: true }),
+        expect.objectContaining({ name: 'flash_download', requiresConfirmation: false }),
+        expect.objectContaining({ name: 'flash_write', requiresConfirmation: false }),
+        expect.objectContaining({ name: 'flash_erase', requiresConfirmation: false }),
+        expect.objectContaining({ name: 'cpu_reset', requiresConfirmation: false }),
+        expect.objectContaining({ name: 'gdb_server_start', requiresConfirmation: false }),
+        expect.objectContaining({ name: 'jlink_reboot', requiresConfirmation: false }),
+        expect.objectContaining({ name: 'jlink_commander_script', requiresConfirmation: false }),
       ]),
     );
   });
@@ -282,6 +287,8 @@ describe('MCP agent runbook tool', () => {
     expect(instructions).toContain('write_to_session');
     expect(instructions).toContain('send_and_wait');
     expect(instructions).toContain('read_from_session');
+    expect(instructions).toContain('retryable=false');
+    expect(instructions).toContain('DEVICE_UNRESPONSIVE');
     expect(instructions).toContain('diagnose_rtt_log_session');
     expect(instructions).toContain('SEGGER banner');
     expect(instructions).toContain('target_input_unanswered');
@@ -301,7 +308,8 @@ describe('MCP agent runbook tool', () => {
     expect(instructions).toContain('.bin/.hex/.elf');
     expect(instructions).toContain('ELF loadable segments');
     expect(instructions).toContain('do not change the profile firmware from .elf to .bin');
-    expect(instructions).toContain('confirm=true');
+    expect(instructions).toContain('execute immediately');
+    expect(instructions).not.toContain('CONFIRMATION_REQUIRED');
     expect(instructions).toContain('get_agent_runbook');
   });
 
@@ -449,6 +457,86 @@ describe('MCP agent runbook tool', () => {
         'write_to_session/send_and_wait -> SessionManager.write -> WriteQueue -> transport; read_from_session returns transcript evidence.',
       missing: ['write_to_session', 'send_and_wait'],
     });
+  });
+
+  it('adds a display-safe readiness snapshot while preserving legacy app status fields', async () => {
+    await teardown(h);
+    const rawSerialFailure = 'Access denied at C:/Users/Admin/private/token-secret stack';
+    h = await setup({
+      serialDiscovery: new SerialDiscovery({
+        listFn: async () => {
+          throw new Error(rawSerialFailure);
+        },
+      }),
+    });
+
+    const out = await callTool(h.client, 'get_app_status', { root: h.root });
+
+    const data = (
+      out.evidence as {
+        data: {
+          app: { runtime: { identity: { runtimeId: string } } };
+          serial: {
+            portCount: number;
+            ports: unknown[];
+            error?: { code: string; message: string };
+          };
+          sessions: { count: number; items: unknown[] };
+          controlProfile: { status: string };
+          readiness: unknown;
+        };
+      }
+    ).data;
+    expect(data.app.runtime.identity.runtimeId).toBe('test-runtime-id');
+    expect(data.sessions).toEqual({ count: 0, items: [] });
+    expect(data.controlProfile.status).toBe('profile-not-found');
+    expect(data.serial).toEqual({
+      portCount: 0,
+      ports: [],
+      error: { code: 'SERIAL_DISCOVERY_FAILED', message: rawSerialFailure },
+    });
+
+    const readiness = RuntimeReadinessSnapshotSchema.parse(data.readiness);
+    expect(readiness.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'runtime',
+          scope: 'runtime',
+          status: 'ready',
+          summaryCode: 'readiness.runtime.ready',
+        }),
+        expect.objectContaining({
+          id: 'serial',
+          scope: 'serial',
+          status: 'unavailable',
+          summaryCode: 'readiness.serial.discovery_failed',
+        }),
+        expect.objectContaining({
+          id: 'session',
+          scope: 'session',
+          status: 'unknown',
+          summaryCode: 'readiness.session.none',
+        }),
+        expect.objectContaining({
+          id: 'workspace',
+          scope: 'workspace',
+          status: 'unavailable',
+          severity: 'info',
+          summaryCode: 'readiness.workspace.not_selected',
+        }),
+        expect.objectContaining({
+          id: 'agent',
+          scope: 'agent',
+          status: 'ready',
+          summaryCode: 'readiness.agent.ready',
+        }),
+      ]),
+    );
+    expect(readiness.deviceCandidates).toEqual([]);
+    const serialized = JSON.stringify(readiness);
+    expect(serialized).not.toContain(rawSerialFailure);
+    expect(serialized).not.toContain('C:/Users/Admin/private');
+    expect(serialized).not.toContain('token-secret');
   });
 
   it('reports missing core tools when a runtime entry has an incomplete dependency set', async () => {
@@ -692,7 +780,7 @@ describe('MCP agent runbook tool', () => {
         id: 'profile_flash_observe',
         ready: true,
         tool: 'run_control_workflow',
-        requiresConfirmation: true,
+        requiresConfirmation: false,
         followUpTools: ['get_control_workflow_job_status', 'read_control_workflow_job'],
         reason: expect.stringContaining('profile.flash.binary'),
         arguments: {

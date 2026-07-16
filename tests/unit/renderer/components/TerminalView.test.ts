@@ -220,6 +220,32 @@ describe('TerminalView write gating', () => {
     expect(xtermMock.focuses.length).toBeGreaterThan(focusCount);
   });
 
+  it('refocuses the existing terminal when a take-over focus token changes', async () => {
+    const { TerminalView } = await import(
+      '../../../../src/renderer/components/TerminalView.js'
+    );
+    useAppStore.getState().addSession({
+      id: 'sess_serial_focus',
+      label: 'COM7',
+      connectionType: 'serial',
+      state: 'open',
+    });
+
+    const { rerender } = render(
+      React.createElement(TerminalView, { sessionId: 'sess_serial_focus', focusRequestToken: 0 }),
+    );
+    await waitFor(() => expect(xtermMock.focuses.length).toBeGreaterThan(0));
+    const focusCount = xtermMock.focuses.length;
+
+    rerender(
+      React.createElement(TerminalView, { sessionId: 'sess_serial_focus', focusRequestToken: 1 }),
+    );
+
+    await waitFor(() => expect(xtermMock.focuses.length).toBeGreaterThan(focusCount));
+    expect(mock.spies.session.write).not.toHaveBeenCalled();
+    expect(mock.spies.session.destroy).not.toHaveBeenCalled();
+  });
+
   it('pastes clipboard text into a writable terminal from the right-click menu', async () => {
     const readText = vi.fn(async () => 'version');
     Object.defineProperty(globalThis.navigator, 'clipboard', {

@@ -12,6 +12,8 @@ const {
   execFileAsyncMock,
   readFileMock,
   readdirMock,
+  runControlWorkflowMock,
+  readCurrentDeploymentEvidenceMock,
 } = vi.hoisted(() => {
   const map = new Map<string, (event: unknown, payload: unknown) => unknown>();
   const execFile = vi.fn();
@@ -33,6 +35,8 @@ const {
     execFileAsyncMock: execFileAsync,
     readFileMock: vi.fn(),
     readdirMock: vi.fn(),
+    runControlWorkflowMock: vi.fn(),
+    readCurrentDeploymentEvidenceMock: vi.fn(),
   };
 });
 
@@ -46,12 +50,19 @@ globalThis.__linktermElectronMock = electronMock;
 vi.mock('electron', () => ({ default: electronMock, ...electronMock }));
 vi.mock('node:child_process', () => ({ execFile: execFileMock }));
 vi.mock('node:fs/promises', () => ({ readFile: readFileMock, readdir: readdirMock }));
+vi.mock('../../../../src/mcp/surfaces/control-workflow/workflow-runner.js', () => ({
+  runControlWorkflow: runControlWorkflowMock,
+}));
+vi.mock('../../../../src/main/ipc/current-deployment-evidence.js', () => ({
+  readCurrentControlProfileDeploymentEvidence: readCurrentDeploymentEvidenceMock,
+}));
 
 import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
 import type {
   ControlProfileManager,
   ControlProfileRecordManager,
 } from '../../../../src/core/workspace/index.js';
+import { OperationAdmissionCoordinator } from '../../../../src/core/operation-admission/operation-admission-coordinator.js';
 import type { registerControlProfileIpc as RegisterControlProfileIpc } from '../../../../src/main/ipc/control-profile-ipc.js';
 
 let registerControlProfileIpc: typeof RegisterControlProfileIpc;
@@ -92,6 +103,25 @@ describe('registerControlProfileIpc', () => {
     execFileAsyncMock.mockReset();
     readFileMock.mockReset();
     readdirMock.mockReset();
+    runControlWorkflowMock.mockReset();
+    readCurrentDeploymentEvidenceMock.mockReset();
+    runControlWorkflowMock.mockResolvedValue({
+      mode: 'flash-observe',
+      root: 'C:/repo',
+      steps: [],
+      summary: {
+        serialOpened: false,
+        probeConnected: false,
+        gdbServerStarted: false,
+        flashed: false,
+        verified: false,
+        reset: false,
+        serialObserved: false,
+        rttObserved: false,
+        debugCaptured: false,
+      },
+      nextActions: [],
+    });
     installWslExecFileMock();
   });
 
@@ -296,8 +326,17 @@ describe('registerControlProfileIpc', () => {
       controlWorkflowJobManager: jobManager,
     } as never);
 
-    const start = handlers.get((IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_START_DOWNLOAD)!;
-    const started = await start({}, { root: 'C:/repo' });
+    const start = handlers.get(
+      (IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_START_DOWNLOAD,
+    )!;
+    const started = await start(
+      {},
+      {
+        root: 'C:/repo',
+        activityOrigin: 'agent',
+        actor: { kind: 'agent', channel: 'local-mcp' },
+      },
+    );
 
     expect(started).toEqual({
       success: true,
@@ -312,13 +351,15 @@ describe('registerControlProfileIpc', () => {
       input: expect.objectContaining({
         root: 'C:/repo',
         mode: 'flash-observe',
-        confirm: true,
         observe: { enabled: false, serial: false },
       }),
+      activityOrigin: 'human',
     });
     expect(jobManager.start).toHaveBeenCalledWith('job-download-1', expect.any(Function));
 
-    const status = handlers.get((IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_DOWNLOAD_STATUS)!;
+    const status = handlers.get(
+      (IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_DOWNLOAD_STATUS,
+    )!;
     await expect(status({}, { jobId: 'job-download-1' })).resolves.toEqual({
       success: true,
       data: expect.objectContaining({
@@ -328,11 +369,592 @@ describe('registerControlProfileIpc', () => {
       }),
     });
 
-    const read = handlers.get((IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_DOWNLOAD_READ)!;
+    const read = handlers.get(
+      (IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_DOWNLOAD_READ,
+    )!;
     await expect(read({}, { jobId: 'job-download-1' })).resolves.toEqual({
       success: true,
       data: expect.objectContaining({ workflow }),
     });
+  });
+
+  it('requests stop for an active download job over IPC without adding hardware side effects', async () => {
+    const stoppedJob = {
+      jobId: 'job-download-1',
+      state: 'running' as const,
+      mode: 'flash-observe' as const,
+      root: 'C:/repo',
+      createdAt: 1,
+      startedAt: 1,
+      updatedAt: 3,
+      cancelRequested: true,
+      cancellationCapability: 'best-effort' as const,
+      stopState: 'stop-requested' as const,
+    };
+    const jobManager = {
+      create: vi.fn(),
+      start: vi.fn(async () => undefined),
+      cancel: vi.fn(() => stoppedJob),
+      getStatus: vi.fn(() => ({
+        jobId: 'job-start-1',
+        state: 'running' as const,
+        mode: 'flash-observe' as const,
+        root: 'C:/repo',
+        createdAt: 1,
+        startedAt: 1,
+        updatedAt: 1,
+        currentStepId: 'flash_download',
+        cancelRequested: false,
+        workflow: {
+          mode: 'flash-observe' as const,
+          root: 'C:/repo',
+          steps: [],
+          summary: {},
+          nextActions: [],
+        },
+      })),
+      read: vi.fn(),
+    };
+
+    registerControlProfileIpc({} as ControlProfileManager, undefined, {
+      controlWorkflowJobManager: jobManager,
+    } as never);
+
+    const cancel = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_CANCEL)!;
+    const result = await cancel({}, { jobId: 'job-download-1' });
+
+    expect(result).toEqual({
+      success: true,
+      data: expect.objectContaining({
+        jobId: 'job-download-1',
+        cancelRequested: true,
+        cancellationCapability: 'best-effort',
+        stopState: 'stop-requested',
+      }),
+    });
+    expect(jobManager.cancel).toHaveBeenCalledWith('job-download-1');
+    expect(runControlWorkflowMock).not.toHaveBeenCalled();
+  });
+
+  it('runs RUN_DOWNLOAD without confirmation fields', async () => {
+    registerControlProfileIpc({} as ControlProfileManager, undefined, {
+      sessionManager: {},
+      jlinkBackend: {},
+    } as never);
+
+    const run = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD)!;
+    const result = await run({}, { root: 'C:/repo' });
+
+    expect(result).toEqual({
+      success: true,
+      data: expect.objectContaining({ mode: 'flash-observe', root: 'C:/repo' }),
+    });
+    expect(runControlWorkflowMock).toHaveBeenCalledOnce();
+    expect(runControlWorkflowMock.mock.calls[0]?.[1]).toEqual({
+      root: 'C:/repo',
+      mode: 'flash-observe',
+      observe: { enabled: false, serial: false },
+    });
+  });
+
+  it('ignores a legacy approval gate and executes RUN_DOWNLOAD immediately', async () => {
+    const approvalGate = {
+      evaluate: vi.fn(async () => ({
+        kind: 'approval-required' as const,
+        approvalId: 'approval_run_1',
+        revision: 1,
+        state: 'pending' as const,
+        continuationKind: 'control-profile-run' as const,
+      })),
+    };
+    registerControlProfileIpc({} as ControlProfileManager, undefined, {
+      sessionManager: {},
+      jlinkBackend: {},
+      controlProfileApprovalGate: approvalGate,
+    } as never);
+
+    const run = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD)!;
+    const result = await run({ sender: { id: 7 } }, { root: 'C:/repo' });
+
+    expect(result).toEqual({ success: true, data: expect.objectContaining({ mode: 'flash-observe' }) });
+    expect(approvalGate.evaluate).not.toHaveBeenCalled();
+    expect(runControlWorkflowMock).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a legacy approval gate before START_DOWNLOAD creates a job', async () => {
+    const approvalGate = {
+      evaluate: vi.fn(async () => ({
+        kind: 'approval-required' as const,
+        approvalId: 'approval_start_1',
+        revision: 1,
+        state: 'pending' as const,
+        continuationKind: 'control-profile-start' as const,
+      })),
+    };
+    const jobManager = {
+      create: vi.fn(() => ({
+        jobId: 'job-start-immediate',
+        state: 'queued' as const,
+        mode: 'flash-observe' as const,
+        root: 'C:/repo',
+        createdAt: 1,
+        updatedAt: 1,
+        cancelRequested: false,
+      })),
+      start: vi.fn(async () => undefined),
+      getStatus: vi.fn(() => ({
+        jobId: 'job-start-immediate',
+        state: 'queued' as const,
+        mode: 'flash-observe' as const,
+        root: 'C:/repo',
+        createdAt: 1,
+        updatedAt: 1,
+        cancelRequested: false,
+      })),
+      read: vi.fn(),
+    };
+
+    registerControlProfileIpc({} as ControlProfileManager, undefined, {
+      sessionManager: {},
+      jlinkBackend: {},
+      controlWorkflowJobManager: jobManager,
+      controlProfileApprovalGate: approvalGate,
+    } as never);
+
+    const start = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD)!;
+    const result = await start({ sender: { id: 8 } }, { root: 'C:/repo' });
+
+    expect(result).toEqual({ success: true, data: expect.objectContaining({ jobId: 'job-start-immediate' }) });
+    expect(approvalGate.evaluate).not.toHaveBeenCalled();
+    expect(jobManager.create).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a legacy approval gate before compensation reflash starts a job', async () => {
+    const approvalGate = {
+      evaluate: vi.fn(async () => ({
+        kind: 'approval-required' as const,
+        approvalId: 'approval_reflash_1',
+        revision: 1,
+        state: 'pending' as const,
+        continuationKind: 'control-profile-start' as const,
+      })),
+    };
+    const currentEvidence = { manifestDigest: 'manifest_digest_1' };
+    readCurrentDeploymentEvidenceMock.mockResolvedValueOnce(currentEvidence);
+    const compensationCandidateService = {
+      candidateWorkspaceRoot: vi.fn(() => 'C:/repo'),
+      reflashRequest: vi.fn(() => ({ root: 'C:/repo' })),
+    };
+    const jobManager = {
+      create: vi.fn(() => ({
+        jobId: 'job-start-1',
+        state: 'running' as const,
+        mode: 'flash-observe' as const,
+        root: 'C:/repo',
+        createdAt: 1,
+        startedAt: 1,
+        updatedAt: 1,
+        currentStepId: 'flash_download',
+        cancelRequested: false,
+        workflow: {
+          mode: 'flash-observe' as const,
+          root: 'C:/repo',
+          steps: [],
+          summary: {},
+          nextActions: [],
+        },
+      })),
+      start: vi.fn(async () => ({
+        jobId: 'job-start-1',
+        state: 'running' as const,
+        mode: 'flash-observe' as const,
+        root: 'C:/repo',
+        createdAt: 1,
+        startedAt: 1,
+        updatedAt: 1,
+        cancelRequested: false,
+        workflow: {
+          mode: 'flash-observe' as const,
+          root: 'C:/repo',
+          steps: [],
+          summary: {},
+          nextActions: [],
+        },
+      })),
+      getStatus: vi.fn(() => ({
+        jobId: 'job-start-1',
+        state: 'running' as const,
+        mode: 'flash-observe' as const,
+        root: 'C:/repo',
+        createdAt: 1,
+        startedAt: 1,
+        updatedAt: 1,
+        cancelRequested: false,
+        workflow: {
+          mode: 'flash-observe' as const,
+          root: 'C:/repo',
+          steps: [],
+          summary: {},
+          nextActions: [],
+        },
+      })),
+      read: vi.fn(),
+    };
+
+    registerControlProfileIpc({} as ControlProfileManager, undefined, {
+      sessionManager: {},
+      jlinkBackend: {},
+      controlWorkflowJobManager: jobManager,
+      controlProfileApprovalGate: approvalGate,
+      compensationCandidateService,
+    } as never);
+
+    const reflash = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_START_COMPENSATION_REFLASH)!;
+    const result = await reflash({ sender: { id: 9 } }, { candidateId: 'candidate_1' });
+
+    expect(result).toEqual({ success: true, data: expect.objectContaining({ jobId: 'job-start-1' }) });
+    expect(compensationCandidateService.candidateWorkspaceRoot).toHaveBeenCalledWith('candidate_1');
+    expect(readCurrentDeploymentEvidenceMock).toHaveBeenCalledWith(expect.anything(), 'C:/repo');
+    expect(compensationCandidateService.reflashRequest).toHaveBeenCalledWith('candidate_1', {
+      currentEvidence,
+    });
+    expect(approvalGate.evaluate).not.toHaveBeenCalled();
+    expect(jobManager.create).toHaveBeenCalledOnce();
+  });
+
+  it('saves profile suggestions through existing managers only after a suggestion id is confirmed', async () => {
+    const suggestedProfile = {
+      schemaVersion: 'linkterm-control/1.0.0' as const,
+      jlink: {
+        enabled: true,
+        target: 'STM32H743II',
+        interface: 'swd' as const,
+        speedKHz: 4000,
+      },
+      flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+      rtt: { enabled: true, channels: [0], controlBlockAddress: '0x24000000' },
+    };
+    const savedRecord = {
+      id: 'ctrl_suggested',
+      label: 'STM32H743II',
+      root: 'C:/repo',
+      source: 'ai' as const,
+      profile: suggestedProfile,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    const manager = {
+      init: vi.fn(async () => suggestedProfile),
+    } as unknown as ControlProfileManager;
+    const recordManager = {
+      save: vi.fn(async () => savedRecord),
+    } as unknown as ControlProfileRecordManager;
+    const compensationCandidateService = {
+      profileSuggestionSave: vi.fn(() => ({
+        root: 'C:/repo',
+        label: 'STM32H743II',
+        profile: suggestedProfile,
+      })),
+    };
+
+    registerControlProfileIpc(manager, recordManager, {
+      compensationCandidateService,
+    } as never);
+
+    const saveSuggestion = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_SAVE_PROFILE_SUGGESTION)!;
+    const result = await saveSuggestion({}, { suggestionId: 'profile_suggestion_candidate_1' });
+
+    expect(result).toEqual({
+      success: true,
+      data: {
+        path: expect.stringMatching(/control-profile\.json$/u),
+        profile: suggestedProfile,
+        record: savedRecord,
+      },
+    });
+    expect(compensationCandidateService.profileSuggestionSave).toHaveBeenCalledWith(
+      'profile_suggestion_candidate_1',
+    );
+    expect(manager.init).toHaveBeenCalledWith(
+      'C:/repo',
+      {
+        jlink: suggestedProfile.jlink,
+        flash: suggestedProfile.flash,
+        rtt: suggestedProfile.rtt,
+      },
+      { force: true },
+    );
+    expect(recordManager.save).toHaveBeenCalledWith({
+      root: 'C:/repo',
+      source: 'ai',
+      profile: suggestedProfile,
+      label: 'STM32H743II',
+    });
+    expect(runControlWorkflowMock).not.toHaveBeenCalled();
+  });
+
+  it('runs direct RUN_DOWNLOAD exactly once with an approved continuation', async () => {
+    const approvalGate = {
+      evaluate: vi.fn(async () => ({ kind: 'approved' as const })),
+    };
+    registerControlProfileIpc({} as ControlProfileManager, undefined, {
+      sessionManager: {},
+      jlinkBackend: {},
+      controlProfileApprovalGate: approvalGate,
+    } as never);
+
+    const run = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD)!;
+    const result = await run(
+      { sender: { id: 7 } },
+      { root: 'C:/repo', kind: 'continue-approved', approvalId: 'approval_run_1' },
+    );
+
+    expect(result).toEqual({
+      success: true,
+      data: expect.objectContaining({ mode: 'flash-observe', root: 'C:/repo' }),
+    });
+    expect(approvalGate.evaluate).not.toHaveBeenCalled();
+    expect(runControlWorkflowMock).toHaveBeenCalledOnce();
+  });
+
+  it('runs approved RUN_DOWNLOAD continuation while the legacy global pause latch is set', async () => {
+    const operationAdmissionCoordinator = new OperationAdmissionCoordinator({
+      runtimeId: 'control-profile-ipc-test-runtime',
+      now: () => '2026-07-15T00:00:00.000Z',
+    });
+    const approvalGate = {
+      evaluate: vi.fn(async () => ({ kind: 'approved' as const })),
+    };
+    registerControlProfileIpc({} as ControlProfileManager, undefined, {
+      sessionManager: {},
+      jlinkBackend: {},
+      controlProfileApprovalGate: approvalGate,
+      operationAdmissionCoordinator,
+    } as never);
+
+    const run = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD)!;
+    const result = await run(
+      { sender: { id: 7 } },
+      { root: 'C:/repo', kind: 'continue-approved', approvalId: 'approval_run_1' },
+    );
+
+    expect(result).toEqual({
+      success: true,
+      data: expect.objectContaining({ mode: 'flash-observe', root: 'C:/repo' }),
+    });
+    expect(approvalGate.evaluate).not.toHaveBeenCalled();
+    expect(runControlWorkflowMock).toHaveBeenCalledOnce();
+  });
+
+  it('starts approved START_DOWNLOAD continuation while the legacy global pause latch is set', async () => {
+    const operationAdmissionCoordinator = new OperationAdmissionCoordinator({
+      runtimeId: 'control-profile-ipc-test-runtime',
+      now: () => '2026-07-15T00:00:00.000Z',
+    });
+    const approvalGate = {
+      evaluate: vi.fn(async () => ({ kind: 'approved' as const })),
+    };
+    const jobManager = {
+      create: vi.fn(() => ({
+        jobId: 'job-start-1',
+        state: 'running' as const,
+        mode: 'flash-observe' as const,
+        root: 'C:/repo',
+        createdAt: 1,
+        startedAt: 1,
+        updatedAt: 1,
+        currentStepId: 'flash_download',
+        cancelRequested: false,
+        workflow: {
+          mode: 'flash-observe' as const,
+          root: 'C:/repo',
+          steps: [],
+          summary: {},
+          nextActions: [],
+        },
+      })),
+      start: vi.fn(async () => ({
+        jobId: 'job-start-1',
+        state: 'running' as const,
+        mode: 'flash-observe' as const,
+        root: 'C:/repo',
+        createdAt: 1,
+        startedAt: 1,
+        updatedAt: 1,
+        cancelRequested: false,
+        workflow: {
+          mode: 'flash-observe' as const,
+          root: 'C:/repo',
+          steps: [],
+          summary: {},
+          nextActions: [],
+        },
+      })),
+      getStatus: vi.fn(() => ({
+        jobId: 'job-start-1',
+        state: 'running' as const,
+        mode: 'flash-observe' as const,
+        root: 'C:/repo',
+        createdAt: 1,
+        startedAt: 1,
+        updatedAt: 1,
+        currentStepId: 'flash_download',
+        cancelRequested: false,
+        workflow: {
+          mode: 'flash-observe' as const,
+          root: 'C:/repo',
+          steps: [],
+          summary: {},
+          nextActions: [],
+        },
+      })),
+      read: vi.fn(),
+    };
+    registerControlProfileIpc({} as ControlProfileManager, undefined, {
+      sessionManager: {},
+      jlinkBackend: {},
+      controlWorkflowJobManager: jobManager,
+      controlProfileApprovalGate: approvalGate,
+      operationAdmissionCoordinator,
+    } as never);
+
+    const start = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD)!;
+    const result = await start(
+      { sender: { id: 8 } },
+      { root: 'C:/repo', kind: 'continue-approved', approvalId: 'approval_start_1' },
+    );
+
+    expect(result).toEqual(expect.objectContaining({ success: true }));
+    expect(approvalGate.evaluate).not.toHaveBeenCalled();
+    expect(jobManager.create).toHaveBeenCalledOnce();
+    expect(jobManager.start).toHaveBeenCalledOnce();
+  });
+
+  it('runs approved RUN_DOWNLOAD continuation after global resume through admission', async () => {
+    const operationAdmissionCoordinator = new OperationAdmissionCoordinator({
+      runtimeId: 'control-profile-ipc-test-runtime',
+      now: () => '2026-07-15T00:00:00.000Z',
+    });
+    const approvalGate = {
+      evaluate: vi.fn(async () => ({ kind: 'approved' as const })),
+    };
+    registerControlProfileIpc({} as ControlProfileManager, undefined, {
+      sessionManager: {},
+      jlinkBackend: {},
+      controlProfileApprovalGate: approvalGate,
+      operationAdmissionCoordinator,
+    } as never);
+
+    const run = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD)!;
+    const result = await run(
+      { sender: { id: 7 } },
+      { root: 'C:/repo', kind: 'continue-approved', approvalId: 'approval_run_1' },
+    );
+
+    expect(result).toEqual({
+      success: true,
+      data: expect.objectContaining({ mode: 'flash-observe', root: 'C:/repo' }),
+    });
+    expect(approvalGate.evaluate).not.toHaveBeenCalled();
+    expect(runControlWorkflowMock).toHaveBeenCalledOnce();
+  });
+
+  it('passes verified deployment recorder into direct RUN_DOWNLOAD execution', async () => {
+    const onVerifiedDeployment = vi.fn();
+    const approvalGate = {
+      evaluate: vi.fn(async () => ({ kind: 'approved' as const })),
+    };
+    registerControlProfileIpc({} as ControlProfileManager, undefined, {
+      sessionManager: {},
+      jlinkBackend: {},
+      controlProfileApprovalGate: approvalGate,
+      onVerifiedDeployment,
+    } as never);
+
+    const run = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD)!;
+    await run(
+      { sender: { id: 7 } },
+      { root: 'C:/repo', kind: 'continue-approved', approvalId: 'approval_run_1' },
+    );
+
+    expect(runControlWorkflowMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ root: 'C:/repo', mode: 'flash-observe' }),
+      expect.objectContaining({ onVerifiedDeployment }),
+    );
+  });
+
+  it('passes verified deployment recorder into approved START_DOWNLOAD background jobs', async () => {
+    const onVerifiedDeployment = vi.fn();
+    const approvalGate = {
+      evaluate: vi.fn(async () => ({ kind: 'approved' as const })),
+    };
+    const job = {
+      jobId: 'job-download-approved',
+      state: 'queued' as const,
+      mode: 'flash-observe' as const,
+      root: 'C:/repo',
+      createdAt: 1,
+      updatedAt: 1,
+      cancelRequested: false,
+    };
+    const jobManager = {
+      create: vi.fn(() => job),
+      start: vi.fn(async (_jobId: string, runner: (input: unknown) => unknown) =>
+        runner({ signal: new AbortController().signal, update: vi.fn() }),
+      ),
+      getStatus: vi.fn(() => job),
+      read: vi.fn(() => job),
+    };
+    registerControlProfileIpc({} as ControlProfileManager, undefined, {
+      sessionManager: {},
+      jlinkBackend: {},
+      controlWorkflowJobManager: jobManager,
+      controlProfileApprovalGate: approvalGate,
+      onVerifiedDeployment,
+    } as never);
+
+    const start = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD)!;
+    await start(
+      { sender: { id: 8 } },
+      { root: 'C:/repo', kind: 'continue-approved', approvalId: 'approval_start_1' },
+    );
+
+    expect(runControlWorkflowMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ root: 'C:/repo', mode: 'flash-observe' }),
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        onUpdate: expect.any(Function),
+        onVerifiedDeployment,
+      }),
+    );
+  });
+
+  it('does not create approval continuations for direct downloads', async () => {
+    const approvalGate = {
+      evaluate: vi.fn(async () => ({
+        kind: 'rejected' as const,
+        approvalId: 'approval_run_1',
+        reason: 'APPROVAL_GRANT_ALREADY_CONSUMED',
+        continuationKind: 'control-profile-run' as const,
+      })),
+    };
+    registerControlProfileIpc({} as ControlProfileManager, undefined, {
+      sessionManager: {},
+      jlinkBackend: {},
+      controlProfileApprovalGate: approvalGate,
+    } as never);
+
+    const run = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD)!;
+    const result = await run(
+      { sender: { id: 7 } },
+      { root: 'C:/repo', kind: 'continue-approved', approvalId: 'approval_run_1' },
+    );
+
+    expect(result).toEqual({ success: true, data: expect.objectContaining({ mode: 'flash-observe' }) });
+    expect(approvalGate.evaluate).not.toHaveBeenCalled();
+    expect(runControlWorkflowMock).toHaveBeenCalledOnce();
   });
 
   it('connects and disconnects the profile chip over IPC without opening sessions', async () => {
@@ -363,7 +985,9 @@ describe('registerControlProfileIpc', () => {
       jlinkBackend,
     } as never);
 
-    const connect = handlers.get((IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_CONNECT_CHIP)!;
+    const connect = handlers.get(
+      (IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_CONNECT_CHIP,
+    )!;
     const connected = await connect({}, { root: 'C:/repo' });
 
     expect(connected).toEqual({

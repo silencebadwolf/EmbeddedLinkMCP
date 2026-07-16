@@ -8,7 +8,7 @@ const commonSchema = {
 const confirmField = z
   .boolean()
   .optional()
-  .describe('Must be true to schedule a LinkTerm MCP runtime restart.');
+  .describe('Legacy acknowledgement field; runtime restart executes immediately.');
 
 export const restartMcpRuntimeInputSchema = z
   .object({

@@ -13,10 +13,11 @@ import {
 } from '../../../core/workspace/index.js';
 import type { IJLinkBackend } from '../../../jlink/types.js';
 import type { JLinkDeviceCatalog } from '../../../jlink/device-catalog.js';
+import type { VerifiedDeploymentEvidence } from '../../../core/compensation/index.js';
 import { ERROR_CODES } from '../../../shared/error-codes.js';
 import { registerTool, ToolError, type ToolHandlerResult } from '../../registry.js';
 import { FIRMWARE_IMAGE_USAGE_GUIDANCE } from '../../firmware-image-guidance.js';
-import { ConfirmationRequiredError, translateJLinkError } from '../debug/error-translate.js';
+import { translateJLinkError } from '../debug/error-translate.js';
 import { defaultOpenSerial, type ControlProfileOpenSerial } from '../control-profile/tools.js';
 import { runControlWorkflow } from './workflow-runner.js';
 import {
@@ -42,6 +43,7 @@ export interface ControlWorkflowToolsDeps {
   hostPathResolver?: HostPathResolver;
   controlProfileOpenSerial?: ControlProfileOpenSerial;
   controlWorkflowJobManager?: ControlWorkflowJobManager;
+  onVerifiedDeployment?: (evidence: VerifiedDeploymentEvidence) => void;
 }
 
 /**
@@ -64,7 +66,7 @@ export function registerControlWorkflowTools(
       'Prefer this high-level tool over manually chaining low-level J-Link/serial tools for supported modes. ' +
       'Modes: flash-observe, debug-diagnose, flash-observe-diagnose. Prefer profile flash.binary and omit firmware.filePath unless intentionally overriding it; request firmware overrides are sandboxed under root. ' +
       `${FIRMWARE_IMAGE_USAGE_GUIDANCE} ` +
-      'Firmware is read server-side, so AI clients must not chunk base64 manually. High-impact modes require confirm=true. ' +
+      'Firmware is read server-side, so AI clients must not chunk base64 manually. Operations execute immediately and remain visible in Activity Center and transcript records. ' +
       'Set observe.enabled=false for download-only calls that should flash/verify/reset without serial or RTT observation. ' +
       'For long operations, request execution.mode=background, then poll get_control_workflow_job_status and read_control_workflow_job; cancel with cancel_control_workflow_job if needed. ' +
       'Known SEGGER/J-Link failures are returned with workflow failureCode and machine-readable nextActions. ' +
@@ -82,12 +84,17 @@ export function registerControlWorkflowTools(
           openSerial,
         };
         if (input.execution?.mode === 'background' && input.dryRun !== true) {
-          if (requiresHighImpactWorkflow(input) && input.confirm !== true) {
-            throw new ConfirmationRequiredError('run_control_workflow');
-          }
-          const job = jobManager.create({ input, correlationId: input.correlationId });
+          const job = jobManager.create({
+            input,
+            correlationId: input.correlationId,
+            activityOrigin: 'agent',
+          });
           void jobManager.start(job.jobId, ({ signal, update }) =>
-            runControlWorkflow(runnerDeps, input, { signal, onUpdate: update }),
+            runControlWorkflow(runnerDeps, input, {
+              signal,
+              onUpdate: update,
+              onVerifiedDeployment: deps.onVerifiedDeployment,
+            }),
           );
           return {
             success: true,
@@ -99,7 +106,9 @@ export function registerControlWorkflowTools(
           };
         }
 
-        const data = await runControlWorkflow(runnerDeps, input);
+        const data = await runControlWorkflow(runnerDeps, input, {
+          onVerifiedDeployment: deps.onVerifiedDeployment,
+        });
         return {
           success: true,
           evidence: {
@@ -205,6 +214,8 @@ function toJobStatusData(job: ControlWorkflowJobSnapshot): Record<string, unknow
     ...(job.currentStepId !== undefined ? { currentStepId: job.currentStepId } : {}),
     ...(currentStep !== undefined ? { currentStep } : {}),
     cancelRequested: job.cancelRequested,
+    cancellationCapability: job.cancellationCapability,
+    ...(job.stopState !== undefined ? { stopState: job.stopState } : {}),
     ...(job.workflow?.summary !== undefined ? { summary: job.workflow.summary } : {}),
     ...(job.workflow?.failedStep !== undefined ? { failedStep: job.workflow.failedStep } : {}),
     ...(job.workflow?.failureCode !== undefined ? { failureCode: job.workflow.failureCode } : {}),
@@ -218,15 +229,6 @@ function toJobReadData(job: ControlWorkflowJobSnapshot): Record<string, unknown>
   };
 }
 
-function requiresHighImpactWorkflow(input: RunControlWorkflowInput): boolean {
-  return (
-    input.mode === 'debug-diagnose' ||
-    input.mode === 'flash-observe' ||
-    input.mode === 'flash-observe-diagnose' ||
-    input.debug?.haltOnFailure === true
-  );
-}
-
 /**
  * 把 control-workflow 依赖域错误翻译为稳定 MCP ToolError。
  *
@@ -235,15 +237,6 @@ function requiresHighImpactWorkflow(input: RunControlWorkflowInput): boolean {
 function translateControlWorkflowError(err: unknown): never {
   if (err instanceof ToolError) {
     throw err;
-  }
-  if (err instanceof ConfirmationRequiredError) {
-    throw new ToolError(
-      ERROR_CODES.CONFIRMATION_REQUIRED,
-      'Confirmation required for high-impact workflow',
-      {
-        tool: err.toolName,
-      },
-    );
   }
   if (err instanceof ControlProfileNotFoundError) {
     throw new ToolError(ERROR_CODES.CONTROL_PROFILE_NOT_FOUND, err.message, { root: err.root });

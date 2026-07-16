@@ -2,10 +2,16 @@
 
 import { randomUUID } from 'node:crypto';
 import { ERROR_CODES } from '../../../shared/error-codes.js';
+import type { CancellationCapability } from '../../../shared/control-workflow-contract.js';
 import { ToolError } from '../../registry.js';
 import type { ToolErrorCode } from '../../registry.js';
 import type { RunControlWorkflowInput } from './schemas.js';
-import type { ControlWorkflowData, ControlWorkflowStep } from './types.js';
+import type {
+  ControlWorkflowData,
+  ControlWorkflowFailureCode,
+  ControlWorkflowStep,
+  ControlWorkflowStepStatus,
+} from './types.js';
 
 /** 后台控制工作流 job 状态。 */
 export type ControlWorkflowJobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -16,18 +22,67 @@ export interface ControlWorkflowJobRunContext {
   update(data: ControlWorkflowData): void;
 }
 
+export type ControlWorkflowJobActivityOrigin = 'agent' | 'human' | 'system';
+
+export const MAX_OBSERVED_WORKFLOW_STEPS = 64;
+export const MAX_OBSERVED_STEP_CODE_LENGTH = 64;
+
+export type ControlWorkflowJobObservationKind =
+  | 'created'
+  | 'running'
+  | 'updated'
+  | 'cancel-requested'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
+
+export interface ControlWorkflowJobStepObservation {
+  readonly id: string;
+  readonly status: ControlWorkflowStepStatus;
+  readonly durationMs: number;
+  readonly errorCode?: ToolErrorCode;
+  readonly failureCode?: ControlWorkflowFailureCode;
+}
+
+export interface ControlWorkflowJobObservation {
+  readonly kind: ControlWorkflowJobObservationKind;
+  readonly jobId: string;
+  readonly state: ControlWorkflowJobState;
+  readonly mode: RunControlWorkflowInput['mode'];
+  readonly activityOrigin: ControlWorkflowJobActivityOrigin;
+  readonly createdAt: number;
+  readonly startedAt?: number;
+  readonly completedAt?: number;
+  readonly updatedAt: number;
+  readonly cancelRequested: boolean;
+  readonly cancellationCapability: CancellationCapability;
+  readonly stopState?: ControlWorkflowJobStopState;
+  readonly currentStepId?: string;
+  readonly stepCount: number;
+  readonly steps: readonly ControlWorkflowJobStepObservation[];
+}
+
+export type ControlWorkflowJobStopState =
+  | 'stop-requested'
+  | 'cancelled'
+  | 'failed-after-stop-request'
+  | 'succeeded-after-stop-request';
+
 /** 后台 job 管理器配置。 */
 export interface ControlWorkflowJobManagerOptions {
   now?: () => number;
   createId?: () => string;
   ttlMs?: number;
   maxRetainedJobs?: number;
+  observer?: (observation: ControlWorkflowJobObservation) => void;
 }
 
 /** 创建 job 时保留的非敏感输入快照。 */
 export interface CreateControlWorkflowJobInput {
   input: RunControlWorkflowInput;
   correlationId?: string;
+  activityOrigin?: ControlWorkflowJobActivityOrigin;
+  cancellationCapability?: CancellationCapability;
 }
 
 /** job 状态快照，不暴露 AbortController 等内部可变对象。 */
@@ -43,6 +98,8 @@ export interface ControlWorkflowJobSnapshot {
   updatedAt: number;
   currentStepId?: string;
   cancelRequested: boolean;
+  cancellationCapability: CancellationCapability;
+  stopState?: ControlWorkflowJobStopState;
   correlationId?: string;
   workflow?: ControlWorkflowData;
 }
@@ -62,13 +119,63 @@ interface ControlWorkflowJobRecord {
   completedAt?: number;
   currentStepId?: string;
   cancelRequested: boolean;
+  cancellationCapability: CancellationCapability;
   correlationId?: string;
+  activityOrigin: ControlWorkflowJobActivityOrigin;
   workflow?: ControlWorkflowData;
   controller: AbortController;
 }
 
 const DEFAULT_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_RETAINED_JOBS = 32;
+const UNKNOWN_WORKFLOW_STEP_ID = 'workflow-step-unknown';
+const SAFE_OBSERVED_STEP_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
+const TOOL_ERROR_CODES = new Set<ToolErrorCode>([
+  'NOT_FOUND',
+  'SESSION_NOT_FOUND',
+  'NOT_OPEN',
+  'NOT_WRITABLE',
+  'NOT_IMPLEMENTED',
+  'INVALID_ARGUMENT',
+  'TIMEOUT',
+  'DEVICE_UNRESPONSIVE',
+  'SESSION_CLOSED',
+  'QUEUE_FULL',
+  'NO_BACKEND',
+  'VERSION_MISMATCH',
+  'WORKSPACE_NOT_FOUND',
+  'WORKSPACE_ALREADY_INITIALIZED',
+  'WORKSPACE_CONFLICT',
+  'WORKSPACE_SCHEMA_VERSION_MISMATCH',
+  'CONTROL_PROFILE_NOT_FOUND',
+  'CONTROL_PROFILE_ALREADY_INITIALIZED',
+  'CONTROL_PROFILE_SCHEMA_VERSION_MISMATCH',
+  'PROBE_NOT_FOUND',
+  'PROBE_BUSY',
+  'JLINK_OPERATION_FAILED',
+  'BUFFER_TOO_LARGE',
+  'ABORTED',
+  'INVALID_STATE',
+  'UI_NOT_AVAILABLE',
+  'INTERNAL',
+]);
+const WORKFLOW_FAILURE_CODES = new Set<ControlWorkflowFailureCode>([
+  'flash_ram_preserve_failed',
+  'flash_sector_erase_timeout',
+  'flash_verify_failed',
+  'probe_not_found',
+  'rtt_connect_failed',
+  'target_rejected',
+  'command_timeout',
+  'capability_not_implemented',
+  'jlink_operation_failed',
+]);
+const WORKFLOW_STEP_STATUSES = new Set<ControlWorkflowStepStatus>([
+  'running',
+  'passed',
+  'failed',
+  'skipped',
+]);
 
 /**
  * 管理 LinkTerm 控制工作流后台 job 的内存态生命周期。
@@ -81,6 +188,9 @@ export class ControlWorkflowJobManager {
   readonly #createId: () => string;
   readonly #ttlMs: number;
   readonly #maxRetainedJobs: number;
+  readonly #observer: ((observation: ControlWorkflowJobObservation) => void) | undefined;
+  readonly #observationQueue: ControlWorkflowJobObservation[] = [];
+  #drainingObservations = false;
 
   /**
    * 创建 job 管理器。
@@ -92,6 +202,7 @@ export class ControlWorkflowJobManager {
     this.#createId = options.createId ?? (() => `cwjob-${randomUUID()}`);
     this.#ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
     this.#maxRetainedJobs = options.maxRetainedJobs ?? DEFAULT_MAX_RETAINED_JOBS;
+    this.#observer = options.observer;
   }
 
   /**
@@ -103,7 +214,10 @@ export class ControlWorkflowJobManager {
   create(request: CreateControlWorkflowJobInput): ControlWorkflowJobSnapshot {
     this.#cleanupExpired();
     if (this.#activeJob() !== undefined) {
-      throw new ToolError(ERROR_CODES.INVALID_STATE, 'An active control workflow job is already running');
+      throw new ToolError(
+        ERROR_CODES.INVALID_STATE,
+        'An active control workflow job is already running',
+      );
     }
     const now = this.#now();
     const record: ControlWorkflowJobRecord = {
@@ -113,11 +227,15 @@ export class ControlWorkflowJobManager {
       createdAt: now,
       updatedAt: now,
       cancelRequested: false,
+      cancellationCapability: request.cancellationCapability ?? 'best-effort',
+      activityOrigin: request.activityOrigin ?? 'system',
       controller: new AbortController(),
     };
     if (request.correlationId !== undefined) record.correlationId = request.correlationId;
     this.#jobs.set(record.jobId, record);
-    return this.#snapshot(record);
+    const snapshot = this.#snapshot(record);
+    this.#enqueueObservation('created', record);
+    return snapshot;
   }
 
   /**
@@ -136,26 +254,49 @@ export class ControlWorkflowJobManager {
       throw new ToolError(ERROR_CODES.INVALID_STATE, `Control workflow job ${jobId} is not queued`);
     }
     this.#markRunning(record);
+    this.#enqueueObservation('running', record);
     try {
       const workflow = await runner({
         signal: record.controller.signal,
         update: (data) => this.update(jobId, data),
       });
-      if (record.cancelRequested || record.controller.signal.aborted) {
-        this.#markCancelled(record, workflow);
-      } else if (workflow.failedStep !== undefined) {
+      if (workflow.failedStep !== undefined) {
         this.#markTerminal(record, 'failed', workflow);
+        this.#enqueueObservation('failed', record);
       } else {
         this.#markTerminal(record, 'succeeded', workflow);
+        this.#enqueueObservation('succeeded', record);
       }
     } catch (err) {
-      if (record.cancelRequested || isAbortError(err)) {
-        this.#markCancelled(record, appendTerminalStep(record.workflow, record.input, 'job_cancelled', 'ABORTED', 'Control workflow job was cancelled'));
+      if (isAbortError(err)) {
+        this.#markCancelled(
+          record,
+          appendTerminalStep(
+            record.workflow,
+            record.input,
+            'job_cancelled',
+            'ABORTED',
+            'Control workflow job was cancelled',
+          ),
+        );
+        this.#enqueueObservation('cancelled', record);
       } else {
-        const error = err instanceof ToolError
-          ? err
-          : new ToolError(ERROR_CODES.INTERNAL, err instanceof Error ? err.message : String(err));
-        this.#markTerminal(record, 'failed', appendTerminalStep(record.workflow, record.input, 'job_failed', error.code, error.message));
+        const error =
+          err instanceof ToolError
+            ? err
+            : new ToolError(ERROR_CODES.INTERNAL, err instanceof Error ? err.message : String(err));
+        this.#markTerminal(
+          record,
+          'failed',
+          appendTerminalStep(
+            record.workflow,
+            record.input,
+            'job_failed',
+            error.code,
+            error.message,
+          ),
+        );
+        this.#enqueueObservation('failed', record);
       }
     }
     this.#cleanupRetained();
@@ -174,7 +315,9 @@ export class ControlWorkflowJobManager {
     record.workflow = cloneWorkflow(data);
     record.currentStepId = lastStepId(data);
     record.updatedAt = this.#now();
-    return this.#snapshot(record);
+    const snapshot = this.#snapshot(record);
+    this.#enqueueObservation('updated', record);
+    return snapshot;
   }
 
   /**
@@ -209,12 +352,34 @@ export class ControlWorkflowJobManager {
     this.#cleanupExpired();
     const record = this.#requireJob(jobId);
     if (isActive(record)) {
+      if (record.cancellationCapability === 'none') {
+        throw new ToolError(
+          ERROR_CODES.INVALID_STATE,
+          'This control workflow job does not expose a safe stop action',
+          { jobId, cancellationCapability: record.cancellationCapability },
+        );
+      }
       record.cancelRequested = true;
       record.updatedAt = this.#now();
       record.controller.abort();
       if (record.state === 'queued') {
-        this.#markCancelled(record, appendTerminalStep(record.workflow, record.input, 'job_cancelled', 'ABORTED', 'Control workflow job was cancelled'));
+        this.#markCancelled(
+          record,
+          appendTerminalStep(
+            record.workflow,
+            record.input,
+            'job_cancelled',
+            'ABORTED',
+            'Control workflow job was cancelled',
+          ),
+        );
       }
+      const snapshot = this.#snapshot(record);
+      this.#enqueueObservation('cancel-requested', record);
+      if (record.state === 'cancelled') {
+        this.#enqueueObservation('cancelled', record);
+      }
+      return snapshot;
     }
     return this.#snapshot(record);
   }
@@ -225,11 +390,17 @@ export class ControlWorkflowJobManager {
    * @param options jobId 指定单个 job；expiredOnly 只清理已过期 job
    * @returns 删除数量
    */
-  cleanup(options: { jobId?: string; expiredOnly?: boolean } = {}): ControlWorkflowJobCleanupResult {
+  cleanup(
+    options: { jobId?: string; expiredOnly?: boolean } = {},
+  ): ControlWorkflowJobCleanupResult {
     let removed = 0;
     if (options.jobId !== undefined) {
       const record = this.#jobs.get(options.jobId);
-      if (record !== undefined && !isActive(record) && (!options.expiredOnly || this.#isExpired(record))) {
+      if (
+        record !== undefined &&
+        !isActive(record) &&
+        (!options.expiredOnly || this.#isExpired(record))
+      ) {
         this.#jobs.delete(options.jobId);
         removed = 1;
       }
@@ -328,7 +499,10 @@ export class ControlWorkflowJobManager {
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
       cancelRequested: record.cancelRequested,
+      cancellationCapability: record.cancellationCapability,
     };
+    const stopState = stopStateFor(record);
+    if (stopState !== undefined) snapshot.stopState = stopState;
     if (record.startedAt !== undefined) snapshot.startedAt = record.startedAt;
     if (record.completedAt !== undefined) {
       snapshot.completedAt = record.completedAt;
@@ -338,6 +512,34 @@ export class ControlWorkflowJobManager {
     if (record.correlationId !== undefined) snapshot.correlationId = record.correlationId;
     if (record.workflow !== undefined) snapshot.workflow = cloneWorkflow(record.workflow);
     return snapshot;
+  }
+
+  #enqueueObservation(
+    kind: ControlWorkflowJobObservationKind,
+    record: ControlWorkflowJobRecord,
+  ): void {
+    if (this.#observer === undefined) return;
+    let projected: ControlWorkflowJobObservation;
+    try {
+      projected = buildJobObservation(kind, record);
+    } catch {
+      return;
+    }
+    this.#observationQueue.push(projected);
+    if (this.#drainingObservations) return;
+    this.#drainingObservations = true;
+    try {
+      while (this.#observationQueue.length > 0) {
+        const observation = this.#observationQueue.shift()!;
+        try {
+          this.#observer(observation);
+        } catch {
+          // Observation is a best-effort side channel and cannot affect job semantics.
+        }
+      }
+    } finally {
+      this.#drainingObservations = false;
+    }
   }
 }
 
@@ -356,10 +558,15 @@ function isAbortError(err: unknown): boolean {
 function cloneWorkflow(data: ControlWorkflowData): ControlWorkflowData {
   return {
     ...data,
-    steps: data.steps.map((step) => ({ ...step, error: step.error === undefined ? undefined : { ...step.error } })),
+    steps: data.steps.map((step) => ({
+      ...step,
+      error: step.error === undefined ? undefined : { ...step.error },
+    })),
     summary: { ...data.summary },
     nextActions: data.nextActions.map((action) => ({ ...action })),
-    ...(data.blockingReasons ? { blockingReasons: data.blockingReasons.map((reason) => ({ ...reason })) } : {}),
+    ...(data.blockingReasons
+      ? { blockingReasons: data.blockingReasons.map((reason) => ({ ...reason })) }
+      : {}),
   };
 }
 
@@ -402,4 +609,86 @@ function emptyWorkflow(input: RunControlWorkflowInput): ControlWorkflowData {
     },
     nextActions: [],
   };
+}
+
+function safeObservedStepCode(value: unknown): string {
+  return typeof value === 'string' && SAFE_OBSERVED_STEP_CODE_PATTERN.test(value)
+    ? value
+    : UNKNOWN_WORKFLOW_STEP_ID;
+}
+
+function safeDurationMs(value: unknown): number {
+  if (!Number.isFinite(value) || typeof value !== 'number' || value <= 0) return 0;
+  return Math.min(Math.trunc(value), Number.MAX_SAFE_INTEGER);
+}
+
+function optionalToolErrorCode(value: unknown): ToolErrorCode | undefined {
+  return typeof value === 'string' && TOOL_ERROR_CODES.has(value as ToolErrorCode)
+    ? (value as ToolErrorCode)
+    : undefined;
+}
+
+function optionalWorkflowFailureCode(value: unknown): ControlWorkflowFailureCode | undefined {
+  return typeof value === 'string' &&
+    WORKFLOW_FAILURE_CODES.has(value as ControlWorkflowFailureCode)
+    ? (value as ControlWorkflowFailureCode)
+    : undefined;
+}
+
+function projectStepObservation(step: ControlWorkflowStep): ControlWorkflowJobStepObservation {
+  if (!WORKFLOW_STEP_STATUSES.has(step.status)) {
+    throw new Error('Invalid workflow step status');
+  }
+  const errorCode = optionalToolErrorCode(step.error?.code);
+  const failureCode = optionalWorkflowFailureCode(step.error?.failureCode);
+  return Object.freeze({
+    id: safeObservedStepCode(step.id),
+    status: step.status,
+    durationMs: safeDurationMs(step.durationMs),
+    ...(errorCode === undefined ? {} : { errorCode }),
+    ...(failureCode === undefined ? {} : { failureCode }),
+  });
+}
+
+function buildJobObservation(
+  kind: ControlWorkflowJobObservationKind,
+  record: ControlWorkflowJobRecord,
+): ControlWorkflowJobObservation {
+  const sourceSteps = record.workflow?.steps;
+  if (sourceSteps !== undefined && !Array.isArray(sourceSteps)) {
+    throw new Error('Invalid workflow steps');
+  }
+  const projectedSteps = Object.freeze(
+    (sourceSteps ?? [])
+      .slice(-MAX_OBSERVED_WORKFLOW_STEPS)
+      .map((step) => projectStepObservation(step)),
+  );
+  return Object.freeze({
+    kind,
+    jobId: record.jobId,
+    state: record.state,
+    mode: record.input.mode,
+    activityOrigin: record.activityOrigin,
+    createdAt: record.createdAt,
+    ...(record.startedAt === undefined ? {} : { startedAt: record.startedAt }),
+    ...(record.completedAt === undefined ? {} : { completedAt: record.completedAt }),
+    updatedAt: record.updatedAt,
+    cancelRequested: record.cancelRequested,
+    cancellationCapability: record.cancellationCapability,
+    ...(stopStateFor(record) === undefined ? {} : { stopState: stopStateFor(record) }),
+    ...(record.currentStepId === undefined
+      ? {}
+      : { currentStepId: safeObservedStepCode(record.currentStepId) }),
+    stepCount: sourceSteps?.length ?? 0,
+    steps: projectedSteps,
+  });
+}
+
+function stopStateFor(record: ControlWorkflowJobRecord): ControlWorkflowJobStopState | undefined {
+  if (!record.cancelRequested) return undefined;
+  if (record.state === 'queued' || record.state === 'running') return 'stop-requested';
+  if (record.state === 'cancelled') return 'cancelled';
+  if (record.state === 'failed') return 'failed-after-stop-request';
+  if (record.state === 'succeeded') return 'succeeded-after-stop-request';
+  return undefined;
 }

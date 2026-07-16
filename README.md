@@ -1,12 +1,12 @@
 # LinkTerm v2
 
-LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端 与 MCP 自动化平台，作为旧 Qt/C++ 终端的重写版本。它在单一运行时内同时服务四类用户：**桌面终端用户**（本地 Shell / SSH / 串口）、**嵌入式固件开发者**（终端模式 + sendAndWait + RTT/J-Link 工作流）、**AI Host / MCP 客户端**（通过生产运行时的 61 个 MCP 工具读写同一会话、抓取截图、烧录调试），以及**项目维护者**（pure-TS core、依赖注入式 transport、双向许可证校验）。
+LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端 与 MCP 自动化平台，作为旧 Qt/C++ 终端的重写版本。它在单一运行时内同时服务四类用户：**桌面终端用户**（本地 Shell / SSH / 串口）、**嵌入式固件开发者**（终端模式 + sendAndWait + RTT/J-Link 工作流）、**AI Host / MCP 客户端**（通过生产运行时的 63 个 MCP 工具读写同一会话、抓取截图、烧录调试），以及**项目维护者**（pure-TS core、依赖注入式 transport、双向许可证校验）。
 
 - 包名：`linkterm-v2`
 - 版本：`0.1.0`
 - License：`UNLICENSED`（仓库私有，第三方依赖均已记录归因）
 - 包管理器：`pnpm@9.15.0`（必需，**不能用 npm/yarn**）
-- Node：`>= 20.0.0`
+- Node：`^22.13.0 || >=24.0.0`（CI 验证 Node.js 22.13.0 下界）
 
 ---
 
@@ -14,23 +14,23 @@ LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端 与 MCP 自动
 
 13 / 13 Phase 全部完成（详见 [`DEVELOPMENT_PLAN.md`](./docs/DEVELOPMENT_PLAN.md)）。
 
-| 阶段 | 状态 |
-| --- | --- |
-| Phase 0 — 项目脚手架 | 已完成 |
-| Phase 1 — 核心 Session / Transcript / WriteQueue | 已完成 |
-| Phase 2 — 串口适配器 | 已完成 |
-| Phase 3 — SSH + 本地 Shell | 已完成 |
-| Phase 4 — MCP 终端工具（8 个） | 已完成 |
+| 阶段                                                        | 状态   |
+| ----------------------------------------------------------- | ------ |
+| Phase 0 — 项目脚手架                                        | 已完成 |
+| Phase 1 — 核心 Session / Transcript / WriteQueue            | 已完成 |
+| Phase 2 — 串口适配器                                        | 已完成 |
+| Phase 3 — SSH + 本地 Shell                                  | 已完成 |
+| Phase 4 — MCP 终端工具（8 个）                              | 已完成 |
 | Phase 5 — AI-人共同操作硬化（priority 队列、多订阅 cursor） | 已完成 |
-| Phase 6 — Electron Renderer UI（xterm.js + shadcn + i18n） | 已完成 |
-| Phase 7 — 嵌入式终端规则 + sendAndWait FSM | 已完成 |
-| Phase 8 — 工作区配置持久化（`.linkterm/config.json`） | 已完成 |
+| Phase 6 — Electron Renderer UI（xterm.js + shadcn + i18n）  | 已完成 |
+| Phase 7 — 嵌入式终端规则 + sendAndWait FSM                  | 已完成 |
+| Phase 8 — 工作区配置持久化（`.linkterm/config.json`）       | 已完成 |
 | Phase 9 — J-Link MCP 调试面（30 个工具 + NullBackend 兜底） | 已完成 |
-| Phase 10 — UI MCP 面（`ui_configure` + `ui_screenshot`） | 已完成 |
-| Phase 11 — 双向许可证校验脚本 | 已完成 |
-| Phase 12 — 集成覆盖 + 高敏感工具 confirm gate + 性能基线 | 已完成 |
+| Phase 10 — UI MCP 面（`ui_configure` + `ui_screenshot`）    | 已完成 |
+| Phase 11 — 双向许可证校验脚本                               | 已完成 |
+| Phase 12 — 集成覆盖 + 高敏感工具 confirm gate + 性能基线    | 已完成 |
 
-测试：1024 个 Vitest 用例 / 106 个测试文件。
+测试：1127 个 Vitest 用例 / 110 个测试文件。
 
 ---
 
@@ -43,25 +43,40 @@ LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端 与 MCP 自动
 - **MCP Server** 在 Main Process 内运行，与 UI **共享同一个** `SessionManager` 实例 —— 这是「AI 与人对同一会话共同操作」的承载点（需求 §4.5）。
 - **IPC Bridge** 用 `ipcRenderer.invoke` / `ipcMain.handle` 做请求/响应；流式 transcript 数据用事件推送。
 
+### 支持的 MCP / Activity Runtime 拓扑
+
+生产支持的 Agent 调用只走 Electron Main 拥有的 direct MCP server 或 localhost HTTP owner。两条通道共享同一个 `OperationLedger` / `OperationRecorder` / `ControlWorkflowJobManager`，因此 Activity IPC 看到的是同一 runtime id、同一单调 cursor、同一组 display-safe 操作事件。当前 stdio 集成是连接 HTTP owner 的 proxy；`src/mcp/stdio-entry.ts` 仅保留为 legacy / 非默认开发可执行入口，不由当前 Agent integrations 安装或宣传，也不提供 Phase 1 可查询的 Main-owned ledger。
+
 ### 单一序列化点（最重要的不变量）
 
 > 任何对会话的写入 —— 无论来自 UI（`origin='human'`）还是 MCP（`origin='ai'`）—— 都**必须**走 `SessionManager.write` → `WriteQueue` → `ITransport`。
 
 `WriteQueue` 是唯一的串行化瓶颈，保证 AI 与人输入的全局顺序、产生审计踪迹。`TranscriptBuffer` 仅追加，配以单调递增的 sequence cursor；`clear` 也以事件形式入档（`meta.kind: 'clear'`），以保留 AI 的可读历史。**MCP 工具与 IPC handler 不允许直接触碰 transport**（需求 §4.4 / §5.1）。
 
-### MCP 隔离 Surface（生产运行时共 61 个工具）
+### 本地持久审计（A+D Phase 8）
 
-| Surface | 工具数 | 工具名 | Evidence Kind |
-| --- | --- | --- | --- |
-| Runtime / Agent | 3 | `restart_mcp_runtime`、`get_agent_runbook`、`get_app_status` | `agent_runbook` / `app_status` |
-| Terminal | 8 | `list_sessions`、`open_session`、`close_session`、`write_to_session`、`read_from_session`、`send_and_wait`、`discover_serial_ports`、`get_session_status` | `terminal_output` |
-| Workspace | 3 | `init_workspace`、`get_workspace_config`、`update_workspace_config` | `workspace_config` |
-| Control Profile | 6 | `init_control_profile`、`get_control_profile`、`inspect_control_profile`、`prepare_control_profile_questions`、`apply_control_profile_answer`、`activate_control_profile` | `workspace_config` |
-| Control Workflow | 5 | `run_control_workflow`、`get_control_workflow_job_status`、`read_control_workflow_job`、`cancel_control_workflow_job`、`cleanup_control_workflow_jobs` | `debug_output` |
-| Debug (J-Link) | 30 | `probe_detect/connect/disconnect/status`、`jlink_reboot`、`cpu_reset/halt/run/step`、`breakpoint_set/clear/list`、`register_read/write/list`、`memory_read/write`、`flash_download/write/verify/erase`、`rtt_connect/clear/read/search`、`gdb_server_start/stop`、`snapshot_capture`、`crash_diagnose`、`jlink_commander_script` | `debug_output` |
-| RTT Log Session | 2 | `open_rtt_log_session`、`diagnose_rtt_log_session` | `terminal_output` / `debug_output` |
-| J-Link Device Catalog | 2 | `jlink_device_catalog_search`、`jlink_device_catalog_get` | `debug_output` |
-| UI | 2 | `ui_configure`（4-action discriminatedUnion）、`ui_screenshot`（PNG，16 MiB 上限） | `ui_screenshot` |
+Activity Ledger 的显示安全事件会由 Main 进程异步复制到 Electron `userData/activity/` 下的
+JSONL：默认保留 30 天，单文件达到 10 MiB 前轮转。恢复只读取有界的近期记录，破损尾行会显示为
+警告而不会伪造操作终态。Activity Center 的“导出脱敏活动”和“删除本机活动”均由 Main 写入/清理；
+Renderer 不接触审计路径，删除需要显式确认。
+
+审计记录不包含密码、私钥、token、完整终端内容、脚本正文、固件/二进制字节、截图、绝对路径或
+PreparedOperation、授权、principal、lease 等 Main-only 对象。持久化是 best-effort 观测副本，失败不会
+阻塞 MCP 响应或 transport 写入。
+
+### MCP 隔离 Surface（生产运行时共 63 个工具）
+
+| Surface               | 工具数 | 工具名                                                                                                                                                                                                                                                                                                                           | Evidence Kind                      |
+| --------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| Runtime / Agent       | 3      | `restart_mcp_runtime`、`get_agent_runbook`、`get_app_status`                                                                                                                                                                                                                                                                     | `agent_runbook` / `app_status`     |
+| Terminal              | 8      | `list_sessions`、`open_session`、`close_session`、`write_to_session`、`read_from_session`、`send_and_wait`、`discover_serial_ports`、`get_session_status`                                                                                                                                                                        | `terminal_output`                  |
+| Workspace             | 3      | `init_workspace`、`get_workspace_config`、`update_workspace_config`                                                                                                                                                                                                                                                              | `workspace_config`                 |
+| Control Profile       | 8      | `init_control_profile`、`get_control_profile`、`inspect_control_profile`、`prepare_control_profile_questions`、`apply_control_profile_answer`、`activate_control_profile`、`connect_control_profile_chip`、`disconnect_control_profile_chip`                                                                                     | `workspace_config`                 |
+| Control Workflow      | 5      | `run_control_workflow`、`get_control_workflow_job_status`、`read_control_workflow_job`、`cancel_control_workflow_job`、`cleanup_control_workflow_jobs`                                                                                                                                                                           | `debug_output`                     |
+| Debug (J-Link)        | 30     | `probe_detect/connect/disconnect/status`、`jlink_reboot`、`cpu_reset/halt/run/step`、`breakpoint_set/clear/list`、`register_read/write/list`、`memory_read/write`、`flash_download/write/verify/erase`、`rtt_connect/clear/read/search`、`gdb_server_start/stop`、`snapshot_capture`、`crash_diagnose`、`jlink_commander_script` | `debug_output`                     |
+| RTT Log Session       | 2      | `open_rtt_log_session`、`diagnose_rtt_log_session`                                                                                                                                                                                                                                                                               | `terminal_output` / `debug_output` |
+| J-Link Device Catalog | 2      | `jlink_device_catalog_search`、`jlink_device_catalog_get`                                                                                                                                                                                                                                                                        | `debug_output`                     |
+| UI                    | 2      | `ui_configure`（4-action discriminatedUnion）、`ui_screenshot`（PNG，16 MiB 上限）                                                                                                                                                                                                                                               | `ui_screenshot`                    |
 
 每个 MCP 工具都返回 `{ success, sessionId?, state?, evidence: { kind, data, cursor }, error?, correlationId, origin: 'ai', schemaVersion }`。
 
@@ -145,24 +160,26 @@ pnpm start              # 另起 Electron
 
 ## 常用命令
 
-| 命令 | 作用 |
-| --- | --- |
-| `pnpm install` | 安装依赖 |
-| `pnpm run build` | 完整构建：`tsc -b`（composite 项目）+ `vite build` |
-| `pnpm run build:main` | 仅构建主进程（`tsc -p tsconfig.main.json`） |
-| `pnpm run build:renderer` | 仅构建 renderer |
-| `pnpm run build:all` | 串行执行 main + renderer |
-| `pnpm test` | 一次性跑全部 Vitest |
-| `pnpm test -- path/to/file.test.ts` | 单文件 |
-| `pnpm test -- -t "test name"` | 按名匹配 |
-| `pnpm run test:watch` | watch 模式 |
-| `pnpm run lint` | ESLint（`src/` + `tests/`） |
-| `pnpm run format` | Prettier 格式化 |
-| `pnpm run validate:licenses` | 双向校验 `third-party-manifest.json` ↔ `licenses/` ↔ `package.json` |
-| `pnpm start` | 启动已构建的 Electron 应用 |
-| `pnpm run dev` | Vite dev server（仅 renderer） |
-| `pnpm run pack` | `electron-builder --dir`（不打安装包） |
-| `pnpm run dist` | `electron-builder` 生成发布产物（按 `electron-builder.yml`） |
+| 命令                                | 作用                                                                |
+| ----------------------------------- | ------------------------------------------------------------------- |
+| `pnpm install`                      | 安装依赖                                                            |
+| `pnpm run build`                    | 完整构建：`tsc -b`（composite 项目）+ `vite build`                  |
+| `pnpm run build:main`               | 仅构建主进程（`tsc -p tsconfig.main.json`）                         |
+| `pnpm run build:renderer`           | 仅构建 renderer                                                     |
+| `pnpm run build:all`                | 串行执行 main + renderer                                            |
+| `pnpm test`                         | 一次性跑全部 Vitest                                                 |
+| `pnpm run test:coverage`            | 全量 Vitest + whole-source V8 coverage 报告（无阈值）               |
+| `pnpm test -- path/to/file.test.ts` | 单文件                                                              |
+| `pnpm test -- -t "test name"`       | 按名匹配                                                            |
+| `pnpm run test:watch`               | watch 模式                                                          |
+| `pnpm run lint`                     | ESLint（`src/` + `tests/`）                                         |
+| `pnpm run format`                   | Prettier 格式化                                                     |
+| `pnpm run validate:licenses`        | 双向校验 `third-party-manifest.json` ↔ `licenses/` ↔ `package.json` |
+| `pnpm run ci:check`                 | 串行执行 lint、build、全量 test、license validation                 |
+| `pnpm start`                        | 启动已构建的 Electron 应用                                          |
+| `pnpm run dev`                      | Vite dev server（仅 renderer）                                      |
+| `pnpm run pack`                     | `electron-builder --dir`（不打安装包）                              |
+| `pnpm run dist`                     | `electron-builder` 生成发布产物（按 `electron-builder.yml`）        |
 
 ---
 
@@ -186,8 +203,8 @@ pnpm start              # 另起 Electron
 - 框架：**Vitest**（不是 Jest）。配置见 `vitest.config.ts`。
 - 默认 `environment: 'node'`；renderer 测试通过文件首行 `// @vitest-environment happy-dom` 切换。
 - Setup：`tests/unit/setup.ts` + `tests/setup-renderer.ts`。
-- Coverage 范围（v8 provider）：`src/core/**`、`src/transports/**`、`src/mcp/**`。
-- 当前规模：**1024 用例 / 106 测试文件**。组织：
+- Coverage 范围（v8 provider）：`src/**/*.{ts,tsx}`（仅排除声明文件）；Phase 0 只报告 whole-source baseline，不设数值阈值。
+- 当前规模以本页顶部测试摘要和 `docs/engineering/quality-gates.md` 的最新基线为准。组织：
 
 ```
 tests/
@@ -215,16 +232,20 @@ tests/
 2. `licenses/<name>.LICENSE` 文件
 3. `package.json` 的 `dependencies`（或 `EXTRA_RUNTIME_DEPS` 白名单）
 
-`pnpm run validate:licenses`（脚本：`scripts/validate-licenses.ts`，纯函数 `validateLicenses({ manifestPath, packageJsonPath, rootDir })`）执行 4 项不变量校验：
+`pnpm run validate:licenses`（脚本：`scripts/validate-licenses.ts`，纯函数 `validateLicenses({ manifestPath, packageJsonPath, rootDir })`）先执行 4 项 runtime 不变量校验：
 
 1. **Manifest 内部一致性** —— 每条记录字段齐全且 license 文件实际存在；
 2. **package.json → manifest** —— 每个 `dependencies` 键必须在 manifest 中有对应记录（或在 `EXTRA_RUNTIME_DEPS` 白名单中）；
 3. **manifest → package.json** —— 每条 manifest 记录必须出现在 `dependencies` 或白名单中（删除依赖却忘删 manifest 会失败）；
 4. **版本严格相等** —— `manifest.version === package.json.dependencies[name]`（字符串比较，无 semver 容忍）。
 
-`EXTRA_RUNTIME_DEPS` 当前仅含 `electron`（位于 `devDependencies` 但会被 `electron-builder` 打入运行时产物）。脚本由 `tests/unit/scripts/validate-licenses.test.ts` 的 11 个用例守护。
+`EXTRA_RUNTIME_DEPS` 当前仅含 `electron`（位于 `devDependencies` 但会被 `electron-builder` 打入运行时产物）。
 
 当前已记录的 19 条运行时依赖：`@modelcontextprotocol/sdk`、`react`、`react-dom`、`zustand`、`electron`、`zod`、`serialport`、`ssh2`、`node-pty`、`@xterm/xterm`、`@xterm/addon-fit`、`@radix-ui/react-{dialog,tabs,select,label,slot}`、`class-variance-authority`、`clsx`、`tailwind-merge`。
+
+Coverage provider 不属于产品运行时。`third-party-manifest.json` 的独立 `auditedDevTooling` 区域记录 `@vitest/coverage-v8@4.1.8` 及其沿已安装包普通 `dependencies` 边可达的 29 包 production closure；每项使用 exact resolved version、上游 license identifier 和仓库内归因文件。该范围明确排除 peer dependencies、包自身的 devDependencies 和未安装 optional peers，且不声称覆盖全部开发依赖。许可证门禁成功时分别报告 19 个 runtime 条目与 1 个 audited tooling root / 29 个 closure 包。
+
+工具链闭包额外双向校验 missing/stale/duplicate record、root specifier、exact resolved version、上游 license identifier 与 license 文件。runtime 与 audited tooling 逻辑分别由 `tests/unit/scripts/validate-licenses.test.ts` 和 `tests/unit/scripts/validate-dev-tooling-licenses.test.ts` 的聚焦用例守护。
 
 > 第三方开源项目的设计可作参考，但源码复制需先做许可证审查与归因；`jlinkmcp`（https://github.com/daikw/JLinkMCP）无声明 license，仅作设计参考、不复制源码（需求 §4.11）。
 
@@ -237,7 +258,7 @@ tests/
 - **新增错误码（M5 双向同步模式）**：必须**同时**加入
   - `src/shared/error-codes.ts` 的 `ERROR_CODES` 常量；
   - `src/mcp/registry.ts` 的 `ToolErrorCode` 联合类型。
-  现有翻译层基于 `instanceof` 的错误链（见 `src/mcp/surfaces/debug/error-translate.ts`、`src/mcp/surfaces/workspace/tools.ts`），缺失任一半会让翻译静默退化。
+    现有翻译层基于 `instanceof` 的错误链（见 `src/mcp/surfaces/debug/error-translate.ts`、`src/mcp/surfaces/workspace/tools.ts`），缺失任一半会让翻译静默退化。
 - **新增高敏感 J-Link 工具**：在 schema 加 `confirm: confirmField`，在 `runJLink(...)` 内的第一句 `if (input.confirm !== true) throw new ConfirmationRequiredError(toolName)`，并在 `description` 里追加「High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned.」。
 - **不得让 MCP 工具或 IPC handler 直接触碰 transport** —— 一切写入必须经 `SessionManager.write`。这是硬安全边界。
 - **不要在 `src/core/` 引入 `electron`、`serialport`、`ssh2`、`node-pty`**；只能通过 `*-{port,client}-like.ts` 接口与默认工厂消费。

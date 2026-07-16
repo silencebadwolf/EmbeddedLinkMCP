@@ -12,7 +12,7 @@
  * - 历史快照 + 后续流式事件不重复也不丢失
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { useTranscript } from '../../../../src/renderer/hooks/useTranscript.js';
 import { useAppStore } from '../../../../src/renderer/store/app-store.js';
@@ -30,15 +30,26 @@ const resetStore = (): void => {
   });
 };
 
-const fakeTerm = (): Pick<Terminal, 'write' | 'clear'> & { writes: string[] } => {
+const fakeTerm = (): Pick<Terminal, 'write' | 'clear'> & { writes: string[]; flush: () => void } => {
   const writes: string[] = [];
+  const callbacks: Array<() => void> = [];
   return {
-    write: ((data: string) => {
+    write: ((data: string, callback?: () => void) => {
       writes.push(data);
+      if (callback) callbacks.push(callback);
     }) as Terminal['write'],
     clear: (() => undefined) as Terminal['clear'],
     writes,
+    flush: () => {
+      for (const callback of callbacks.splice(0)) callback();
+    },
   };
+};
+
+const b64Bytes = (bytes: number[]): string => {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+  return btoa(bin);
 };
 
 describe('useTranscript', () => {
@@ -65,7 +76,7 @@ describe('useTranscript', () => {
     expect(mock.spies.session.read).not.toHaveBeenCalled();
   });
 
-  it('does not render outgoing ai events but renders device events', async () => {
+  it('keeps outgoing AI events in the transcript while locally echoing and de-duplicating device echo', async () => {
     const term = fakeTerm();
     renderHook(() => useTranscript('sess_1', term));
     // wait for subscribe to happen so onEvent listener is registered
@@ -81,7 +92,7 @@ describe('useTranscript', () => {
         dataBase64: btoa('hi'),
       },
     });
-    expect(term.writes.join('')).toBe('');
+    expect(term.writes.join('')).toBe('hi');
 
     mock.emitTranscript({
       sessionId: 'sess_1',
@@ -93,8 +104,162 @@ describe('useTranscript', () => {
         dataBase64: btoa('hi'),
       },
     });
-    expect(term.writes.join('')).not.toContain('[A]');
+    expect(term.writes.join('')).toBe('hi');
+  });
+
+  it('publishes visible-device sequence only after xterm completion acknowledgement', async () => {
+    const term = fakeTerm();
+    const visible: number[] = [];
+    renderHook(() =>
+      useTranscript('sess_1', term, {
+        onVisibleDeviceSequence: ({ sequence }) => visible.push(sequence),
+      }),
+    );
+    await waitFor(() => expect(mock.spies.session.subscribe).toHaveBeenCalled());
+
+    mock.emitTranscript({
+      sessionId: 'sess_1',
+      event: {
+        type: 'data',
+        origin: 'device',
+        sequence: 2,
+        timestamp: 0,
+        dataBase64: btoa('hi'),
+      },
+    });
+
     expect(term.writes.join('')).toContain('hi');
+    expect(visible).toEqual([]);
+    term.flush();
+    await waitFor(() => expect(visible).toEqual([2]));
+  });
+
+  it('reports display-unavailable when transcript subscribe fails', async () => {
+    const term = fakeTerm();
+    const unavailable = vi.fn();
+    mock.spies.session.subscribe.mockResolvedValueOnce({
+      success: false,
+      error: { code: 'TRANSCRIPT_SUBSCRIBE_FAILED', message: 'Subscribe failed' },
+    });
+
+    renderHook(() =>
+      useTranscript('sess_1', term, {
+        onDisplayUnavailable: unavailable,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(unavailable).toHaveBeenCalledWith('firstSignal.display.subscribeFailed'),
+    );
+    expect(term.writes).toEqual([]);
+  });
+
+  it('does not publish visible-device sequence for outgoing, state, clear, incomplete UTF-8, or wrong-session events', async () => {
+    const term = fakeTerm();
+    const visible: number[] = [];
+    renderHook(() =>
+      useTranscript('sess_1', term, {
+        onVisibleDeviceSequence: ({ sequence }) => visible.push(sequence),
+      }),
+    );
+    await waitFor(() => expect(mock.spies.session.subscribe).toHaveBeenCalled());
+
+    mock.emitTranscript({
+      sessionId: 'sess_1',
+      event: { type: 'data', origin: 'human', sequence: 1, timestamp: 0, dataBase64: btoa('cmd') },
+    });
+    mock.emitTranscript({
+      sessionId: 'sess_1',
+      event: { type: 'state', origin: 'system', sequence: 2, timestamp: 0, meta: { to: 'open' } },
+    });
+    mock.emitTranscript({
+      sessionId: 'sess_1',
+      event: { type: 'clear', origin: 'human', sequence: 3, timestamp: 0 },
+    });
+    mock.emitTranscript({
+      sessionId: 'sess_OTHER',
+      event: { type: 'data', origin: 'device', sequence: 4, timestamp: 0, dataBase64: btoa('other') },
+    });
+    mock.emitTranscript({
+      sessionId: 'sess_1',
+      event: { type: 'data', origin: 'device', sequence: 5, timestamp: 0, dataBase64: b64Bytes([0xe4, 0xb8]) },
+    });
+    mock.emitTranscript({
+      sessionId: 'sess_1',
+      event: { type: 'state', origin: 'system', sequence: 6, timestamp: 0, meta: { to: 'open' } },
+    });
+
+    term.flush();
+    await Promise.resolve();
+    expect(visible).toEqual([]);
+
+    mock.emitTranscript({
+      sessionId: 'sess_1',
+      event: { type: 'data', origin: 'device', sequence: 7, timestamp: 0, dataBase64: b64Bytes([0xad]) },
+    });
+    term.flush();
+    await waitFor(() => expect(visible).toEqual([7]));
+  });
+
+  it('ignores delayed xterm callbacks after unmount/dispose', async () => {
+    const term = fakeTerm();
+    const visible: number[] = [];
+    const rendered = renderHook(() =>
+      useTranscript('sess_1', term, {
+        onVisibleDeviceSequence: ({ sequence }) => visible.push(sequence),
+      }),
+    );
+    await waitFor(() => expect(mock.spies.session.subscribe).toHaveBeenCalled());
+
+    mock.emitTranscript({
+      sessionId: 'sess_1',
+      event: { type: 'data', origin: 'device', sequence: 3, timestamp: 0, dataBase64: btoa('late') },
+    });
+    rendered.unmount();
+    term.flush();
+    await Promise.resolve();
+
+    expect(visible).toEqual([]);
+  });
+
+  it('skips duplicate transcript sequences so replay does not double-render or double-complete', async () => {
+    const term = fakeTerm();
+    const visible: number[] = [];
+    mock.spies.session.subscribe.mockResolvedValueOnce({
+      success: true,
+      data: {
+        events: [
+          {
+            type: 'data',
+            origin: 'device',
+            sequence: 1,
+            timestamp: 0,
+            dataBase64: btoa('A'),
+          },
+        ],
+        cursor: 1,
+        truncated: false,
+        oldestAvailableSequence: 1,
+      },
+    });
+    renderHook(() =>
+      useTranscript('sess_1', term, {
+        onVisibleDeviceSequence: ({ sequence }) => visible.push(sequence),
+      }),
+    );
+    await waitFor(() => expect(term.writes.join('')).toContain('A'));
+    term.flush();
+    await waitFor(() => expect(visible).toEqual([1]));
+
+    mock.emitTranscript({
+      sessionId: 'sess_1',
+      event: { type: 'data', origin: 'device', sequence: 1, timestamp: 0, dataBase64: btoa('A') },
+    });
+    term.flush();
+    await Promise.resolve();
+
+    expect(term.writes.join('')).toBe('A');
+    expect(visible).toEqual([1]);
   });
 
   it('ignores events for other sessions', async () => {

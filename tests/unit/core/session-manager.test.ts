@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SessionBase } from '@/core/session/session-base.js';
 import { SessionManager } from '@/core/session/session-manager.js';
+import { SessionUnresponsiveError } from '@/core/session/types.js';
 import type { TranscriptEvent } from '@/core/transcript/types.js';
 import type { SessionId } from '@/shared/types.js';
 import { MockTransport } from '../../fixtures/mock-transport.js';
@@ -211,6 +212,44 @@ describe('SessionManager', () => {
     await session.open();
     await mgr.write(session.id, utf8('hello'), { origin: 'ai' });
     expect(transport.writes).toHaveLength(1);
+  });
+
+  it('blocks AI writes after an unresponsive timeout but keeps human writes available', async () => {
+    const mgr = new SessionManager();
+    const transport = new MockTransport();
+    const session = mgr.create((id) => new TestSession(id, transport));
+    await session.open();
+
+    mgr.markAiUnresponsive(session.id, { cursorBefore: 3, cursorAfter: 8 });
+
+    await expect(mgr.write(session.id, utf8('retry'), { origin: 'ai' })).rejects.toBeInstanceOf(
+      SessionUnresponsiveError,
+    );
+    await expect(mgr.write(session.id, utf8('human recovery input'), { origin: 'human' })).resolves
+      .toBeUndefined();
+
+    expect(transport.writes.map((bytes) => new TextDecoder().decode(bytes))).toEqual([
+      'human recovery input',
+    ]);
+
+    // 新的设备输出证明链路仍然活着后，AI 写入恢复。
+    transport.pushIncoming(utf8('device is alive'));
+    await expect(mgr.write(session.id, utf8('retry-after-output'), { origin: 'ai' })).resolves
+      .toBeUndefined();
+  });
+
+  it('clears the AI fuse when the session enters a terminal state', async () => {
+    const mgr = new SessionManager();
+    const transport = new MockTransport();
+    const session = mgr.create((id) => new TestSession(id, transport));
+    await session.open();
+
+    mgr.markAiUnresponsive(session.id, { cursorBefore: 1, cursorAfter: 2 });
+    await session.close();
+
+    await expect(mgr.write(session.id, utf8('retry-on-closed'), { origin: 'ai' })).rejects.toMatchObject({
+      code: 'NOT_OPEN',
+    });
   });
 
   it('destroy() closes session and removes from registry', async () => {

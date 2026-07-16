@@ -54,7 +54,7 @@ describe('high-impact MCP tool descriptions', () => {
     await teardown(h);
   });
 
-  it('states confirmation requirements and forbids external CLI fallback', async () => {
+  it('states immediate execution and observation requirements', async () => {
     const tools = await h.client.listTools();
     const descriptions = new Map(tools.tools.map((tool) => [tool.name, tool.description ?? '']));
 
@@ -69,7 +69,8 @@ describe('high-impact MCP tool descriptions', () => {
       'run_control_workflow',
     ]) {
       const description = descriptions.get(name) ?? '';
-      expect(description, `${name} must mention confirm=true`).toContain('confirm=true');
+      expect(description, `${name} must mention immediate execution`).toContain('execute immediately');
+      expect(description).not.toContain('CONFIRMATION_REQUIRED');
     }
   });
 

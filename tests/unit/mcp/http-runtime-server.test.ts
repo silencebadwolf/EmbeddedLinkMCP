@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SessionManager } from '../../../src/core/session/session-manager.js';
-import { startMcpHttpRuntimeServer, type McpHttpRuntimeServer } from '../../../src/mcp/http-runtime-server.js';
+import {
+  startMcpHttpRuntimeServer,
+  type McpHttpRuntimeServer,
+} from '../../../src/mcp/http-runtime-server.js';
 import type { SerialDiscovery } from '../../../src/transports/serial/serial-discovery.js';
 
 function makeSerialDiscovery(): SerialDiscovery {

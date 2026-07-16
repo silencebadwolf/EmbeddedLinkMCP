@@ -325,7 +325,13 @@ describe('ConnectionDialog', () => {
     // dialog 默认 closed → store 写入 prefill → open=true 触发 effect 边沿读取
     useAppStore.setState({
       dialogOpen: false,
-      connectionDialogPrefill: { serialPort: '/dev/ttyUSB0', baudRate: '9600' },
+      connectionDialogPrefill: {
+        serialPort: '/dev/ttyUSB0',
+        baudRate: '9600',
+        dataBits: '7',
+        stopBits: '2',
+        parity: 'even',
+      },
     });
     const { rerender } = render(<ConnectionDialog />);
     useAppStore.setState({ dialogOpen: true });
@@ -333,6 +339,10 @@ describe('ConnectionDialog', () => {
     // 表单内的 serial port selector 应当可见且没有 manual input
     expect(screen.getByTestId('picker-select-trigger')).toBeInTheDocument();
     expect(screen.queryByTestId('picker-manual-input')).toBeNull();
+    expect(screen.getByLabelText('Baud Rate')).toHaveValue('9600');
+    expect(screen.getByLabelText('Data Bits')).toHaveTextContent('7');
+    expect(screen.getByLabelText('Stop Bits')).toHaveTextContent('2');
+    expect(screen.getByLabelText('Parity')).toHaveTextContent('even');
     // prefill 已被立即清掉，避免下次 open 时重放
     expect(useAppStore.getState().connectionDialogPrefill).toBeNull();
   });

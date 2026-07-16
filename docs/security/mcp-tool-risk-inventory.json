@@ -1,0 +1,574 @@
+{
+  "schemaVersion": "1.0.0",
+  "authority": "review-data-only",
+  "sourcePattern": "src/**/*.{ts,tsx}",
+  "tools": [
+    {
+      "name": "activate_control_profile",
+      "surface": "control-profile",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "打开配置串口并连接 J-Link，占用本机和硬件资源，但不烧录、复位或 halt。"
+    },
+    {
+      "name": "apply_control_profile_answer",
+      "surface": "control-profile",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "将答案写入 control-profile，改变后续连接和工作流参数。"
+    },
+    {
+      "name": "breakpoint_clear",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "disruptive",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "删除断点会改变调试控制状态，并可能使程序越过停止位置。"
+    },
+    {
+      "name": "breakpoint_list",
+      "surface": "debug",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只读取当前断点集合，不改变目标或调试器状态。"
+    },
+    {
+      "name": "breakpoint_set",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "disruptive",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "新断点会改变目标后续执行路径，并可能在命中时中断程序。"
+    },
+    {
+      "name": "cancel_control_workflow_job",
+      "surface": "control-workflow",
+      "sensitivity": "state-affecting",
+      "risk": "disruptive",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "请求停止硬件工作流，已完成的烧录或其他步骤不会回滚。"
+    },
+    {
+      "name": "cleanup_control_workflow_jobs",
+      "surface": "control-workflow",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "删除终态 job 记录，影响后续查询但不停止 active job。"
+    },
+    {
+      "name": "close_session",
+      "surface": "terminal",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "关闭会话并释放端口或进程资源，后续输入输出不可继续。"
+    },
+    {
+      "name": "connect_control_profile_chip",
+      "surface": "control-profile",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "根据 profile 建立 J-Link 连接并占用 probe，但不主动 reset、halt 或烧录。"
+    },
+    {
+      "name": "cpu_halt",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "disruptive",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "立即停止目标 CPU，会中断正在运行的固件和实时行为。"
+    },
+    {
+      "name": "cpu_reset",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "disruptive",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "复位目标会丢失当前运行态并重新开始固件执行。"
+    },
+    {
+      "name": "cpu_run",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "disruptive",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "从 halt 恢复 CPU，可能立即触发外设和固件副作用。"
+    },
+    {
+      "name": "cpu_step",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "disruptive",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "执行一条指令会推进目标状态并可能触发内存或外设访问。"
+    },
+    {
+      "name": "crash_diagnose",
+      "surface": "debug",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只采集和解释崩溃证据，不写目标状态。"
+    },
+    {
+      "name": "diagnose_rtt_log_session",
+      "surface": "rtt-log-session",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只检查 RTT 日志会话和诊断事实，不创建或关闭会话。"
+    },
+    {
+      "name": "disconnect_control_profile_chip",
+      "surface": "control-profile",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "释放 profile 建立的 probe 连接，但不关闭其他会话。"
+    },
+    {
+      "name": "discover_serial_ports",
+      "surface": "terminal",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只执行一次串口枚举，不打开端口或启动轮询。"
+    },
+    {
+      "name": "flash_download",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "destructive-or-unknown",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "下载固件会覆盖目标 flash，LinkTerm 无法自动恢复原内容。"
+    },
+    {
+      "name": "flash_erase",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "destructive-or-unknown",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "擦除 flash 会永久删除目标中的现有数据或固件。"
+    },
+    {
+      "name": "flash_verify",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "通过 active probe 读取并比较 flash，占用硬件操作通道但不编程字节。"
+    },
+    {
+      "name": "flash_write",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "destructive-or-unknown",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "向指定 flash 地址写入会覆盖持久内容并可能破坏可启动镜像。"
+    },
+    {
+      "name": "gdb_server_start",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "disruptive",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "启动 GDB server 会占用 probe/端口并改变调试控制状态。"
+    },
+    {
+      "name": "gdb_server_stop",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "disruptive",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "停止 GDB server 会中断现有调试客户端和调试会话。"
+    },
+    {
+      "name": "get_agent_runbook",
+      "surface": "agent-runbook",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只返回 Agent 操作说明和能力信息。"
+    },
+    {
+      "name": "get_app_status",
+      "surface": "agent-runbook",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只读取应用、runtime 和能力状态，不触发恢复或重启。"
+    },
+    {
+      "name": "get_control_profile",
+      "surface": "control-profile",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只读取当前 control-profile 配置。"
+    },
+    {
+      "name": "get_control_workflow_job_status",
+      "surface": "control-workflow",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只读取后台工作流轻量状态，不重试硬件动作。"
+    },
+    {
+      "name": "get_session_status",
+      "surface": "terminal",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只返回会话状态和 transcript cursor。"
+    },
+    {
+      "name": "get_workspace_config",
+      "surface": "workspace",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只读取 workspace 配置，不创建或改写文件。"
+    },
+    {
+      "name": "init_control_profile",
+      "surface": "control-profile",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "创建或初始化 control-profile 文件，改变工作区持久配置。"
+    },
+    {
+      "name": "init_workspace",
+      "surface": "workspace",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "创建 LinkTerm workspace 配置和目录事实。"
+    },
+    {
+      "name": "inspect_control_profile",
+      "surface": "control-profile",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只检查 profile 完整性和可执行条件，不保存修正。"
+    },
+    {
+      "name": "jlink_commander_script",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "destructive-or-unknown",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "任意 Commander 指令可复位、擦除、写内存或执行未分类动作。"
+    },
+    {
+      "name": "jlink_device_catalog_get",
+      "surface": "jlink-device-catalog",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只读取一个已安装的 SEGGER device catalog 条目。"
+    },
+    {
+      "name": "jlink_device_catalog_search",
+      "surface": "jlink-device-catalog",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只搜索本机 SEGGER device catalog。"
+    },
+    {
+      "name": "jlink_reboot",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "disruptive",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "重启 J-Link probe 会中断依赖该 probe 的连接和操作。"
+    },
+    {
+      "name": "list_sessions",
+      "surface": "terminal",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只列出非敏感 session metadata 和状态。"
+    },
+    {
+      "name": "memory_read",
+      "surface": "debug",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只从目标地址读取字节，不写目标内存。"
+    },
+    {
+      "name": "memory_write",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "destructive-or-unknown",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "任意地址写入可破坏 RAM、外设寄存器或执行状态。"
+    },
+    {
+      "name": "open_rtt_log_session",
+      "surface": "rtt-log-session",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "创建并注册 RTT 日志会话，占用 session 和 probe 相关资源。"
+    },
+    {
+      "name": "open_session",
+      "surface": "terminal",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "打开串口、SSH 或本地 shell 会话并占用对应资源。"
+    },
+    {
+      "name": "prepare_control_profile_questions",
+      "surface": "control-profile",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只分析缺失配置并生成问题，不保存答案。"
+    },
+    {
+      "name": "probe_connect",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "建立 probe/target 连接并改变资源所有权，但不主动 halt 或 reset。"
+    },
+    {
+      "name": "probe_detect",
+      "surface": "debug",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只枚举当前可见的 J-Link probes。"
+    },
+    {
+      "name": "probe_disconnect",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "断开 probe 并使现有 probeId 失效。"
+    },
+    {
+      "name": "probe_status",
+      "surface": "debug",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只读取 probe 连接状态与 metadata。"
+    },
+    {
+      "name": "read_control_workflow_job",
+      "surface": "control-workflow",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只读取 job 步骤、证据和 cursor 引用。"
+    },
+    {
+      "name": "read_from_session",
+      "surface": "terminal",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只读取 transcript，不向设备或终端写入。"
+    },
+    {
+      "name": "register_list",
+      "surface": "debug",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只列出目标可见寄存器及当前值。"
+    },
+    {
+      "name": "register_read",
+      "surface": "debug",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只读取单个 CPU 寄存器。"
+    },
+    {
+      "name": "register_write",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "disruptive",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "修改 PC、SP 或控制寄存器会改变目标后续执行状态。"
+    },
+    {
+      "name": "restart_mcp_runtime",
+      "surface": "runtime-control",
+      "sensitivity": "state-affecting",
+      "risk": "disruptive",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "重启 MCP runtime 会终止当前请求并使 runtime-bound 状态失效。"
+    },
+    {
+      "name": "rtt_clear",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "排空 RTT channel 会永久丢弃尚未读取的日志。"
+    },
+    {
+      "name": "rtt_connect",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "建立 RTT control-block 连接并占用 probe 通道。"
+    },
+    {
+      "name": "rtt_read",
+      "surface": "debug",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "读取 RTT up channel 会推进硬件读指针并消费设备输出。"
+    },
+    {
+      "name": "rtt_search",
+      "surface": "debug",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只在 RTT 数据中搜索模式，不推进硬件读指针。"
+    },
+    {
+      "name": "run_control_workflow",
+      "surface": "control-workflow",
+      "sensitivity": "state-affecting",
+      "risk": "destructive-or-unknown",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "非 dry-run workflow 可组合 flash、reset、debug 和 observe，后果由计划步骤决定。"
+    },
+    {
+      "name": "send_and_wait",
+      "surface": "terminal",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "向会话写入命令并等待响应，不用脆弱文本解析猜测设备后果。"
+    },
+    {
+      "name": "snapshot_capture",
+      "surface": "debug",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只采集目标寄存器、内存或调试证据快照。"
+    },
+    {
+      "name": "ui_configure",
+      "surface": "ui",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "修改桌面 UI 配置或可见状态，但不直接操作硬件。"
+    },
+    {
+      "name": "ui_screenshot",
+      "surface": "ui",
+      "sensitivity": "read-only",
+      "risk": "read-only",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "只捕获当前 UI 图像，不改变 UI 或设备状态。"
+    },
+    {
+      "name": "update_workspace_config",
+      "surface": "workspace",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "改写 workspace 持久配置，影响后续 session 和 workflow 默认值。"
+    },
+    {
+      "name": "write_to_session",
+      "surface": "terminal",
+      "sensitivity": "state-affecting",
+      "risk": "state-affecting",
+      "acknowledgementPolicy": "none",
+      "futureApprovalPolicy": "unassigned",
+      "rationale": "向终端或设备发送原始数据，不用命令文本推断具体后果。"
+    }
+  ]
+}

@@ -68,6 +68,13 @@ export async function sendAndWait(
         cursorAfter,
       };
     }
+    if (reason === 'timeout') {
+      try {
+        sessionManager.markAiUnresponsive?.(args.sessionId, { cursorBefore, cursorAfter });
+      } catch {
+        // A concurrent destroy must not replace the timeout evidence with a mark failure.
+      }
+    }
     const base = {
       success: false as const,
       bytesWritten: extras.bytesWritten,

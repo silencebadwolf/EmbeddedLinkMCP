@@ -42,14 +42,33 @@ vi.mock('serialport', () => ({ SerialPort: class {} }));
 vi.mock('ssh2', () => ({ Client: class {} }));
 
 import { SessionManager } from '../../../../src/core/session/session-manager.js';
+import { SessionBase } from '../../../../src/core/session/session-base.js';
 import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
+import type { SessionId } from '../../../../src/shared/types.js';
 import type { registerSessionCreate as RegisterSessionCreate } from '../../../../src/main/ipc/session-create-handler.js';
+import { MockTransport } from '../../../fixtures/mock-transport.js';
+
+class CharacterizationSession extends SessionBase {
+  constructor(id: SessionId, transport: MockTransport) {
+    super({ id, transport });
+  }
+}
+
+const validSerialRequest = {
+  config: {
+    type: 'serial',
+    port: 'COM7',
+    baudRate: 115200,
+    mode: 'terminal',
+  },
+} as const;
 
 let registerSessionCreate: typeof RegisterSessionCreate;
 
 describe('registerSessionCreate', () => {
   beforeEach(async () => {
-    ({ registerSessionCreate } = await import('../../../../src/main/ipc/session-create-handler.js'));
+    ({ registerSessionCreate } =
+      await import('../../../../src/main/ipc/session-create-handler.js'));
     handlers.clear();
     ipcMainMock.handle.mockClear();
     ipcMainMock.removeHandler.mockClear();
@@ -90,5 +109,73 @@ describe('registerSessionCreate', () => {
     const dispose = registerSessionCreate(sm);
     dispose();
     expect(ipcMainMock.removeHandler).toHaveBeenCalledWith(IPC_CHANNELS.SESSION_CREATE);
+  });
+
+  it('returns success with a registered open session', async () => {
+    const sm = new SessionManager();
+    const realCreate = sm.create.bind(sm);
+    vi.spyOn(sm, 'create').mockImplementation((_factory, metadata) =>
+      realCreate((id) => new CharacterizationSession(id, new MockTransport()), metadata),
+    );
+    registerSessionCreate(sm);
+
+    const handler = handlers.get(IPC_CHANNELS.SESSION_CREATE)!;
+    const result = (await handler({}, validSerialRequest)) as {
+      success: true;
+      data: { sessionId: SessionId; state: string };
+    };
+
+    expect(result).toMatchObject({ success: true, data: { state: 'open' } });
+    expect(sm.has(result.data.sessionId)).toBe(true);
+    expect(sm.summaryOf(result.data.sessionId)).toMatchObject({ state: 'open' });
+  });
+
+  it('returns success with a retained errored session after transport open fails', async () => {
+    const sm = new SessionManager();
+    const realCreate = sm.create.bind(sm);
+    vi.spyOn(sm, 'create').mockImplementation((_factory, metadata) =>
+      realCreate(
+        (id) =>
+          new CharacterizationSession(
+            id,
+            new MockTransport({ failOnOpen: new Error('port busy') }),
+          ),
+        metadata,
+      ),
+    );
+    registerSessionCreate(sm);
+
+    const handler = handlers.get(IPC_CHANNELS.SESSION_CREATE)!;
+    const result = (await handler({}, validSerialRequest)) as {
+      success: true;
+      data: { sessionId: SessionId; state: string };
+    };
+
+    expect(result).toMatchObject({ success: true, data: { state: 'errored' } });
+    expect(sm.has(result.data.sessionId)).toBe(true);
+    expect(sm.listSummaries()).toContainEqual(
+      expect.objectContaining({
+        sessionId: result.data.sessionId,
+        state: 'errored',
+        connectionType: 'serial',
+      }),
+    );
+  });
+
+  it('returns INTERNAL without registering a session when construction fails', async () => {
+    const sm = new SessionManager();
+    vi.spyOn(sm, 'create').mockImplementationOnce(() => {
+      throw new Error('manager create failed');
+    });
+    registerSessionCreate(sm);
+
+    const handler = handlers.get(IPC_CHANNELS.SESSION_CREATE)!;
+    const result = await handler({}, validSerialRequest);
+
+    expect(result).toEqual({
+      success: false,
+      error: { code: 'INTERNAL', message: 'manager create failed' },
+    });
+    expect(sm.list()).toEqual([]);
   });
 });

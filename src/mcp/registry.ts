@@ -25,6 +25,11 @@ import {
   LINKTERM_MCP_SCHEMA_VERSION,
 } from './versioning/version-check.js';
 import type { RuntimeDiagnosticsProvider } from './runtime-diagnostics.js';
+import type {
+  McpCallRecordingHandle,
+  OperationRecorderProvider,
+} from '../core/activity/operation-recorder.js';
+import type { OperationAdmissionCoordinator } from '../core/operation-admission/operation-admission-coordinator.js';
 
 /**
  * 已知错误码集合。Handler 可以通过 {@link ToolError} 抛出已归类的错误；
@@ -38,6 +43,7 @@ export type ToolErrorCode =
   | 'NOT_IMPLEMENTED'
   | 'INVALID_ARGUMENT'
   | 'TIMEOUT'
+  | 'DEVICE_UNRESPONSIVE'
   | 'SESSION_CLOSED'
   | 'QUEUE_FULL'
   | 'NO_BACKEND'
@@ -56,7 +62,6 @@ export type ToolErrorCode =
   | 'ABORTED'
   | 'INVALID_STATE'
   | 'UI_NOT_AVAILABLE'
-  | 'CONFIRMATION_REQUIRED'
   | 'INTERNAL';
 
 /**
@@ -158,6 +163,8 @@ export interface ToolDefinition<TSchema extends z.ZodType> {
 
 const registeredToolNames = new WeakMap<McpServer, Set<string>>();
 const runtimeDiagnosticsProviders = new WeakMap<McpServer, RuntimeDiagnosticsProvider>();
+const operationRecorderProviders = new WeakMap<McpServer, OperationRecorderProvider>();
+const operationAdmissionCoordinators = new WeakMap<McpServer, OperationAdmissionCoordinator>();
 
 /**
  * 读取已通过 LinkTerm registry 注册的工具名。
@@ -182,22 +189,75 @@ export function setRuntimeDiagnosticsProvider(
   runtimeDiagnosticsProviders.set(server, provider);
 }
 
+/** Attach a server-wide best-effort Operation recorder provider. */
+export function setOperationRecorderProvider(
+  server: McpServer,
+  provider: OperationRecorderProvider,
+): void {
+  operationRecorderProviders.set(server, provider);
+}
+
+/** Attach the Main-owned operation admission coordinator used for serialized state changes. */
+export function setOperationAdmissionCoordinator(
+  server: McpServer,
+  coordinator: OperationAdmissionCoordinator,
+): void {
+  operationAdmissionCoordinators.set(server, coordinator);
+}
+
+function beginRecording<TSchema extends z.ZodType>(
+  server: McpServer,
+  def: ToolDefinition<TSchema>,
+  rawArgs: Record<string, unknown>,
+): McpCallRecordingHandle | undefined {
+  const provider = operationRecorderProviders.get(server);
+  if (provider === undefined) return undefined;
+  try {
+    return provider({
+      action: def.name,
+      declaredSensitivity: def.sensitivity,
+      rawArgs,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function returnFailurePayload(
+  payload: LinkTermToolResult,
+  recording: McpCallRecordingHandle | undefined,
+): CallToolResult {
+  try {
+    return toCallToolResult(payload);
+  } catch (error) {
+    recording?.recordDeliveryFailure('response-serialization');
+    throw error;
+  }
+}
+
+function finishFailureRecording(
+  recording: McpCallRecordingHandle | undefined,
+  code: ToolErrorCode | string | undefined,
+): void {
+  recording?.finishFailure(code);
+}
+
 /**
  * 把一个 ToolDefinition 注册到 McpServer.
  *
  * @param server McpServer 实例
  * @param def 工具定义
  */
-export function registerTool<TSchema extends z.ZodType<{ correlationId?: string; clientSchemaVersion?: string }>>(
-  server: McpServer,
-  def: ToolDefinition<TSchema>,
-): void {
+export function registerTool<
+  TSchema extends z.ZodType<{ correlationId?: string; clientSchemaVersion?: string }>,
+>(server: McpServer, def: ToolDefinition<TSchema>): void {
   type Input = z.infer<TSchema>;
 
   // SDK registerTool 接受 ZodRawShape 或 AnySchema 作为 inputSchema。这里用 schema 自身的 .shape
   // （ZodObject）比较自然，因此约束 TSchema 必须是 ZodObject。下面通过 unknown 转一次类型，避免 SDK
   // 内部繁琐的泛型推断与项目自身 ZodObject 的微小差异。
-  const inputSchemaForSdk = (def.inputSchema as unknown as { shape: Record<string, z.ZodType> }).shape;
+  const inputSchemaForSdk = (def.inputSchema as unknown as { shape: Record<string, z.ZodType> })
+    .shape;
 
   const tools = registeredToolNames.get(server) ?? new Set<string>();
   tools.add(def.name);
@@ -210,6 +270,7 @@ export function registerTool<TSchema extends z.ZodType<{ correlationId?: string;
       inputSchema: inputSchemaForSdk,
     },
     async (rawArgs: Record<string, unknown>): Promise<CallToolResult> => {
+      const recording = beginRecording(server, def, rawArgs);
       // SDK 已经把 args 按 inputSchema 校验过；这里只做强类型转换。
       const input = rawArgs as Input;
       const correlationId = input.correlationId;
@@ -217,7 +278,7 @@ export function registerTool<TSchema extends z.ZodType<{ correlationId?: string;
       // 1) Schema 版本检查
       const versionCheck = checkSchemaVersion(input.clientSchemaVersion, def.sensitivity);
       if (!versionCheck.ok) {
-        return toCallToolResult({
+        const payload: LinkTermToolResult = {
           success: false,
           error: {
             code: 'VERSION_MISMATCH',
@@ -230,7 +291,9 @@ export function registerTool<TSchema extends z.ZodType<{ correlationId?: string;
           correlationId,
           origin: 'ai',
           schemaVersion: LINKTERM_MCP_SCHEMA_VERSION,
-        });
+        };
+        recording?.reject('schema', 'VERSION_MISMATCH');
+        return returnFailurePayload(payload, recording);
       }
 
       const runtimeDiagnostics = def.runtimeDiagnostics ?? runtimeDiagnosticsProviders.get(server);
@@ -239,10 +302,16 @@ export function registerTool<TSchema extends z.ZodType<{ correlationId?: string;
         def.allowWhenRuntimeStale !== true &&
         runtimeDiagnostics !== undefined
       ) {
-        const runtimeStatus = await runtimeDiagnostics();
+        let runtimeStatus: Awaited<ReturnType<RuntimeDiagnosticsProvider>>;
+        try {
+          runtimeStatus = await runtimeDiagnostics();
+        } catch (error) {
+          recording?.reject('runtime-precondition', 'RUNTIME_DIAGNOSTICS_FAILED');
+          throw error;
+        }
         if (runtimeStatus.code?.fresh === false) {
           const staleArtifacts = runtimeStatus.code.staleArtifacts;
-          return toCallToolResult({
+          const payload: LinkTermToolResult = {
             success: false,
             error: {
               code: 'INVALID_STATE',
@@ -253,48 +322,114 @@ export function registerTool<TSchema extends z.ZodType<{ correlationId?: string;
             correlationId,
             origin: 'ai',
             schemaVersion: LINKTERM_MCP_SCHEMA_VERSION,
-          });
+          };
+          recording?.reject('runtime-precondition', 'INVALID_STATE');
+          return returnFailurePayload(payload, recording);
         }
       }
 
-      // 2) 业务 handler
-      let result: ToolHandlerResult;
-      try {
-        result = await def.handler(input);
-      } catch (err) {
-        result = normalizeError(err);
-      }
+      const admissionCoordinator = operationAdmissionCoordinators.get(server);
+      const invokeHandler = async (): Promise<ToolHandlerResult> => {
+        try {
+          return await def.handler(input);
+        } catch (err) {
+          return normalizeError(err);
+        }
+      };
 
-      // 3) read-only + version warning：把 warning 透传到 evidence.meta
-      let evidence = result.success ? result.evidence : undefined;
-      if (result.success && versionCheck.warning && evidence) {
-        evidence = {
-          ...evidence,
-          meta: { ...(evidence.meta ?? {}), warning: versionCheck.warning },
+      const executeBusinessHandler = async (): Promise<ToolHandlerResult> => {
+        // 2) 业务 handler
+        if (recording?.admission === 'start-before-handler') {
+          recording.start();
+        }
+        const result = recording
+          ? await recording.runWithContext(invokeHandler)
+          : await invokeHandler();
+
+        if (recording?.admission === 'defer-for-current-acknowledgement') {
+          recording.recordPolicyDrift();
+          recording.start();
+        }
+        return result;
+      };
+
+      const result =
+        admissionCoordinator !== undefined && def.sensitivity === 'state-affecting'
+          ? await admissionCoordinator.withAdmission(
+              {
+                operationId: recording?.operationId ?? `mcp_${def.name}`,
+                principalId: 'mcp:local-ai',
+                origin: 'ai',
+                mode: 'state-affecting',
+                revalidate: async () => ({ ok: true }),
+              },
+              () => executeBusinessHandler(),
+            )
+          : { ok: true as const, value: await executeBusinessHandler() };
+
+      if (!result.ok) {
+        const error = {
+          code: 'INVALID_STATE' as const,
+          message: 'The operation could not be admitted.',
         };
+        const payload: LinkTermToolResult = {
+          success: false,
+          error,
+          correlationId,
+          origin: 'ai',
+          schemaVersion: LINKTERM_MCP_SCHEMA_VERSION,
+        };
+        recording?.reject('policy', error.code);
+        return returnFailurePayload(payload, recording);
       }
 
-      const payload: LinkTermToolResult = result.success
-        ? {
+      const handlerResult = result.value;
+      // 3) read-only + version warning：把 warning 透传到 evidence.meta
+      if (handlerResult.success) {
+        let payload: LinkTermToolResult;
+        try {
+          let evidence = handlerResult.evidence;
+          if (versionCheck.warning && evidence) {
+            evidence = {
+              ...evidence,
+              meta: { ...(evidence.meta ?? {}), warning: versionCheck.warning },
+            };
+          }
+          payload = {
             success: true,
-            sessionId: result.sessionId,
-            state: result.state,
+            sessionId: handlerResult.sessionId,
+            state: handlerResult.state,
             evidence,
             correlationId,
             origin: 'ai',
             schemaVersion: LINKTERM_MCP_SCHEMA_VERSION,
-          }
-        : {
-            success: false,
-            sessionId: result.sessionId,
-            state: result.state,
-            error: result.error,
-            correlationId,
-            origin: 'ai',
-            schemaVersion: LINKTERM_MCP_SCHEMA_VERSION,
           };
+        } catch (error) {
+          recording?.finishSuccessWithDeliveryFailure('response-construction');
+          throw error;
+        }
 
-      return toCallToolResult(payload);
+        try {
+          const callResult = toCallToolResult(payload);
+          recording?.finishSuccess();
+          return callResult;
+        } catch (error) {
+          recording?.finishSuccessWithDeliveryFailure('response-serialization');
+          throw error;
+        }
+      }
+
+      const payload: LinkTermToolResult = {
+        success: false,
+        sessionId: handlerResult.sessionId,
+        state: handlerResult.state,
+        error: handlerResult.error,
+        correlationId,
+        origin: 'ai',
+        schemaVersion: LINKTERM_MCP_SCHEMA_VERSION,
+      };
+      finishFailureRecording(recording, handlerResult.error.code);
+      return returnFailurePayload(payload, recording);
     },
   );
 }

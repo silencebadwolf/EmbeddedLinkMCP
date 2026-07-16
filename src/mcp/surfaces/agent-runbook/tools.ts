@@ -1,12 +1,21 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
+import { RuntimeReadinessService } from '../../../core/readiness/runtime-readiness-service.js';
+import {
+  createAgentIntegrationProvider,
+  createReusableSessionsProvider,
+  createRuntimeStatusProvider,
+  createSerialDiscoveryProvider,
+  createWorkspaceProfileProvider,
+} from '../../../core/readiness/readiness-providers.js';
 import {
   defaultHostPathResolver,
   type ControlProfileManager,
   type HostPathResolver,
 } from '../../../core/workspace/index.js';
 import type { IJLinkBackend, ProbeInfo } from '../../../jlink/types.js';
-import type { SerialPortInfo } from '../../../shared/types.js';
+import type { RuntimeReadinessSnapshot } from '../../../shared/readiness-contract.js';
+import type { SerialPortInfo, SessionSummary } from '../../../shared/types.js';
 import type { SerialDiscovery } from '../../../transports/serial/serial-discovery.js';
 import { ERROR_CODES } from '../../../shared/error-codes.js';
 import { APP_NAME } from '../../../shared/constants.js';
@@ -86,9 +95,15 @@ interface RecommendedWorkflow {
     execution: { mode: 'background' };
     observe: { serial: true; clearBeforeObserve: true };
   };
-  requiresConfirmation: true;
+  requiresConfirmation: false;
   followUpTools: ['get_control_workflow_job_status', 'read_control_workflow_job'];
   reason: string;
+}
+
+interface SerialStatus {
+  portCount: number;
+  ports: readonly SerialPortInfo[];
+  error?: { code: string; message: string };
 }
 
 export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookToolsDeps): void {
@@ -96,7 +111,7 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
   registerTool(server, {
     name: 'get_agent_runbook',
     description:
-      'Return a runtime-generated AI operation runbook for LinkTerm, including safe workflows, high-impact confirmation rules, sanitized runtime/profile facts, and the current ownership boundary. This tool is read-only.',
+      'Return a runtime-generated AI operation runbook for LinkTerm, including immediate-execution workflows, sanitized runtime/profile facts, observation surfaces, and the current ownership boundary. This tool is read-only.',
     sensitivity: 'read-only',
     inputSchema: getAgentRunbookInputSchema,
     handler: async (input: GetAgentRunbookInput): Promise<ToolHandlerResult> => {
@@ -141,6 +156,13 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
         ]);
         const toolSetStatus = deps.toolSetDiagnostics?.() ?? emptyToolSetDiagnostics();
         const sessionSummaries = deps.sessionManager.listSummaries();
+        const readiness = await buildReadinessSnapshot({
+          profileSummary,
+          serialStatus,
+          runtimeStatus,
+          sessionSummaries,
+          toolSetStatus,
+        });
         return {
           success: true,
           evidence: {
@@ -159,6 +181,7 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
                 count: sessionSummaries.length,
                 items: sessionSummaries,
               },
+              readiness,
               serial: serialStatus,
               controlProfile: profileSummary,
               jlink: jlinkStatus,
@@ -266,6 +289,62 @@ async function buildSerialStatus(serialDiscovery: SerialDiscovery): Promise<{
   }
 }
 
+async function buildReadinessSnapshot(input: {
+  readonly profileSummary: RunbookProfileSummary;
+  readonly serialStatus: SerialStatus;
+  readonly runtimeStatus: RuntimeDiagnostics;
+  readonly sessionSummaries: readonly SessionSummary[];
+  readonly toolSetStatus: ToolSetDiagnostics;
+}): Promise<RuntimeReadinessSnapshot> {
+  const service = new RuntimeReadinessService({
+    providers: [
+      createRuntimeStatusProvider({
+        getStatus: async () => ({
+          codeFresh: input.runtimeStatus.code?.fresh !== false,
+          runtimeFresh: input.runtimeStatus.metadata.fresh,
+        }),
+      }),
+      createSerialDiscoveryProvider({
+        listPorts: async () => {
+          if (input.serialStatus.error !== undefined) {
+            throw new Error(input.serialStatus.error.code);
+          }
+          return input.serialStatus.ports;
+        },
+      }),
+      createReusableSessionsProvider({
+        listSessions: async () => input.sessionSummaries,
+      }),
+      createWorkspaceProfileProvider({
+        listProfiles: async () => readinessProfilesFromRunbookProfile(input.profileSummary),
+      }),
+      createAgentIntegrationProvider({
+        listAgents: async () => [
+          {
+            id: 'mcp-toolset',
+            label: 'MCP tool set',
+            installed: input.toolSetStatus.core.complete,
+            diagnosticCode: 'readiness.agent.mcp_tools_missing',
+          },
+        ],
+      }),
+    ],
+  });
+  return service.refresh();
+}
+
+function readinessProfilesFromRunbookProfile(
+  profileSummary: RunbookProfileSummary,
+): Array<{ id: string; label: string }> {
+  if (profileSummary.status !== 'loaded') return [];
+  return [
+    {
+      id: 'current-control-profile',
+      label: 'Current control profile',
+    },
+  ];
+}
+
 async function buildJLinkStatus(jlinkBackend: IJLinkBackend): Promise<{
   available: boolean;
   probeCount: number;
@@ -363,7 +442,7 @@ function buildRecommendedNextActions(
       .map((artifact) => artifact.path)
       .join(', ');
     return [
-      `Restart the LinkTerm MCP runtime by calling restart_mcp_runtime with confirm=true, then call get_app_status again after restart before hardware operations; compiled artifacts changed after this process started: ${staleArtifacts}.`,
+      `Restart the LinkTerm MCP runtime by calling restart_mcp_runtime, then call get_app_status again after restart before hardware operations; compiled artifacts changed after this process started: ${staleArtifacts}.`,
     ];
   }
   if (!toolSetStatus.core.complete) {
@@ -382,7 +461,7 @@ function buildRecommendedNextActions(
   }
   if (isProfileFlashObserveReady(profileSummary)) {
     return [
-      'For user-requested flash/observe, call run_control_workflow with the recommendedWorkflows profile_flash_observe arguments, add confirm=true, then read the background job evidence.',
+      'For flash/observe, call run_control_workflow with the recommendedWorkflows profile_flash_observe arguments, then read the background job evidence and Activity/Audit lifecycle.',
       FIRMWARE_IMAGE_USAGE_GUIDANCE,
       'Use activate_control_profile for non-destructive control activation when needed.',
     ];
@@ -429,7 +508,7 @@ function buildRecommendedWorkflows(
         execution: { mode: 'background' },
         observe: { serial: true, clearBeforeObserve: true },
       },
-      requiresConfirmation: true,
+      requiresConfirmation: false,
       followUpTools: ['get_control_workflow_job_status', 'read_control_workflow_job'],
       reason: `control profile has serial, J-Link, and flash facts; use profile.flash.binary by omitting firmware.filePath unless intentionally overriding it. ${FIRMWARE_IMAGE_USAGE_GUIDANCE}`,
     },

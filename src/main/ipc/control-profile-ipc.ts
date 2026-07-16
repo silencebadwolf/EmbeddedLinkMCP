@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import type { Dirent } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { electron } from '../electron-runtime.js';
+import { readCurrentControlProfileDeploymentEvidence } from './current-deployment-evidence.js';
 import {
   ControlProfileAlreadyInitializedError,
   ControlProfileManager,
@@ -27,6 +29,10 @@ import {
 import { formatHexAddress } from '../../core/workspace/intel-hex.js';
 import { JLinkError } from '../../jlink/errors.js';
 import type { IJLinkBackend, JLinkDeviceCatalog } from '../../jlink/index.js';
+import {
+  CompensationCandidateService,
+  type VerifiedDeploymentEvidence,
+} from '../../core/compensation/index.js';
 import type { SessionManager } from '../../core/session/session-manager.js';
 import { defaultOpenSerial } from '../../mcp/surfaces/control-profile/tools.js';
 import { ControlWorkflowJobManager } from '../../mcp/surfaces/control-workflow/job-manager.js';
@@ -34,6 +40,8 @@ import type { ControlWorkflowJobSnapshot } from '../../mcp/surfaces/control-work
 import type { RunControlWorkflowInput } from '../../mcp/surfaces/control-workflow/schemas.js';
 import { runControlWorkflow } from '../../mcp/surfaces/control-workflow/workflow-runner.js';
 import { ToolError } from '../../mcp/registry.js';
+import type { OperationAdmissionCoordinator } from '../../core/operation-admission/operation-admission-coordinator.js';
+import { ERROR_CODES } from '../../shared/error-codes.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type {
   ControlProfileDownloadJobPayload,
@@ -54,6 +62,19 @@ export interface RegisterControlProfileIpcOptions {
   jlinkBackend?: IJLinkBackend;
   jlinkDeviceCatalog?: JLinkDeviceCatalog;
   controlWorkflowJobManager?: ControlWorkflowJobManager;
+  operationAdmissionCoordinator?: OperationAdmissionCoordinator;
+  compensationCandidateService?: CompensationCandidateService;
+  onVerifiedDeployment?: (evidence: VerifiedDeploymentEvidence) => void;
+}
+
+export interface RunDownloadPayload {
+  readonly root: string;
+  readonly timeoutMs?: number;
+}
+
+export interface CompensationReflashPayload {
+  readonly candidateId: string;
+  readonly timeoutMs?: number;
 }
 
 export function registerControlProfileIpc(
@@ -159,15 +180,22 @@ export function registerControlProfileIpc(
 
   ipcMain.handle(
     IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD,
-    async (_event, raw: unknown): Promise<PreloadResult<ControlProfileDownloadResultPayload>> => {
+    async (event, raw: unknown): Promise<PreloadResult<ControlProfileDownloadResultPayload>> => {
       try {
         if (!options.sessionManager || !options.jlinkBackend) {
           throw new Error('Control workflow runtime is unavailable');
         }
         const input = parseRunDownloadPayload(raw);
-        const data = await runControlWorkflow(
-          buildRunDownloadDeps(manager, options),
-          buildRunDownloadWorkflowInput(input),
+        const data = await withControlProfileAdmission(
+          options,
+          'run',
+          input,
+          () =>
+            runControlWorkflow(
+              buildRunDownloadDeps(manager, options),
+              buildRunDownloadWorkflowInput(input),
+              { onVerifiedDeployment: options.onVerifiedDeployment },
+            ),
         );
         return { success: true, data: data as ControlProfileDownloadResultPayload };
       } catch (err) {
@@ -178,21 +206,132 @@ export function registerControlProfileIpc(
 
   ipcMain.handle(
     IPC_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD,
-    async (_event, raw: unknown): Promise<PreloadResult<ControlProfileDownloadJobPayload>> => {
+    async (event, raw: unknown): Promise<PreloadResult<ControlProfileDownloadJobPayload>> => {
       try {
         if (!options.sessionManager || !options.jlinkBackend) {
           throw new Error('Control workflow runtime is unavailable');
         }
         const input = parseRunDownloadPayload(raw);
-        const workflowInput = buildRunDownloadWorkflowInput(input);
-        const runnerDeps = buildRunDownloadDeps(manager, options);
-        const job = jobManager.create({ input: workflowInput });
-        void jobManager
-          .start(job.jobId, ({ signal, update }) =>
-            runControlWorkflow(runnerDeps, workflowInput, { signal, onUpdate: update }),
-          )
-          .catch(() => undefined);
+        const job = await withControlProfileAdmission(
+          options,
+          'start',
+          input,
+          async () => {
+            const workflowInput = buildRunDownloadWorkflowInput(input);
+            const runnerDeps = buildRunDownloadDeps(manager, options);
+            const created = jobManager.create({ input: workflowInput, activityOrigin: 'human' });
+            void jobManager
+              .start(created.jobId, ({ signal, update }) =>
+                runControlWorkflow(runnerDeps, workflowInput, {
+                  signal,
+                  onUpdate: update,
+                  onVerifiedDeployment: options.onVerifiedDeployment,
+                }),
+              )
+              .catch(() => undefined);
+            return created;
+          },
+        );
         return { success: true, data: toDownloadJobPayload(jobManager.getStatus(job.jobId)) };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTROL_PROFILE_START_COMPENSATION_REFLASH,
+    async (event, raw: unknown): Promise<PreloadResult<ControlProfileDownloadJobPayload>> => {
+      try {
+        if (!options.sessionManager || !options.jlinkBackend) {
+          throw new Error('Control workflow runtime is unavailable');
+        }
+        if (options.compensationCandidateService === undefined) {
+          throw new Error('Compensation candidates are unavailable');
+        }
+        const payload = parseCompensationReflashPayload(raw);
+        const candidateRoot = options.compensationCandidateService.candidateWorkspaceRoot(
+          payload.candidateId,
+        );
+        const currentEvidence =
+          candidateRoot === null
+            ? undefined
+            : await readCurrentControlProfileDeploymentEvidence(manager, candidateRoot);
+        const reflash = options.compensationCandidateService.reflashRequest(payload.candidateId, {
+          currentEvidence,
+        });
+        if (reflash === null) {
+          throw new Error('Compensation candidate is unavailable, expired, or no longer matches');
+        }
+        const input: RunDownloadPayload = {
+          root: reflash.root,
+          ...(payload.timeoutMs !== undefined ? { timeoutMs: payload.timeoutMs } : {}),
+        };
+        const job = await withControlProfileAdmission(
+          options,
+          'start',
+          input,
+          async () => {
+            const workflowInput = buildRunDownloadWorkflowInput(input);
+            const runnerDeps = buildRunDownloadDeps(manager, options);
+            const created = jobManager.create({ input: workflowInput, activityOrigin: 'human' });
+            void jobManager
+              .start(created.jobId, ({ signal, update }) =>
+                runControlWorkflow(runnerDeps, workflowInput, {
+                  signal,
+                  onUpdate: update,
+                  onVerifiedDeployment: options.onVerifiedDeployment,
+                }),
+              )
+              .catch(() => undefined);
+            return created;
+          },
+        );
+        return { success: true, data: toDownloadJobPayload(jobManager.getStatus(job.jobId)) };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONTROL_PROFILE_SAVE_PROFILE_SUGGESTION,
+    async (
+      _event,
+      raw: unknown,
+    ): Promise<
+      PreloadResult<{
+        path: string;
+        profile: ControlProfileFilePayload;
+        record?: SavedControlProfileRecordPayload;
+      }>
+    > => {
+      try {
+        if (options.compensationCandidateService === undefined) {
+          throw new Error('Profile suggestions are unavailable');
+        }
+        const suggestionId = parseSuggestionIdPayload(raw);
+        const suggestion = options.compensationCandidateService.profileSuggestionSave(suggestionId);
+        if (suggestion === null) {
+          throw new Error('Profile suggestion is unavailable or expired');
+        }
+        const saved = await manager.init(suggestion.root, profileFileToBody(suggestion.profile), {
+          force: true,
+        });
+        const record = await recordManager?.save({
+          root: suggestion.root,
+          source: 'ai',
+          profile: saved,
+          label: suggestion.label,
+        });
+        return {
+          success: true,
+          data: {
+            path: controlProfilePath(suggestion.root),
+            profile: saved as ControlProfileFilePayload,
+            ...(record ? { record: record as SavedControlProfileRecordPayload } : {}),
+          },
+        };
       } catch (err) {
         return toIpcError(err);
       }
@@ -224,8 +363,23 @@ export function registerControlProfileIpc(
   );
 
   ipcMain.handle(
+    IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_CANCEL,
+    async (_event, raw: unknown): Promise<PreloadResult<ControlProfileDownloadJobPayload>> => {
+      try {
+        const jobId = parseJobIdPayload(raw);
+        return { success: true, data: toDownloadJobPayload(jobManager.cancel(jobId)) };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
     IPC_CHANNELS.CONTROL_PROFILE_CONNECT_CHIP,
-    async (_event, raw: unknown): Promise<PreloadResult<{ probe: ControlProfileChipProbePayload }>> => {
+    async (
+      _event,
+      raw: unknown,
+    ): Promise<PreloadResult<{ probe: ControlProfileChipProbePayload }>> => {
       try {
         if (!options.jlinkBackend) throw new Error('J-Link runtime is unavailable');
         const root = parseRootPayload(raw);
@@ -298,8 +452,11 @@ export function registerControlProfileIpc(
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_DELETE);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD);
+    ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_START_COMPENSATION_REFLASH);
+    ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_SAVE_PROFILE_SUGGESTION);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_STATUS);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_READ);
+    ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_CANCEL);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_CONNECT_CHIP);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_DISCONNECT_CHIP);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_PICK_WORKSPACE_ROOT);
@@ -330,10 +487,41 @@ function buildRunDownloadWorkflowInput(input: {
   return {
     root: input.root,
     mode: 'flash-observe',
-    confirm: true,
     observe: { enabled: false, serial: false },
     ...(input.timeoutMs !== undefined ? { firmware: { timeoutMs: input.timeoutMs } } : {}),
   };
+}
+
+async function withControlProfileAdmission<T>(
+  options: RegisterControlProfileIpcOptions,
+  kind: 'run' | 'start',
+  input: RunDownloadPayload,
+  execute: () => Promise<T>,
+): Promise<T> {
+  const coordinator = options.operationAdmissionCoordinator;
+  if (coordinator === undefined) return execute();
+
+  const result = await coordinator.withAdmission(
+    {
+      operationId: `control-profile:${kind}:${randomUUID()}`,
+      principalId: 'control-profile:operator',
+      origin: 'ai',
+      mode: 'destructive-or-unknown',
+      revalidate: async () => ({ ok: true }),
+    },
+    async () => execute(),
+  );
+
+  if (result.ok) return result.value;
+  throw new ToolError(
+    ERROR_CODES.INVALID_STATE,
+    'The control profile download could not be admitted.',
+    { operation: operationNameForDownload(kind) },
+  );
+}
+
+function operationNameForDownload(kind: 'run' | 'start'): string {
+  return kind === 'run' ? 'controlProfile.runDownload' : 'controlProfile.startDownload';
 }
 
 function toDownloadJobPayload(job: ControlWorkflowJobSnapshot): ControlProfileDownloadJobPayload {
@@ -351,10 +539,14 @@ function toDownloadJobPayload(job: ControlWorkflowJobSnapshot): ControlProfileDo
     ...(job.currentStepId !== undefined ? { currentStepId: job.currentStepId } : {}),
     ...(currentStep !== undefined ? { currentStep } : {}),
     cancelRequested: job.cancelRequested,
+    cancellationCapability: job.cancellationCapability,
+    ...(job.stopState !== undefined ? { stopState: job.stopState } : {}),
     ...(job.workflow?.summary !== undefined ? { summary: job.workflow.summary } : {}),
     ...(job.workflow?.failedStep !== undefined ? { failedStep: job.workflow.failedStep } : {}),
     ...(job.workflow?.failureCode !== undefined ? { failureCode: job.workflow.failureCode } : {}),
-    ...(job.workflow !== undefined ? { workflow: job.workflow as ControlProfileDownloadResultPayload } : {}),
+    ...(job.workflow !== undefined
+      ? { workflow: job.workflow as ControlProfileDownloadResultPayload }
+      : {}),
   };
 }
 
@@ -521,7 +713,7 @@ function parseRecordIdPayload(raw: unknown): string {
   return recordId;
 }
 
-function parseRunDownloadPayload(raw: unknown): { root: string; timeoutMs?: number } {
+function parseRunDownloadPayload(raw: unknown): RunDownloadPayload {
   if (typeof raw !== 'object' || raw === null) throw new Error('Invalid payload');
   const root = parseRootPayload(raw);
   const rawTimeoutMs = (raw as { timeoutMs?: unknown }).timeoutMs;
@@ -534,10 +726,38 @@ function parseRunDownloadPayload(raw: unknown): { root: string; timeoutMs?: numb
   ) {
     throw new Error('timeoutMs must be a positive integer no greater than 600000');
   }
+  return { root, ...(rawTimeoutMs !== undefined ? { timeoutMs: rawTimeoutMs } : {}) };
+}
+
+function parseCompensationReflashPayload(raw: unknown): CompensationReflashPayload {
+  if (typeof raw !== 'object' || raw === null) throw new Error('Invalid payload');
+  const candidateId = (raw as { candidateId?: unknown }).candidateId;
+  if (typeof candidateId !== 'string' || candidateId.trim().length === 0) {
+    throw new Error('candidateId is required');
+  }
+  const rawTimeoutMs = (raw as { timeoutMs?: unknown }).timeoutMs;
+  if (
+    rawTimeoutMs !== undefined &&
+    (typeof rawTimeoutMs !== 'number' ||
+      !Number.isInteger(rawTimeoutMs) ||
+      rawTimeoutMs <= 0 ||
+      rawTimeoutMs > 600_000)
+  ) {
+    throw new Error('timeoutMs must be a positive integer no greater than 600000');
+  }
   return {
-    root,
+    candidateId,
     ...(rawTimeoutMs !== undefined ? { timeoutMs: rawTimeoutMs } : {}),
   };
+}
+
+function parseSuggestionIdPayload(raw: unknown): string {
+  if (typeof raw !== 'object' || raw === null) throw new Error('Invalid payload');
+  const suggestionId = (raw as { suggestionId?: unknown }).suggestionId;
+  if (typeof suggestionId !== 'string' || suggestionId.trim().length === 0) {
+    throw new Error('suggestionId is required');
+  }
+  return suggestionId;
 }
 
 function parseJobIdPayload(raw: unknown): string {
@@ -557,7 +777,14 @@ function parseProbeIdPayload(raw: unknown): string {
 
 function toIpcError<T>(err: unknown): PreloadResult<T> {
   if (err instanceof ToolError) {
-    return { success: false, error: { code: err.code, message: err.message } };
+    return {
+      success: false,
+      error: {
+        code: err.code,
+        message: err.message,
+        ...(err.details !== undefined ? { details: err.details } : {}),
+      },
+    };
   }
   if (err instanceof ControlProfileAlreadyInitializedError) {
     return { success: false, error: { code: err.code, message: err.message } };

@@ -12,11 +12,38 @@
  */
 
 import type { IpcRendererEvent } from 'electron';
+import { z, type ZodType } from 'zod';
 import { electron } from './electron-runtime.js';
 import { IPC_CHANNELS } from '../shared/ipc-protocol.js';
+import {
+  ActivityEventViewSchema,
+  ActivitySnapshotResultSchema,
+  ActivityUnsubscribeResultSchema,
+} from '../shared/activity-contract.js';
+import {
+  AuditClearResultEnvelopeSchema,
+  AuditClearRequestSchema,
+  AuditExportRequestSchema,
+  AuditExportResultEnvelopeSchema,
+  AuditStatusResultEnvelopeSchema,
+} from '../shared/audit-contract.js';
+import {
+  ReadinessEventSchema,
+  ReadinessFailureResultSchema,
+  ReadinessRefreshResultSchema,
+} from '../shared/readiness-contract.js';
+import {
+  FirstSignalEventSchema,
+  FirstSignalFailureResultSchema,
+  FirstSignalStartResultSchema,
+  type FirstSignalFailureResult,
+} from '../shared/first-signal-contract.js';
 import type {
+  ActivityNamespace,
+  FirstSignalNamespace,
   PreloadAPI,
   PreloadResult,
+  ReadinessNamespace,
   SessionCreateRequestPayload,
   SessionWriteRequestPayload,
   SessionReadRequestPayload,
@@ -68,6 +95,174 @@ const subscribe = <T>(channel: string, handler: (payload: T) => void): Unsubscri
   };
 };
 
+const invalidActivityPayload = (): PreloadResult<never> => ({
+  success: false,
+  error: { code: 'INVALID_PAYLOAD', message: 'Invalid activity payload' },
+});
+
+const invalidReadinessPayload = (): PreloadResult<never> => ({
+  success: false,
+  error: { code: 'INVALID_PAYLOAD', message: 'Invalid readiness payload' },
+});
+
+const invalidFirstSignalPayload = (): FirstSignalFailureResult => ({
+  success: false,
+  error: { code: 'INVALID_PAYLOAD', message: 'Invalid first-signal payload' },
+});
+
+const invalidAuditPayload = (): PreloadResult<never> => ({
+  success: false,
+  error: { code: 'INVALID_AUDIT_PAYLOAD', message: 'Invalid audit payload' },
+});
+
+const invokeActivity = async <T>(
+  channel: string,
+  schema: ZodType<PreloadResult<T>>,
+  payload?: unknown,
+): Promise<PreloadResult<T>> => {
+  const raw: unknown = await ipcRenderer.invoke(channel, payload);
+  const parsed = schema.safeParse(raw);
+  return parsed.success ? parsed.data : invalidActivityPayload();
+};
+
+const invokeReadiness = async <T>(
+  channel: string,
+  schema: ZodType<PreloadResult<T>>,
+  payload?: unknown,
+): Promise<PreloadResult<T>> => {
+  const raw: unknown = await ipcRenderer.invoke(channel, payload);
+  const parsed = schema.safeParse(raw);
+  return parsed.success ? parsed.data : invalidReadinessPayload();
+};
+
+const invokeFirstSignal = async <T>(
+  channel: string,
+  schema: ZodType<T>,
+  payload?: unknown,
+): Promise<T> => {
+  const raw: unknown = await ipcRenderer.invoke(channel, payload);
+  const parsed = schema.safeParse(raw);
+  return parsed.success ? parsed.data : (invalidFirstSignalPayload() as T);
+};
+
+const invokeAudit = async <T>(
+  channel: string,
+  schema: ZodType<PreloadResult<T>>,
+  payload: unknown = {},
+): Promise<PreloadResult<T>> => {
+  const raw: unknown = await ipcRenderer.invoke(channel, payload);
+  const parsed = schema.safeParse(raw);
+  return parsed.success ? parsed.data : invalidAuditPayload();
+};
+
+const activity: ActivityNamespace = {
+  subscribe: (req = {}) =>
+    invokeActivity(IPC_CHANNELS.ACTIVITY_SUBSCRIBE, ActivitySnapshotResultSchema, req),
+  snapshot: (req = {}) =>
+    invokeActivity(IPC_CHANNELS.ACTIVITY_SNAPSHOT, ActivitySnapshotResultSchema, req),
+  unsubscribe: () =>
+    invokeActivity(IPC_CHANNELS.ACTIVITY_UNSUBSCRIBE, ActivityUnsubscribeResultSchema, {}),
+  onEvent: (handler) => {
+    const listener = (_event: IpcRendererEvent, payload: unknown): void => {
+      const parsed = ActivityEventViewSchema.safeParse(payload);
+      if (parsed.success) handler(parsed.data);
+    };
+    ipcRenderer.on(IPC_CHANNELS.ACTIVITY_EVENT, listener);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.ACTIVITY_EVENT, listener);
+    };
+  },
+  status: () => invokeAudit(IPC_CHANNELS.ACTIVITY_STATUS, AuditStatusResultEnvelopeSchema, {}),
+  export: (req = { format: 'jsonl' as const }) => {
+    const parsed = AuditExportRequestSchema.safeParse(req);
+    return parsed.success
+      ? invokeAudit(IPC_CHANNELS.ACTIVITY_EXPORT, AuditExportResultEnvelopeSchema, parsed.data)
+      : Promise.resolve(invalidAuditPayload());
+  },
+  clear: (req) => {
+    const parsed = AuditClearRequestSchema.safeParse(req);
+    return parsed.success
+      ? invokeAudit(IPC_CHANNELS.ACTIVITY_CLEAR, AuditClearResultEnvelopeSchema, parsed.data)
+      : Promise.resolve(invalidAuditPayload());
+  },
+};
+
+const ReadinessUnsubscribeResultSchema = z.discriminatedUnion('success', [
+  z
+    .object({
+      success: z.literal(true),
+      data: z.object({ unsubscribed: z.literal(true) }).strict().readonly(),
+    })
+    .strict()
+    .readonly(),
+  ReadinessFailureResultSchema,
+]);
+
+const readiness: ReadinessNamespace = {
+  get: () => invokeReadiness(IPC_CHANNELS.READINESS_GET, ReadinessRefreshResultSchema, {}),
+  refresh: () => invokeReadiness(IPC_CHANNELS.READINESS_REFRESH, ReadinessRefreshResultSchema, {}),
+  subscribe: (req = {}) =>
+    invokeReadiness(IPC_CHANNELS.READINESS_SUBSCRIBE, ReadinessRefreshResultSchema, req),
+  unsubscribe: () =>
+    invokeReadiness(IPC_CHANNELS.READINESS_UNSUBSCRIBE, ReadinessUnsubscribeResultSchema, {}),
+  onEvent: (handler, onInvalidPayload) => {
+    const listener = (_event: IpcRendererEvent, payload: unknown): void => {
+      const parsed = ReadinessEventSchema.safeParse(payload);
+      if (parsed.success) {
+        handler(parsed.data);
+        return;
+      }
+      onInvalidPayload?.({ code: 'readiness.invalid_payload', severity: 'error' });
+    };
+    ipcRenderer.on(IPC_CHANNELS.READINESS_EVENT, listener);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.READINESS_EVENT, listener);
+    };
+  },
+};
+
+const FirstSignalUnsubscribeResultSchema = z.discriminatedUnion('success', [
+  z
+    .object({
+      success: z.literal(true),
+      data: z.object({ unsubscribed: z.literal(true) }).strict().readonly(),
+    })
+    .strict()
+    .readonly(),
+  FirstSignalFailureResultSchema,
+]);
+
+const firstSignal: FirstSignalNamespace = {
+  start: (req) =>
+    invokeFirstSignal(IPC_CHANNELS.FIRST_SIGNAL_START, FirstSignalStartResultSchema, req),
+  status: (req) =>
+    invokeFirstSignal(IPC_CHANNELS.FIRST_SIGNAL_STATUS, FirstSignalStartResultSchema, req),
+  stop: (req) =>
+    invokeFirstSignal(IPC_CHANNELS.FIRST_SIGNAL_STOP, FirstSignalStartResultSchema, req),
+  subscribe: (req) =>
+    invokeFirstSignal(IPC_CHANNELS.FIRST_SIGNAL_SUBSCRIBE, FirstSignalStartResultSchema, req),
+  unsubscribe: () =>
+    invokeFirstSignal(
+      IPC_CHANNELS.FIRST_SIGNAL_UNSUBSCRIBE,
+      FirstSignalUnsubscribeResultSchema,
+      {},
+    ),
+  onEvent: (handler, onInvalidPayload) => {
+    const listener = (_event: IpcRendererEvent, payload: unknown): void => {
+      const parsed = FirstSignalEventSchema.safeParse(payload);
+      if (parsed.success) {
+        handler(parsed.data);
+        return;
+      }
+      onInvalidPayload?.({ code: 'firstSignal.invalid_payload', severity: 'error' });
+    };
+    ipcRenderer.on(IPC_CHANNELS.FIRST_SIGNAL_EVENT, listener);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.FIRST_SIGNAL_EVENT, listener);
+    };
+  },
+};
+
 const api: PreloadAPI = {
   session: {
     create: (req: SessionCreateRequestPayload) =>
@@ -104,12 +299,14 @@ const api: PreloadAPI = {
   ui: {
     onStatePatch: (handler) => subscribe<UiStatePatch>(IPC_CHANNELS.UI_STATE_PATCH, handler),
   },
+  activity,
+  readiness,
+  firstSignal,
   connections: {
     list: () => invoke<ReadonlyArray<SavedConnectionSummary>>(IPC_CHANNELS.CONNECTIONS_LIST),
     saveAndOpen: (req) =>
       invoke<SavedConnectionOpenSuccess>(IPC_CHANNELS.CONNECTIONS_SAVE_AND_OPEN, req),
-    open: (req) =>
-      invoke<SavedConnectionOpenSuccess>(IPC_CHANNELS.CONNECTIONS_OPEN, req),
+    open: (req) => invoke<SavedConnectionOpenSuccess>(IPC_CHANNELS.CONNECTIONS_OPEN, req),
     delete: (req) => invoke<{ deleted: true }>(IPC_CHANNELS.CONNECTIONS_DELETE, req),
   },
   agentIntegrations: {
@@ -153,10 +350,23 @@ const api: PreloadAPI = {
       invoke<ControlProfileDownloadResultPayload>(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD, req),
     startDownload: (req) =>
       invoke<ControlProfileDownloadJobPayload>(IPC_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD, req),
+    startCompensationReflash: (req) =>
+      invoke<ControlProfileDownloadJobPayload>(
+        IPC_CHANNELS.CONTROL_PROFILE_START_COMPENSATION_REFLASH,
+        req,
+      ),
+    saveProfileSuggestion: (req) =>
+      invoke<{
+        path: string;
+        profile: ControlProfileFilePayload;
+        record?: SavedControlProfileRecordPayload;
+      }>(IPC_CHANNELS.CONTROL_PROFILE_SAVE_PROFILE_SUGGESTION, req),
     getDownloadStatus: (req) =>
       invoke<ControlProfileDownloadJobPayload>(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_STATUS, req),
     readDownload: (req) =>
       invoke<ControlProfileDownloadJobPayload>(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_READ, req),
+    cancelDownload: (req) =>
+      invoke<ControlProfileDownloadJobPayload>(IPC_CHANNELS.CONTROL_PROFILE_DOWNLOAD_CANCEL, req),
     connectChip: (req) =>
       invoke<{ probe: ControlProfileChipProbePayload }>(
         IPC_CHANNELS.CONTROL_PROFILE_CONNECT_CHIP,

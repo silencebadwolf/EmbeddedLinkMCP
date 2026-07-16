@@ -4,7 +4,11 @@ import type { Origin, SessionId } from '../../shared/types.js';
 import type { SessionMetadata, SessionSummary } from '../../shared/types.js';
 import type { ReadResult, SequenceCursor, TranscriptEvent } from '../transcript/types.js';
 import type { ISession, SessionWriteOptions } from './types.js';
-import { SessionNotFoundError } from './types.js';
+import {
+  SessionNotFoundError,
+  SessionUnresponsiveError,
+  type SessionUnresponsiveDetails,
+} from './types.js';
 
 /**
  * Session 工厂函数。SessionManager 不感知具体的 transport 类型 —— 由调用层（IPC handler / MCP tool）
@@ -75,6 +79,8 @@ export class SessionManager extends EventEmitter {
    * subscriberId 由调用方自行命名（如 webContents id、MCP 客户端 ID）。
    */
   readonly #subscriberCursors: Map<SubscriberId, Map<SessionId, SequenceCursor>> = new Map();
+  /** AI-only write fuse set by sendAndWait timeout; human writes/readers are unaffected. */
+  readonly #aiUnresponsive: Map<SessionId, SessionUnresponsiveDetails> = new Map();
 
   /** 当前活跃的 session id 列表（含 idle/open/errored）。 */
   list(): SessionId[] {
@@ -161,6 +167,7 @@ export class SessionManager extends EventEmitter {
       this.#unsubscribers.delete(session.id);
       this.#sessions.delete(session.id);
       this.#sessionMetadata.delete(session.id);
+      this.#aiUnresponsive.delete(session.id);
       this.#visibleSessions.delete(session.id);
       throw err;
     }
@@ -185,11 +192,18 @@ export class SessionManager extends EventEmitter {
     this.#sessionMetadata.set(id, sanitizeSessionMetadata(metadata));
 
     const onEvent = (event: TranscriptEvent): void => {
+      // Any fresh device output is positive liveness evidence and clears the AI-only fuse.
+      if (event.type === 'data' && event.origin === 'device') {
+        this.#aiUnresponsive.delete(id);
+      }
       if (this.#visibleSessions.has(id)) {
         this.emit('session:event', id, event);
       }
     };
     const onState = (state: ISession['state']): void => {
+      if (state === 'closed' || state === 'errored') {
+        this.#aiUnresponsive.delete(id);
+      }
       if (this.#visibleSessions.has(id)) {
         this.emit('session:state', id, state);
       }
@@ -221,6 +235,7 @@ export class SessionManager extends EventEmitter {
       this.#unsubscribers.delete(id);
       this.#sessions.delete(id);
       this.#sessionMetadata.delete(id);
+      this.#aiUnresponsive.delete(id);
       this.#visibleSessions.delete(id);
       // 清掉所有订阅者持有的该 session cursor，避免下次 destroyed-then-recreated 时
       // 残留旧 sequence 让 readForSubscriber 误以为"已读到 N"
@@ -243,7 +258,19 @@ export class SessionManager extends EventEmitter {
    */
   async write(id: SessionId, data: Uint8Array, options: SessionWriteOptions): Promise<void> {
     const session = this.#requireSession(id);
+    if (options.origin === 'ai') {
+      const details = this.#aiUnresponsive.get(id);
+      if (details) {
+        throw new SessionUnresponsiveError(id, details);
+      }
+    }
     await session.write(data, options);
+  }
+
+  /** Mark a session as unresponsive for AI writes after a sendAndWait timeout. */
+  markAiUnresponsive(id: SessionId, details: SessionUnresponsiveDetails): void {
+    this.#requireSession(id);
+    this.#aiUnresponsive.set(id, { ...details });
   }
 
   /**

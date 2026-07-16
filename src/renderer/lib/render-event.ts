@@ -7,7 +7,7 @@
  * Origin 颜色映射（行首前缀）：
  * - S（System）→ 灰色 `\x1b[90m`
  * - D（Device）→ 默认色，不加前缀（保留终端原貌，避免 device chunk 频繁换行污染）
- * - Human/AI data → 不渲染到 UI（写入仍进 transcript 供 MCP 取证；UI 等待设备/PTY 回显，避免本地重复回显）
+ * - Human/AI data → 终端无标签本地回显；设备/PTY 随后回显同一字节时在渲染前去重
  *
  * Phase 6 评审 H1：行级前缀依赖跨事件的“行首/行内”状态。两次带前缀 origin（如 system）的不带 `\n`
  * 数据本来不应再注入第二次前缀；而 origin 跨切换时（Device→System）需要先补 `\r\n` 再插入前缀。
@@ -24,12 +24,26 @@ import type { SerializedTranscriptEvent } from '../../shared/transcript-ipc-type
 
 /** xterm-side 期望的最小 Terminal 接口；用本接口而非全 Terminal 类便于测试 stub。 */
 export interface XtermLike {
-  write(data: string): void;
+  write(data: string, callback?: () => void): void;
 }
 
 export interface RenderEventOptions {
   connectionType?: ConnectionType;
 }
+
+export interface RenderEventCompletionAck {
+  readonly visibleDeviceSequence?: number;
+}
+
+export interface RenderEventResult {
+  readonly wroteDeviceText: boolean;
+  readonly completion: Promise<RenderEventCompletionAck>;
+}
+
+const NO_VISIBLE_DEVICE_ACK: RenderEventResult = {
+  wroteDeviceText: false,
+  completion: Promise.resolve({}),
+};
 
 /**
  * 单 session 的行状态。
@@ -39,7 +53,7 @@ export interface RenderEventOptions {
  *   仅当处于行首时才会注入下一行的 origin 前缀；否则继续写在原行末尾。
  *
  * 跨 origin 切换且非行首时，渲染器会先补 `\r\n` 再写新 origin 的前缀，避免类似
- * `abc[H]def` 这样的视觉混淆。
+ * 系统消息粘在设备输出末尾的视觉混淆。
  */
 interface SessionLineState {
   lastOrigin: Origin | null;
@@ -59,7 +73,16 @@ export interface RenderState {
   readonly lineState: Map<SessionId, SessionLineState>;
   /** Map key：`${sessionId}\0${origin}`；UTF-8 流式 decoder，跨事件保留半个字符的尾巴。 */
   readonly decoders: Map<string, TextDecoder>;
+  /** 尚未被设备/PTY 回显消费的出站字节。 */
+  readonly pendingEcho: Map<SessionId, PendingEcho[]>;
 }
+
+interface PendingEcho {
+  bytes: Uint8Array;
+  createdAt: number;
+}
+
+const OUTGOING_ECHO_TTL_MS = 1_500;
 
 /**
  * 创建一个空的渲染状态容器；hook 在 mount 时调用一次。
@@ -68,6 +91,7 @@ export function createRenderState(): RenderState {
   return {
     lineState: new Map(),
     decoders: new Map(),
+    pendingEcho: new Map(),
   };
 }
 
@@ -86,6 +110,62 @@ export function disposeSessionRenderState(state: RenderState, sessionId: Session
   for (const key of state.decoders.keys()) {
     if (key.startsWith(prefix)) state.decoders.delete(key);
   }
+  state.pendingEcho.delete(sessionId);
+}
+
+function enqueuePendingEcho(state: RenderState, sessionId: SessionId, bytes: Uint8Array): void {
+  if (bytes.byteLength === 0) return;
+  // RT-Thread/PTY 通常 echoes Enter as CRLF even when the wire input is a bare CR.
+  // Include the visual LF in the matcher so local and remote Enter do not double-space.
+  const expected = bytes[bytes.byteLength - 1] === 0x0d
+    ? Uint8Array.from([...bytes, 0x0a])
+    : bytes;
+  const queue = state.pendingEcho.get(sessionId) ?? [];
+  queue.push({ bytes: expected.slice(), createdAt: Date.now() });
+  state.pendingEcho.set(sessionId, queue);
+}
+
+/** 从设备数据开头消费已经本地显示过的出站字节。 */
+function consumePendingEcho(
+  state: RenderState,
+  sessionId: SessionId,
+  bytes: Uint8Array,
+): Uint8Array {
+  const queue = state.pendingEcho.get(sessionId);
+  if (!queue || queue.length === 0) return bytes;
+  const now = Date.now();
+  while (queue.length > 0 && now - queue[0]!.createdAt > OUTGOING_ECHO_TTL_MS) queue.shift();
+  if (queue.length === 0) {
+    state.pendingEcho.delete(sessionId);
+    return bytes;
+  }
+
+  let offset = 0;
+  while (offset < bytes.byteLength && queue.length > 0) {
+    const pending = queue[0]!;
+    const available = bytes.byteLength - offset;
+    const compareLength = Math.min(available, pending.bytes.byteLength);
+    let matched = 0;
+    while (matched < compareLength && bytes[offset + matched] === pending.bytes[matched]) matched += 1;
+    if (matched === 0) break;
+    if (matched < pending.bytes.byteLength && matched < available) break;
+    offset += matched;
+    if (matched === pending.bytes.byteLength) {
+      queue.shift();
+    } else {
+      pending.bytes = pending.bytes.slice(matched);
+      break;
+    }
+  }
+  if (queue.length === 0) state.pendingEcho.delete(sessionId);
+  return offset === 0 ? bytes : bytes.slice(offset);
+}
+
+function renderOutgoingText(text: string, connectionType: ConnectionType | undefined): string {
+  if (connectionType === 'rtt-log') return text;
+  // xterm does not turn a bare CR into a visual newline. Keep the wire byte unchanged
+  // in transcript, but make a silent serial/PTY usable as a normal terminal on screen.
+  return text.replace(/\r(?!\n)/gu, '\r\n');
 }
 
 /**
@@ -106,7 +186,7 @@ export function decodeBase64(base64: string): Uint8Array {
   return out;
 }
 
-/** 行首前缀颜色映射；device/outgoing data 不加前缀。 */
+/** 行首前缀颜色映射；人类/AI 来源只保留在 transcript/audit，不在终端画面添加标签。 */
 const ORIGIN_PREFIX: Readonly<Record<string, string>> = {
   system: '\x1b[90m[S]\x1b[0m ',
 };
@@ -229,24 +309,34 @@ export function renderEventToXterm(
   state: RenderState,
   sessionId: SessionId,
   options: RenderEventOptions = {},
-): void {
+): RenderEventResult {
   switch (event.type) {
     case 'data': {
-      if (!event.dataBase64) return;
-      if (event.origin === 'human' || event.origin === 'ai') {
-        if (options.connectionType !== 'rtt-log') {
-          // 非 RTT 终端不本地回显 outgoing 输入；等待设备/PTY 自己 echo，避免重复命令。
-          return;
-        }
-      }
+      if (!event.dataBase64) return NO_VISIBLE_DEVICE_ACK;
       const bytes = decodeBase64(event.dataBase64);
+      if (event.origin === 'human' || event.origin === 'ai') {
+        enqueuePendingEcho(state, sessionId, bytes);
+        const decoder = getDecoder(state, sessionId, event.origin);
+        const text = renderOutgoingText(
+          decoder.decode(bytes, { stream: true }),
+          options.connectionType,
+        );
+        if (text.length === 0) return NO_VISIBLE_DEVICE_ACK;
+        term.write(text);
+        const ls = getLineState(state, sessionId);
+        ls.atLineStart = text.endsWith('\n');
+        ls.lastOrigin = event.origin;
+        return NO_VISIBLE_DEVICE_ACK;
+      }
+      const visibleBytes = consumePendingEcho(state, sessionId, bytes);
+      if (visibleBytes.byteLength === 0) return NO_VISIBLE_DEVICE_ACK;
       // 流式解码：跨 chunk 的多字节字符不会被 U+FFFD 替换
       const decoder = getDecoder(state, sessionId, event.origin);
-      const decodedText = decoder.decode(bytes, { stream: true });
+      const decodedText = decoder.decode(visibleBytes, { stream: true });
       const text = shouldResetAnsiAtEmbeddedLineBreaks(event.origin, options.connectionType)
         ? resetAnsiAtLineBreaks(moveEmbeddedShellPromptToLineStart(decodedText))
         : decodedText;
-      if (text.length === 0) return;
+      if (text.length === 0) return NO_VISIBLE_DEVICE_ACK;
       const ls = getLineState(state, sessionId);
       const prefix = ORIGIN_PREFIX[event.origin] ?? '';
       // 跨 origin 切换且非行首：先补 \r\n 让前缀落到新行起点
@@ -262,12 +352,23 @@ export function renderEventToXterm(
         atLineStart = true;
       }
       const applied = applyLineStatePrefix(text, prefix, atLineStart);
-      if (preamble || applied.out) {
-        term.write(preamble + applied.out);
+      const output = preamble + applied.out;
+      let completion = NO_VISIBLE_DEVICE_ACK.completion;
+      const wroteDeviceText = event.origin === 'device' && output.length > 0;
+      if (output) {
+        if (wroteDeviceText) {
+          completion = new Promise<RenderEventCompletionAck>((resolve) => {
+            term.write(output, () => {
+              resolve({ visibleDeviceSequence: event.sequence });
+            });
+          });
+        } else {
+          term.write(output);
+        }
       }
       ls.atLineStart = applied.atLineStart;
       ls.lastOrigin = event.origin;
-      return;
+      return { wroteDeviceText, completion };
     }
     case 'clear': {
       // req §4.5：clear 不能丢历史；UI 渲染为分隔符让 AI 与人都能看到边界
@@ -275,7 +376,7 @@ export function renderEventToXterm(
       const ls = getLineState(state, sessionId);
       ls.atLineStart = true;
       ls.lastOrigin = event.origin;
-      return;
+      return NO_VISIBLE_DEVICE_ACK;
     }
     case 'state': {
       const meta = event.meta as { from?: string; to?: string } | undefined;
@@ -284,7 +385,7 @@ export function renderEventToXterm(
       const ls = getLineState(state, sessionId);
       ls.atLineStart = true;
       ls.lastOrigin = event.origin;
-      return;
+      return NO_VISIBLE_DEVICE_ACK;
     }
     case 'error': {
       const meta = event.meta as { message?: string } | undefined;
@@ -293,10 +394,10 @@ export function renderEventToXterm(
       const ls = getLineState(state, sessionId);
       ls.atLineStart = true;
       ls.lastOrigin = event.origin;
-      return;
+      return NO_VISIBLE_DEVICE_ACK;
     }
     default:
       // 兜底：未知类型不渲染（保持 xterm 状态稳定）
-      return;
+      return NO_VISIBLE_DEVICE_ACK;
   }
 }

@@ -1,17 +1,8 @@
 /**
- * Phase 12 — 边界场景 9：高影响 J-Link 工具的 confirm 闸门。
+ * Observe-only authorization regression coverage for high-impact J-Link tools.
  *
- * 验证高影响工具（flash_download / flash_write / flash_erase / cpu_reset /
- * gdb_server_start / jlink_reboot / jlink_commander_script）× 3 种 confirm 状态：
- *
- * - confirm 缺失 → `{ success: false, error: { code: 'CONFIRMATION_REQUIRED', details: { tool } } }`
- *   且 backend ledger 显示对应方法**未被调用**（守门发生在调 backend 之前）；
- * - confirm: false → 同上；
- * - confirm: true → backend 被调用（用 FakeJLinkBackend.callsOf 验证）。
- *
- * 设计：FakeJLinkBackend 对这些方法的成功路径已经实现，所以"调到了 backend"用
- * `success: true` 也能间接断言；关键还是直接看 ledger，避免误把 zod-level reject
- * 也算成"门没守住"。
+ * AI and human callers share the same immediate execution path. The optional legacy
+ * `confirm` field is ignored; Activity/Audit remain the observation surfaces.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -53,9 +44,8 @@ async function setup(): Promise<Harness> {
     arguments: { target: 'STM32F4' },
   });
   const probe = (
-    (connect.structuredContent as { evidence: { data: { probe: { probeId: string } } } }).evidence
-      .data.probe
-  );
+    connect.structuredContent as { evidence: { data: { probe: { probeId: string } } } }
+  ).evidence.data.probe;
   return { manager, serialDiscovery, fake, mcp, client, probeId: probe.probeId };
 }
 
@@ -81,8 +71,8 @@ async function callTool(
 }
 
 /**
- * 5 个高影响工具的 (toolName, backendMethod, baseArgs) 表。
- * baseArgs 在测试里再补 probeId / confirm 字段。
+ * 7 个高影响工具的 (toolName, backendMethod, baseArgs) 表。
+ * baseArgs 在测试里再补 probeId 字段。
  */
 const HIGH_IMPACT_TOOLS: Array<{
   tool: string;
@@ -90,16 +80,28 @@ const HIGH_IMPACT_TOOLS: Array<{
   needsProbeId?: boolean;
   baseArgs: () => Record<string, unknown>;
 }> = [
-  { tool: 'flash_download', backendMethod: 'flashDownload', baseArgs: () => ({ binaryBase64: Buffer.from([0x01]).toString('base64') }) },
-  { tool: 'flash_write', backendMethod: 'flashWrite', baseArgs: () => ({ address: 0x0800_0000, dataBase64: Buffer.from([0xff]).toString('base64') }) },
+  {
+    tool: 'flash_download',
+    backendMethod: 'flashDownload',
+    baseArgs: () => ({ binaryBase64: Buffer.from([0x01]).toString('base64') }),
+  },
+  {
+    tool: 'flash_write',
+    backendMethod: 'flashWrite',
+    baseArgs: () => ({ address: 0x0800_0000, dataBase64: Buffer.from([0xff]).toString('base64') }),
+  },
   { tool: 'flash_erase', backendMethod: 'flashErase', baseArgs: () => ({}) },
   { tool: 'cpu_reset', backendMethod: 'cpuReset', baseArgs: () => ({ halt: true }) },
   { tool: 'gdb_server_start', backendMethod: 'gdbServerStart', baseArgs: () => ({ port: 2331 }) },
   { tool: 'jlink_reboot', backendMethod: 'jlinkReboot', needsProbeId: false, baseArgs: () => ({}) },
-  { tool: 'jlink_commander_script', backendMethod: 'runCommanderScript', baseArgs: () => ({ commands: ['r', 'mem 0x08080000, 64'] }) },
+  {
+    tool: 'jlink_commander_script',
+    backendMethod: 'runCommanderScript',
+    baseArgs: () => ({ commands: ['r', 'mem 0x08080000, 64'] }),
+  },
 ];
 
-describe('Phase 12 / scenario 9 — high-impact confirm gate', () => {
+describe('observe-only authorization — high-impact operations', () => {
   let h: Harness;
 
   beforeEach(async () => {
@@ -110,37 +112,40 @@ describe('Phase 12 / scenario 9 — high-impact confirm gate', () => {
     await teardown(h);
   });
 
+  it('executes a high-impact operation without caller confirmation', async () => {
+    const out = await callTool(h.client, 'cpu_reset', {
+      probeId: h.probeId,
+      halt: true,
+    });
+
+    expect(out.success).toBe(true);
+    expect(h.fake.callsOf('cpuReset')).toHaveLength(1);
+  });
+
   for (const { tool, backendMethod, needsProbeId = true, baseArgs } of HIGH_IMPACT_TOOLS) {
     describe(tool, () => {
-      it('confirm 缺失 → CONFIRMATION_REQUIRED 且 backend 未被调用', async () => {
+      it('executes immediately when confirm is omitted', async () => {
         const callsBefore = h.fake.callsOf(backendMethod).length;
         const out = await callTool(h.client, tool, {
           ...(needsProbeId ? { probeId: h.probeId } : {}),
           ...baseArgs(),
         });
-        expect(out.success).toBe(false);
-        const error = out.error as { code: string; details?: { tool?: string } };
-        expect(error.code).toBe('CONFIRMATION_REQUIRED');
-        expect(error.details?.tool).toBe(tool);
-        // 守门发生在调 backend 之前
-        expect(h.fake.callsOf(backendMethod).length).toBe(callsBefore);
+        expect(out.success).toBe(true);
+        expect(h.fake.callsOf(backendMethod).length).toBe(callsBefore + 1);
       });
 
-      it('confirm: false → CONFIRMATION_REQUIRED 且 backend 未被调用', async () => {
+      it('ignores confirm:false and still executes immediately', async () => {
         const callsBefore = h.fake.callsOf(backendMethod).length;
         const out = await callTool(h.client, tool, {
           ...(needsProbeId ? { probeId: h.probeId } : {}),
           ...baseArgs(),
           confirm: false,
         });
-        expect(out.success).toBe(false);
-        const error = out.error as { code: string; details?: { tool?: string } };
-        expect(error.code).toBe('CONFIRMATION_REQUIRED');
-        expect(error.details?.tool).toBe(tool);
-        expect(h.fake.callsOf(backendMethod).length).toBe(callsBefore);
+        expect(out.success).toBe(true);
+        expect(h.fake.callsOf(backendMethod).length).toBe(callsBefore + 1);
       });
 
-      it('confirm: true → backend 被调用一次', async () => {
+      it('accepts confirm:true as a backwards-compatible no-op', async () => {
         const callsBefore = h.fake.callsOf(backendMethod).length;
         const out = await callTool(h.client, tool, {
           ...(needsProbeId ? { probeId: h.probeId } : {}),
@@ -174,15 +179,57 @@ describe('Phase 12 / scenario 9 — high-impact confirm gate', () => {
       backendMethod: 'flashWrite',
       args: { address: 0x0800_0000, dataBase64: 'A'.repeat(MAX_BASE64_INPUT_LEN + 4) },
     },
-  ])('$tool 在 confirm 缺失时先返回 CONFIRMATION_REQUIRED，不解码畸形或超长 base64', async ({ tool, backendMethod, args }) => {
-    const callsBefore = h.fake.callsOf(backendMethod).length;
-    const out = await callTool(h.client, tool, {
-      probeId: h.probeId,
-      ...args,
-    });
+  ])(
+    '$tool still validates malformed or oversized payloads without an approval gate',
+    async ({ tool, backendMethod, args }) => {
+      const callsBefore = h.fake.callsOf(backendMethod).length;
+      const out = await callTool(h.client, tool, {
+        probeId: h.probeId,
+        ...args,
+      });
 
-    expect(out.success).toBe(false);
-    expect((out.error as { code: string }).code).toBe('CONFIRMATION_REQUIRED');
-    expect(h.fake.callsOf(backendMethod).length).toBe(callsBefore);
-  });
+      expect(out.success).toBe(false);
+      expect((out.error as { code: string }).code).not.toBe('APPROVAL_REQUIRED');
+      expect((out.error as { code: string }).code).not.toBe('CONFIRMATION_REQUIRED');
+      expect(h.fake.callsOf(backendMethod).length).toBe(callsBefore);
+    },
+  );
+
+  it.each([
+    {
+      tool: 'flash_download',
+      backendMethod: 'flashDownload',
+      args: { binaryBase64: '@@@' },
+    },
+    {
+      tool: 'flash_write',
+      backendMethod: 'flashWrite',
+      args: { address: 0x0800_0000, dataBase64: '@@@' },
+    },
+    {
+      tool: 'flash_download',
+      backendMethod: 'flashDownload',
+      args: { binaryBase64: 'A'.repeat(MAX_BASE64_INPUT_LEN + 4) },
+    },
+    {
+      tool: 'flash_write',
+      backendMethod: 'flashWrite',
+      args: { address: 0x0800_0000, dataBase64: 'A'.repeat(MAX_BASE64_INPUT_LEN + 4) },
+    },
+  ])(
+    '$tool validates malformed or oversized payloads even when confirm:false is supplied',
+    async ({ tool, backendMethod, args }) => {
+      const callsBefore = h.fake.callsOf(backendMethod).length;
+      const out = await callTool(h.client, tool, {
+        probeId: h.probeId,
+        ...args,
+        confirm: false,
+      });
+
+      expect(out.success).toBe(false);
+      expect((out.error as { code: string }).code).not.toBe('APPROVAL_REQUIRED');
+      expect((out.error as { code: string }).code).not.toBe('CONFIRMATION_REQUIRED');
+      expect(h.fake.callsOf(backendMethod)).toHaveLength(callsBefore);
+    },
+  );
 });

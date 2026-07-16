@@ -3,8 +3,8 @@
  * OriginIndicator 单测：透明度算法 + 渲染输出。
  */
 
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { OriginIndicator, __test__ } from '../../../../src/renderer/components/OriginIndicator.js';
 
 describe('opacityFor (algorithm)', () => {
@@ -51,5 +51,25 @@ describe('OriginIndicator', () => {
     expect(ai?.className).toContain('animate-pulse');
     // human ts=0, delta=1000, < recentMs(5000) => pulse
     expect(human?.className).toContain('animate-pulse');
+  });
+
+  it('can render as an accessible Activity Center entry while preserving origin dots', () => {
+    const open = vi.fn();
+
+    render(
+      <OriginIndicator
+        activity={{ ai: 1000 }}
+        now={1000}
+        activityEntryLabel="Open activity for COM3"
+        onOpenActivity={open}
+      />,
+    );
+
+    const entry = screen.getByRole('button', { name: 'Open activity for COM3' });
+    expect(entry.querySelectorAll('[data-origin]')).toHaveLength(3);
+
+    fireEvent.click(entry);
+
+    expect(open).toHaveBeenCalledOnce();
   });
 });

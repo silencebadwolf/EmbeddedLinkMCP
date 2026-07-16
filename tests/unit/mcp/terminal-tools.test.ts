@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SessionManager } from '@/core/session/session-manager.js';
 import { SessionBase } from '@/core/session/session-base.js';
@@ -7,6 +7,7 @@ import { createMcpServer, LINKTERM_MCP_SCHEMA_VERSION } from '@/mcp/index.js';
 import { SessionNotWritableError } from '@/core/session/types.js';
 import type { LinkTermMcpServer } from '@/mcp/server.js';
 import type { SessionId } from '@/shared/types.js';
+import { OperationAdmissionCoordinator } from '@/core/operation-admission/operation-admission-coordinator.js';
 import { MockTransport } from '../../fixtures/mock-transport.js';
 import { createInMemoryMcpTransportPair } from '../../fixtures/mock-mcp-transport.js';
 
@@ -14,7 +15,10 @@ const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 const fromB64 = (s: string): Uint8Array => new Uint8Array(Buffer.from(s, 'base64'));
 
 class TestSession extends SessionBase {
-  constructor(id: SessionId, public readonly transport: MockTransport) {
+  constructor(
+    id: SessionId,
+    public readonly transport: MockTransport,
+  ) {
     super({ id, transport });
   }
 }
@@ -29,24 +33,28 @@ interface Harness {
 const flush = (): Promise<void> => new Promise((r) => setImmediate(r));
 
 /** 把一个挂着 MockTransport 的 TestSession 注入到 manager，模拟 \"open 后\" 的状态。 */
-function injectTestSession(
-  manager: SessionManager,
-  transport: MockTransport,
-): TestSession {
+function injectTestSession(manager: SessionManager, transport: MockTransport): TestSession {
   const session = manager.create((id) => new TestSession(id, transport)) as TestSession;
   return session;
 }
 
-async function setupHarness(opts: { listFn?: () => Promise<readonly never[]> } = {}): Promise<Harness> {
+async function setupHarness(
+  opts: { listFn?: () => Promise<readonly never[]> } = {},
+): Promise<Harness> {
   const manager = new SessionManager();
   const serialDiscovery = new SerialDiscovery({
     listFn: opts.listFn ?? (async () => []),
+  });
+  const admissionCoordinator = new OperationAdmissionCoordinator({
+    runtimeId: 'terminal-tools-test-runtime',
+    now: () => '2026-07-15T00:00:00.000Z',
   });
   const { server: serverTransport, client: clientTransport } = createInMemoryMcpTransportPair();
   const mcp = createMcpServer({
     sessionManager: manager,
     serialDiscovery,
     transportFactory: () => serverTransport,
+    operationAdmissionCoordinator: admissionCoordinator,
   });
   await mcp.start();
 
@@ -105,8 +113,9 @@ describe('MCP terminal tools', () => {
     await session.open();
 
     const out = await callTool(harness.client, 'list_sessions');
-    const sessions = (out.evidence as { data: { sessions: { sessionId: string; state: string }[] } })
-      .data.sessions;
+    const sessions = (
+      out.evidence as { data: { sessions: { sessionId: string; state: string }[] } }
+    ).data.sessions;
     expect(sessions).toHaveLength(1);
     expect(sessions[0]!.sessionId).toBe(session.id);
     expect(sessions[0]!.state).toBe('open');
@@ -136,6 +145,93 @@ describe('MCP terminal tools', () => {
     expect(events).toHaveLength(1);
     expect(events[0]!.origin).toBe('ai');
     expect((events[0]!.meta as { correlationId?: string }).correlationId).toBe('corr-1');
+  });
+
+  it('allows AI write_to_session while the legacy pause latch is set', async () => {
+    await teardown(harness);
+    harness = await setupHarness();
+    const transport = new MockTransport();
+    const session = injectTestSession(harness.manager, transport);
+    await session.open();
+
+    const out = await callTool(harness.client, 'write_to_session', {
+      sessionId: session.id,
+      payload: { encoding: 'utf-8', data: 'blocked\n' },
+      correlationId: 'pause-write-1',
+    });
+
+    expect(out.success).toBe(true);
+    expect(out.correlationId).toBe('pause-write-1');
+    expect(transport.writes).toHaveLength(1);
+    expect(new TextDecoder().decode(transport.writes[0]!)).toBe('blocked\n');
+    expect(session.read(0).events.filter((event) => event.origin === 'ai')).toHaveLength(1);
+  });
+
+  it('writes AI send_and_wait payload while the legacy pause latch is set', async () => {
+    await teardown(harness);
+    harness = await setupHarness();
+    const transport = new MockTransport();
+    const session = injectTestSession(harness.manager, transport);
+    await session.open();
+
+    const out = await callTool(harness.client, 'send_and_wait', {
+      sessionId: session.id,
+      payload: { encoding: 'utf-8', data: 'cmd' },
+      completionMarkers: ['DONE'],
+      timeoutMs: 1000,
+    });
+
+    expect(out.success).toBe(false);
+    expect((out.error as { code: string }).code).toBe('TIMEOUT');
+    expect(transport.writes).toHaveLength(1);
+  });
+
+  it('allows read-only terminal status while the session is paused', async () => {
+    await teardown(harness);
+    harness = await setupHarness();
+    const transport = new MockTransport();
+    const session = injectTestSession(harness.manager, transport);
+    await session.open();
+
+    const out = await callTool(harness.client, 'get_session_status', { sessionId: session.id });
+
+    expect(out.success).toBe(true);
+    expect(out.state).toBe('open');
+    expect(transport.writes).toHaveLength(0);
+  });
+
+  it('does not let one session legacy pause block another session write', async () => {
+    await teardown(harness);
+    harness = await setupHarness();
+    const pausedTransport = new MockTransport();
+    const activeTransport = new MockTransport();
+    const pausedSession = injectTestSession(harness.manager, pausedTransport);
+    const activeSession = injectTestSession(harness.manager, activeTransport);
+    await pausedSession.open();
+    await activeSession.open();
+
+    const out = await callTool(harness.client, 'write_to_session', {
+      sessionId: activeSession.id,
+      payload: { encoding: 'utf-8', data: 'allowed\n' },
+    });
+
+    expect(out.success).toBe(true);
+    expect(pausedTransport.writes).toHaveLength(0);
+    expect(activeTransport.writes).toHaveLength(1);
+    expect(new TextDecoder().decode(activeTransport.writes[0]!)).toBe('allowed\n');
+  });
+
+  it('allows paused AI close_session to close the transport', async () => {
+    await teardown(harness);
+    harness = await setupHarness();
+    const transport = new MockTransport();
+    const session = injectTestSession(harness.manager, transport);
+    await session.open();
+
+    const out = await callTool(harness.client, 'close_session', { sessionId: session.id });
+
+    expect(out.success).toBe(true);
+    expect(session.state).toBe('closed');
   });
 
   it('write_to_session decodes base64 payload', async () => {
@@ -261,14 +357,17 @@ describe('MCP terminal tools', () => {
       cursor: 0,
     });
     expect(readOut.success).toBe(true);
-    const dataEvents = (readOut.evidence as {
-      data: { events: { type: string; origin: string; dataBase64?: string }[] };
-    }).data.events.filter((e) => e.type === 'data' && e.origin === 'device');
+    const dataEvents = (
+      readOut.evidence as {
+        data: { events: { type: string; origin: string; dataBase64?: string }[] };
+      }
+    ).data.events.filter((e) => e.type === 'data' && e.origin === 'device');
     expect(dataEvents).toHaveLength(1);
 
     // list_sessions 仍能看见这个 sessionId
     const listOut = await callTool(harness.client, 'list_sessions');
-    const sessions = (listOut.evidence as { data: { sessions: { sessionId: string }[] } }).data.sessions;
+    const sessions = (listOut.evidence as { data: { sessions: { sessionId: string }[] } }).data
+      .sessions;
     expect(sessions.map((s) => s.sessionId)).toContain(session.id);
   });
 
@@ -289,9 +388,7 @@ describe('MCP terminal tools', () => {
   it('discover_serial_ports proxies SerialDiscovery.listPorts', async () => {
     await teardown(harness);
     harness = await setupHarness({
-      listFn: async () => [
-        { path: '/dev/tty.fake', manufacturer: 'TestCo' },
-      ] as never,
+      listFn: async () => [{ path: '/dev/tty.fake', manufacturer: 'TestCo' }] as never,
     });
 
     const out = await callTool(harness.client, 'discover_serial_ports');
@@ -364,7 +461,9 @@ describe('MCP terminal tools', () => {
     const result = await callPromise;
     const out = result.structuredContent as Record<string, unknown>;
     expect(out.success).toBe(true);
-    const evidence = out.evidence as { data: { matchedMarkerIndex: number; receivedBase64: string } };
+    const evidence = out.evidence as {
+      data: { matchedMarkerIndex: number; receivedBase64: string };
+    };
     expect(evidence.data.matchedMarkerIndex).toBe(0);
     expect(new TextDecoder().decode(fromB64(evidence.data.receivedBase64))).toContain('DONE');
   });
@@ -393,11 +492,102 @@ describe('MCP terminal tools', () => {
     const result = await callPromise;
     const out = result.structuredContent as Record<string, unknown>;
     expect(out.success).toBe(false);
-    const error = out.error as { code: string; details?: { receivedBase64?: string; cursorBefore?: number } };
+    const error = out.error as {
+      code: string;
+      details?: { receivedBase64?: string; cursorBefore?: number };
+    };
     expect(error.code).toBe('TIMEOUT');
     expect(error.details?.receivedBase64).toBeDefined();
     expect(new TextDecoder().decode(fromB64(error.details!.receivedBase64!))).toContain('partial');
     expect(typeof error.details?.cursorBefore).toBe('number');
+  });
+
+  it('blocks a second AI write after send_and_wait timeout until device output resumes', async () => {
+    const transport = new MockTransport();
+    const session = injectTestSession(harness.manager, transport);
+    await session.open();
+
+    const first = await harness.client.callTool({
+      name: 'send_and_wait',
+      arguments: {
+        sessionId: session.id,
+        payload: { encoding: 'utf-8', data: 'first' },
+        completionMarkers: ['NEVER'],
+        timeoutMs: 40,
+      },
+    });
+    const firstOut = first.structuredContent as Record<string, unknown>;
+    expect(firstOut.success).toBe(false);
+    expect((firstOut.error as { code: string; details?: Record<string, unknown> }).code).toBe(
+      'TIMEOUT',
+    );
+    expect(
+      (firstOut.error as { details?: Record<string, unknown> }).details,
+    ).toMatchObject({ retryable: false, recoveryRequired: true });
+
+    const second = await harness.client.callTool({
+      name: 'write_to_session',
+      arguments: {
+        sessionId: session.id,
+        payload: { encoding: 'utf-8', data: 'do-not-repeat' },
+      },
+    });
+    const secondOut = second.structuredContent as Record<string, unknown>;
+    expect(secondOut.success).toBe(false);
+    expect((secondOut.error as { code: string }).code).toBe('DEVICE_UNRESPONSIVE');
+    expect(transport.writes).toHaveLength(1);
+
+    const read = await callTool(harness.client, 'read_from_session', {
+      sessionId: session.id,
+      cursor: 0,
+    });
+    expect(read.success).toBe(true);
+
+    transport.pushIncoming(utf8('late device response'));
+    const third = await harness.client.callTool({
+      name: 'write_to_session',
+      arguments: {
+        sessionId: session.id,
+        payload: { encoding: 'utf-8', data: 'after-recovery' },
+      },
+    });
+    expect((third.structuredContent as Record<string, unknown>).success).toBe(true);
+    expect(transport.writes).toHaveLength(2);
+  });
+
+  it('translates a second send_and_wait after timeout without writing again', async () => {
+    const transport = new MockTransport();
+    const session = injectTestSession(harness.manager, transport);
+    await session.open();
+
+    const first = await harness.client.callTool({
+      name: 'send_and_wait',
+      arguments: {
+        sessionId: session.id,
+        payload: { encoding: 'utf-8', data: 'first' },
+        completionMarkers: ['NEVER'],
+        timeoutMs: 40,
+      },
+    });
+    expect((first.structuredContent as Record<string, unknown>).success).toBe(false);
+
+    const second = await harness.client.callTool({
+      name: 'send_and_wait',
+      arguments: {
+        sessionId: session.id,
+        payload: { encoding: 'utf-8', data: 'must-not-send' },
+        completionMarkers: ['NEVER'],
+        timeoutMs: 40,
+      },
+    });
+    const out = second.structuredContent as Record<string, unknown>;
+    expect(out.success).toBe(false);
+    expect((out.error as { code: string }).code).toBe('DEVICE_UNRESPONSIVE');
+    expect((out.error as { details?: Record<string, unknown> }).details).toMatchObject({
+      retryable: false,
+      recoveryRequired: true,
+    });
+    expect(transport.writes).toHaveLength(1);
   });
 
   it('send_and_wait translates session-closed to SESSION_CLOSED with sessionState detail', async () => {
@@ -473,6 +663,48 @@ describe('MCP terminal tools', () => {
     expect(out.success).toBe(false);
     const serialized = JSON.stringify(out);
     expect(serialized).not.toContain('TopSecret123!');
+  });
+
+  it('rolls back a failed open_session candidate and emits no lifecycle events', async () => {
+    const created = vi.fn();
+    const destroyed = vi.fn();
+    const sessionEvents = vi.fn();
+    harness.manager.on('session:created', created);
+    harness.manager.on('session:destroyed', destroyed);
+    harness.manager.on('session:event', sessionEvents);
+
+    const realCreateAndOpen = harness.manager.createAndOpen.bind(harness.manager);
+    const createAndOpen = vi
+      .spyOn(harness.manager, 'createAndOpen')
+      .mockImplementationOnce((_factory, metadata) =>
+        realCreateAndOpen(
+          (id) => new TestSession(id, new MockTransport({ failOnOpen: new Error('port busy') })),
+          metadata,
+        ),
+      );
+
+    const out = await callTool(harness.client, 'open_session', {
+      config: {
+        type: 'serial',
+        port: 'COM7',
+        baudRate: 115200,
+        mode: 'terminal',
+      },
+    });
+
+    expect(out).toMatchObject({
+      success: false,
+      error: {
+        code: 'INTERNAL',
+        message: 'Failed to open session: port busy',
+      },
+    });
+    expect(createAndOpen).toHaveBeenCalledOnce();
+    expect(harness.manager.list()).toEqual([]);
+    expect(harness.manager.listSummaries()).toEqual([]);
+    expect(created).not.toHaveBeenCalled();
+    expect(destroyed).not.toHaveBeenCalled();
+    expect(sessionEvents).not.toHaveBeenCalled();
   });
 });
 

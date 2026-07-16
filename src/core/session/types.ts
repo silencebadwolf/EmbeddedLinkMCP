@@ -116,6 +116,42 @@ export class SessionNotWritableError extends Error {
 }
 
 /**
+ * Details captured when an AI command timed out without any completion evidence.
+ *
+ * The session remains open and readable, but subsequent AI writes are blocked until
+ * fresh device output proves that the transport is responsive again.
+ */
+export interface SessionUnresponsiveDetails {
+  readonly cursorBefore: SequenceCursor;
+  readonly cursorAfter: SequenceCursor;
+}
+
+/**
+ * AI write rejected after a sendAndWait timeout marked the session unresponsive.
+ *
+ * Human writes and transcript reads remain available; this is deliberately separate
+ * from SessionState so the shared terminal session is not taken away from the user.
+ */
+export class SessionUnresponsiveError extends Error {
+  readonly code = 'DEVICE_UNRESPONSIVE' as const;
+  readonly sessionId: SessionId;
+  readonly cursorBefore: SequenceCursor;
+  readonly cursorAfter: SequenceCursor;
+  readonly retryable = false as const;
+  readonly recoveryRequired = true as const;
+
+  constructor(sessionId: SessionId, details: SessionUnresponsiveDetails) {
+    super(
+      `AI writes are blocked for session ${sessionId} after a timeout; wait for device output or reopen the session`,
+    );
+    this.name = 'SessionUnresponsiveError';
+    this.sessionId = sessionId;
+    this.cursorBefore = details.cursorBefore;
+    this.cursorAfter = details.cursorAfter;
+  }
+}
+
+/**
  * 会话不存在（已 destroy 或从未注册）时 SessionManager 抛出的具名错误。
  *
  * Phase 6 评审 M3：原 SessionManager 抛 `Error('Session not found: ...')`，

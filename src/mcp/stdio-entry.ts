@@ -6,9 +6,13 @@ import { WorkspaceConfigManager } from '../core/workspace/index.js';
 import { JLinkAdapter } from '../jlink/jlink-adapter.js';
 import { createMcpServer } from './server.js';
 import { SerialDiscovery } from '../transports/serial/serial-discovery.js';
+import { OperationAdmissionCoordinator } from '../core/operation-admission/operation-admission-coordinator.js';
 
 const serialDiscovery = new SerialDiscovery();
 const sessionManager = new SessionManager();
+const operationAdmissionCoordinator = new OperationAdmissionCoordinator({
+  runtimeId: `stdio-${process.pid}`,
+});
 const workspaceConfigManager = new WorkspaceConfigManager({
   evidenceFn: async () => ({
     serialPorts: await serialDiscovery.listPorts(),
@@ -23,6 +27,7 @@ const mcpServer = createMcpServer({
     serialPorts: await serialDiscovery.listPorts(),
   }),
   jlinkBackend: new JLinkAdapter(),
+  operationAdmissionCoordinator,
 });
 
 let shuttingDown = false;

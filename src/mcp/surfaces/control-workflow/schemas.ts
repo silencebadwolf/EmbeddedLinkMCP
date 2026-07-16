@@ -75,6 +75,7 @@ export const runControlWorkflowInputSchema = z
       })
       .strict()
       .optional(),
+    /** Legacy compatibility flag; execution is never gated by this value. */
     confirm: z.boolean().optional(),
     dryRun: z.boolean().optional(),
     execution: backgroundExecutionSchema.optional(),

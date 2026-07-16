@@ -12,7 +12,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { ConnectionType, SessionId } from '../../shared/types.js';
-import { useTranscript } from '../hooks/useTranscript.js';
+import { useTranscript, type VisibleDeviceSequenceAck } from '../hooks/useTranscript.js';
 import { useAppStore } from '../store/app-store.js';
 import { getLinkterm } from '../lib/linkterm-bridge.js';
 import {
@@ -23,6 +23,10 @@ import {
 /** TerminalView props。 */
 export interface TerminalViewProps {
   sessionId: SessionId | null;
+  focusRequestToken?: number;
+  onVisibleDeviceSequence?: (ack: VisibleDeviceSequenceAck) => void;
+  onTranscriptDisplayUnavailable?: (reasonCode: string) => void;
+  onTranscriptDisplayRecovered?: () => void;
 }
 
 /** Ctrl-C 字节序列。`\x03` 是 SIGINT 的标准 ASCII。 */
@@ -54,7 +58,13 @@ function strToBase64(s: string): string {
 /**
  * TerminalView 组件：渲染单个 session 的 xterm.js Terminal。
  */
-export function TerminalView({ sessionId }: TerminalViewProps): React.ReactElement {
+export function TerminalView({
+  sessionId,
+  focusRequestToken,
+  onVisibleDeviceSequence,
+  onTranscriptDisplayUnavailable,
+  onTranscriptDisplayRecovered,
+}: TerminalViewProps): React.ReactElement {
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const termRef = React.useRef<{
     term: Terminal;
@@ -178,8 +188,17 @@ export function TerminalView({ sessionId }: TerminalViewProps): React.ReactEleme
     };
   }, [sessionId, markOriginActivity, connectionType]);
 
+  React.useEffect(() => {
+    if (focusRequestToken === undefined) return;
+    termRef.current?.term.focus();
+  }, [focusRequestToken]);
+
   // transcript 订阅：把后端事件渲染进 xterm
-  useTranscript(sessionId, terminal);
+  useTranscript(sessionId, terminal, {
+    onVisibleDeviceSequence,
+    onDisplayUnavailable: onTranscriptDisplayUnavailable,
+    onDisplayRecovered: onTranscriptDisplayRecovered,
+  });
 
   const pasteFromContextMenu = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();

@@ -13,6 +13,7 @@ const decode = (b: Uint8Array): string => new TextDecoder().decode(b);
 interface MockState {
   cursor: number;
   writeArgs: Array<{ data: Uint8Array; opts: { origin: 'ai'; correlationId?: string } }>;
+  markAiUnresponsive?: { sessionId: string; cursorBefore: number; cursorAfter: number };
   pendingResolve?: (
     outcome:
       | { kind: 'match'; event: TranscriptEvent }
@@ -50,6 +51,9 @@ function makeMock(): { manager: SessionManagerLike; state: MockState } {
       });
     },
     read: (_id, _cursor) => ({ cursor: state.cursor }),
+    markAiUnresponsive: (sessionId, details) => {
+      state.markAiUnresponsive = { sessionId, ...details };
+    },
   };
   return { manager, state };
 }
@@ -129,6 +133,7 @@ describe('sendAndWait orchestrator', () => {
     const predicate = state.capturedPredicate!;
     predicate(makeDataEvent('partial output here', 2));
 
+    state.cursor = 7;
     state.pendingResolve!({ kind: 'timeout', lastCursor: 7 });
 
     const result = await promise;
@@ -137,6 +142,11 @@ describe('sendAndWait orchestrator', () => {
     expect(result.reason).toBe('timeout');
     expect(decode(result.received)).toContain('partial output here');
     expect(result.bytesWritten).toBeGreaterThan(0);
+    expect(state.markAiUnresponsive).toEqual({
+      sessionId: 'sess_2',
+      cursorBefore: 0,
+      cursorAfter: 7,
+    });
   });
 
   it('session-closed: returns sessionState in result', async () => {

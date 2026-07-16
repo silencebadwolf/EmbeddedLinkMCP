@@ -11,6 +11,29 @@ import { ConnectionDialog } from './components/ConnectionDialog.js';
 import { AgentIntegrationsPanel } from './components/AgentIntegrationsPanel.js';
 import { ControlProfilePanel, openObservationForRecord } from './components/ControlProfilePanel.js';
 import { Button } from './components/ui/button.js';
+import { ActivityCenterDrawer } from './features/activity/ActivityCenterDrawer.js';
+import { AiStatusCapsule } from './features/activity/AiStatusCapsule.js';
+import { useActivityCenterState } from './features/activity/useActivityCenterState.js';
+import type { ActivityItemFilter } from './features/activity/activity-reducer.js';
+import { FirstSuccessFlow } from './features/first-success/FirstSuccessFlow.js';
+import {
+  createInitialFirstSuccessState,
+  reduceFirstSuccessState,
+  type FirstSuccessAction,
+  type FirstSuccessState,
+} from './features/first-success/first-success-reducer.js';
+import { StartCenter } from './features/readiness/StartCenter.js';
+import { useRuntimeReadinessState } from './features/readiness/useRuntimeReadinessState.js';
+import {
+  createDraftFromCandidate,
+  draftToNonSensitivePrefill,
+  fingerprintDeviceCandidate,
+} from '../shared/serial-connection-draft.js';
+import { createJLinkRttDraftFromCandidate } from '../shared/jlink-rtt-draft.js';
+import {
+  FIRST_SIGNAL_SCHEMA_VERSION,
+  type FirstSignalStopReason,
+} from '../shared/first-signal-contract.js';
 import { getLinkterm } from './lib/linkterm-bridge.js';
 import { useAppStore } from './store/app-store.js';
 import { useT, type Locale } from './i18n/index.js';
@@ -23,11 +46,19 @@ import type {
   ControlProfileChipProbePayload,
   ControlProfileNamespace,
   ControlProfileWorkflowStepPayload,
+  SavedConnectionSummary,
   SavedControlProfileRecordPayload,
 } from '../shared/preload-api.js';
-import type { SessionId, SessionState } from '../shared/types.js';
+import type {
+  DeviceCandidate,
+  JLinkRttDownloadObserveDraft,
+  RuntimeReadinessSnapshot,
+} from '../shared/readiness-contract.js';
+import type { SerialSessionConfig, SessionId, SessionState } from '../shared/types.js';
+import type { SerialConnectionDraft } from '../shared/readiness-contract.js';
 
 const DOWNLOAD_POLL_INTERVAL_MS = 200;
+const FIRST_SIGNAL_TIMEOUT_MS = 30_000;
 
 /**
  * App 根组件.
@@ -46,6 +77,26 @@ export function App(): React.ReactElement {
   const addSession = useAppStore((s) => s.addSession);
   const removeSession = useAppStore((s) => s.removeSession);
   const setActive = useAppStore((s) => s.setActive);
+  const openDialog = useAppStore((s) => s.openDialog);
+  const dialogOpen = useAppStore((s) => s.dialogOpen);
+  const setConnectionDialogPrefill = useAppStore((s) => s.setConnectionDialogPrefill);
+  const activityState = useActivityCenterState();
+  const [advancedDevicesOpen, setAdvancedDevicesOpen] = React.useState(false);
+  const readinessState = useRuntimeReadinessState(advancedDevicesOpen);
+  const [firstSuccessDraft, setFirstSuccessDraft] = React.useState<SerialConnectionDraft | null>(
+    null,
+  );
+  const [jlinkRttReview, setJLinkRttReview] = React.useState<JLinkRttReviewState | null>(null);
+  const [firstSuccessState, setFirstSuccessState] = React.useState<FirstSuccessState>(() =>
+    createInitialFirstSuccessState(),
+  );
+  const [firstSuccessErrorMessage, setFirstSuccessErrorMessage] = React.useState<string | null>(
+    null,
+  );
+  const firstSuccessAttemptCounter = React.useRef(0);
+  const [activityDrawerOpen, setActivityDrawerOpen] = React.useState(false);
+  const [activityFilter, setActivityFilter] = React.useState<ActivityItemFilter | undefined>();
+  const activityReturnFocusRef = React.useRef<HTMLElement | null>(null);
   const [agentPanelOpen, setAgentPanelOpen] = React.useState(false);
   const [controlPanelOpen, setControlPanelOpen] = React.useState(false);
   const [openedControlProfile, setOpenedControlProfile] =
@@ -63,6 +114,10 @@ export function App(): React.ReactElement {
   const [controlProfileRecordsError, setControlProfileRecordsError] = React.useState<string | null>(
     null,
   );
+  const [savedConnections, setSavedConnections] = React.useState<
+    ReadonlyArray<SavedConnectionSummary>
+  >([]);
+  const [savedConnectionsLoading, setSavedConnectionsLoading] = React.useState(false);
   const [openingControlProfileId, setOpeningControlProfileId] = React.useState<string | null>(null);
   const [openedControlProfilesByRecordId, setOpenedControlProfilesByRecordId] = React.useState<
     ReadonlyMap<string, ControlProfileOpenedEvent>
@@ -79,6 +134,378 @@ export function App(): React.ReactElement {
     }
     return visibleControlProfile?.record.id ?? null;
   }, [activeId, openedControlProfilesByRecordId, visibleControlProfile]);
+  const rememberActivityReturnFocus = React.useCallback(() => {
+    const activeElement = document.activeElement;
+    activityReturnFocusRef.current =
+      activeElement instanceof HTMLElement ? activeElement : null;
+  }, []);
+
+  const openActivityCenter = React.useCallback(() => {
+    rememberActivityReturnFocus();
+    setActivityFilter(undefined);
+    setActivityDrawerOpen(true);
+  }, [rememberActivityReturnFocus]);
+
+  const openActivityCenterForSession = React.useCallback((sessionId: SessionId) => {
+    rememberActivityReturnFocus();
+    setActivityFilter({ sessionId });
+    setActivityDrawerOpen(true);
+  }, [rememberActivityReturnFocus]);
+
+  const dispatchFirstSuccess = React.useCallback((action: FirstSuccessAction) => {
+    setFirstSuccessState((state) => reduceFirstSuccessState(state, action));
+  }, []);
+
+  const openFirstSuccessReview = React.useCallback((draft: SerialConnectionDraft) => {
+    setJLinkRttReview(null);
+    setFirstSuccessDraft(draft);
+    setFirstSuccessErrorMessage(null);
+    setFirstSuccessState(
+      reduceFirstSuccessState(
+        reduceFirstSuccessState(createInitialFirstSuccessState(), {
+          type: 'serial-draft-ready',
+          draftId: draft.draftId,
+        }),
+        { type: 'review-plan' },
+      ),
+    );
+  }, []);
+
+  const closeFirstSuccessReview = React.useCallback(() => {
+    setFirstSuccessDraft(null);
+    setFirstSuccessErrorMessage(null);
+    setFirstSuccessState(createInitialFirstSuccessState());
+  }, []);
+
+  const closeJLinkRttReview = React.useCallback(() => {
+    setJLinkRttReview(null);
+  }, []);
+
+  const openAdvancedConnection = React.useCallback(() => {
+    setConnectionDialogPrefill(null);
+    openDialog();
+  }, [openDialog, setConnectionDialogPrefill]);
+
+  const openSerialTerminal = React.useCallback(() => {
+    setFirstSuccessDraft(null);
+    setFirstSuccessErrorMessage(null);
+    setJLinkRttReview(null);
+    setConnectionDialogPrefill(null);
+    openDialog();
+  }, [openDialog, setConnectionDialogPrefill]);
+
+  const openSerialDraftInDialog = React.useCallback(
+    (draft: SerialConnectionDraft): void => {
+      setFirstSuccessDraft(null);
+      setFirstSuccessErrorMessage(null);
+      setJLinkRttReview(null);
+      setConnectionDialogPrefill(draftToNonSensitivePrefill(draft));
+      openDialog();
+    },
+    [openDialog, setConnectionDialogPrefill],
+  );
+
+  const openCandidateSerialConnection = React.useCallback(
+    (candidate: DeviceCandidate) => {
+      if (candidate.kind === 'jlink') {
+        setFirstSuccessDraft(null);
+        setFirstSuccessErrorMessage(null);
+        setFirstSuccessState(createInitialFirstSuccessState());
+        setJLinkRttReview({
+          draft: createJLinkRttDraftFromCandidate(candidate, { draftId: candidate.id }),
+          candidateLabel: candidate.label,
+        });
+        return;
+      }
+      const draft = createDraftFromCandidate(candidate, { draftId: candidate.id });
+      openSerialDraftInDialog(draft);
+    },
+    [openSerialDraftInDialog],
+  );
+
+  const openFirstSuccessGuide = React.useCallback(() => {
+    void (async () => {
+      let snapshot = readinessState.snapshot;
+      if (snapshot === undefined) {
+        const api = getLinkterm();
+        const result = await api?.readiness.get();
+        if (result?.success === true) snapshot = result.data;
+      }
+      const serialCandidates =
+        snapshot?.deviceCandidates.filter((candidate) => candidate.serial !== undefined) ?? [];
+      if (serialCandidates.length === 1) {
+        openFirstSuccessReview(
+          createDraftFromCandidate(serialCandidates[0], { draftId: serialCandidates[0].id }),
+        );
+        return;
+      }
+      openAdvancedConnection();
+    })();
+  }, [openAdvancedConnection, openFirstSuccessReview, readinessState.snapshot]);
+
+  const refreshReadiness = React.useCallback(() => {
+    void readinessState.refresh();
+  }, [readinessState]);
+
+  const copyReadinessDiagnostics = React.useCallback((codes: string[]) => {
+    const text = codes.join('\n');
+    void navigator.clipboard?.writeText(text).catch(() => undefined);
+  }, []);
+
+  const markFirstSuccessError = React.useCallback((code: string, message: string) => {
+    setFirstSuccessErrorMessage(message);
+    setFirstSuccessState((state) => toErroredFirstSuccessState(state, code));
+  }, []);
+
+  const confirmFirstSuccessConnect = React.useCallback(
+    async (draft: SerialConnectionDraft): Promise<void> => {
+      const api = getLinkterm();
+      if (!api) {
+        markFirstSuccessError('PRELOAD_UNAVAILABLE', preloadUnavailableMessage);
+        return;
+      }
+      const latestReadiness = await api.readiness.get();
+      if (!latestReadiness.success && draft.candidateId !== undefined) {
+        markFirstSuccessError(
+          'FIRST_SIGNAL_CANDIDATE_REVALIDATION_FAILED',
+          t('firstSuccess.error.candidateChanged'),
+        );
+        return;
+      }
+      const revalidationSnapshot = latestReadiness.success
+        ? latestReadiness.data
+        : readinessState.snapshot;
+      if (isDraftCandidateStale(draft, revalidationSnapshot)) {
+        markFirstSuccessError('FIRST_SIGNAL_CANDIDATE_CHANGED', t('firstSuccess.error.candidateChanged'));
+        return;
+      }
+      const config = serialConfigFromDraft(draft);
+      if (config === null) {
+        markFirstSuccessError('SERIAL_PORT_REQUIRED', t('controlProfile.error.serialPortRequired'));
+        return;
+      }
+
+      const clientAttemptKey = createFirstSuccessClientAttemptKey(
+        firstSuccessAttemptCounter.current + 1,
+      );
+      firstSuccessAttemptCounter.current += 1;
+      setFirstSuccessErrorMessage(null);
+      setFirstSuccessState((state) => ({
+        ...reduceFirstSuccessState(state, { type: 'connect-started' }),
+        clientAttemptKey,
+      }));
+
+      const createResult = await api.session.create({
+        config,
+        label: draft.portLabel ?? config.port,
+      });
+      if (!createResult.success) {
+        markFirstSuccessError(createResult.error.code, createResult.error.message);
+        return;
+      }
+
+      const sessionId = createResult.data.sessionId;
+      addSession({
+        id: sessionId,
+        label: draft.portLabel ?? config.port,
+        connectionType: 'serial',
+        state: createResult.data.state,
+      });
+      setActive(sessionId);
+
+      const startResult = await api.firstSignal.start({
+        schemaVersion: FIRST_SIGNAL_SCHEMA_VERSION,
+        clientAttemptKey,
+        sessionId,
+        ownsSession: true,
+        baselineCursor: 0,
+        timeoutMs: FIRST_SIGNAL_TIMEOUT_MS,
+      });
+      if (!startResult.success) {
+        markFirstSuccessError(startResult.error.code, startResult.error.message);
+        return;
+      }
+
+      dispatchFirstSuccess({ type: 'observation-updated', observation: startResult.data });
+      const subscribeResult = await api.firstSignal.subscribe({
+        attemptId: startResult.data.attemptId,
+        sinceRevision: startResult.data.revision,
+      });
+      if (subscribeResult.success) {
+        dispatchFirstSuccess({
+          type: 'observation-updated',
+          observation: subscribeResult.data,
+        });
+        return;
+      }
+      markFirstSuccessError(subscribeResult.error.code, subscribeResult.error.message);
+    },
+    [
+      addSession,
+      dispatchFirstSuccess,
+      markFirstSuccessError,
+      preloadUnavailableMessage,
+      readinessState.snapshot,
+      setActive,
+      t,
+    ],
+  );
+
+  React.useEffect(() => {
+    const api = getLinkterm();
+    if (!api) return undefined;
+    return api.firstSignal.onEvent(
+      (event) => {
+        setFirstSuccessErrorMessage(null);
+        setFirstSuccessState((state) => {
+          if (state.draftId === undefined) return state;
+          return reduceFirstSuccessState(state, {
+            type: 'observation-updated',
+            observation: event.observation,
+          });
+        });
+      },
+      () => {
+        markFirstSuccessError('FIRST_SIGNAL_INVALID_PAYLOAD', t('firstSuccess.status.errored'));
+      },
+    );
+  }, [markFirstSuccessError, t]);
+
+  const stopFirstSuccessObservation = React.useCallback(
+    async (reason: FirstSignalStopReason): Promise<void> => {
+      const attemptId = firstSuccessState.attemptId;
+      if (attemptId === undefined) return;
+      const api = getLinkterm();
+      if (!api) return;
+      await api.firstSignal.stop({ attemptId, reason });
+    },
+    [firstSuccessState.attemptId],
+  );
+
+  const destroyFirstSuccessSession = React.useCallback(async (): Promise<void> => {
+    const sessionId = firstSuccessState.sessionId;
+    if (sessionId === undefined) return;
+    const api = getLinkterm();
+    if (api) {
+      const result = await api.session.destroy({ sessionId });
+      if (!result.success) {
+        markFirstSuccessError(result.error.code, result.error.message);
+        return;
+      }
+    }
+    removeSession(sessionId);
+  }, [firstSuccessState.sessionId, markFirstSuccessError, removeSession]);
+
+  const keepWaitingForFirstSignal = React.useCallback(() => {
+    dispatchFirstSuccess({ type: 'keep-waiting' });
+  }, [dispatchFirstSuccess]);
+
+  const disconnectAndEditFirstSignal = React.useCallback(async (): Promise<void> => {
+    await stopFirstSuccessObservation('disconnect-and-edit');
+    await destroyFirstSuccessSession();
+    dispatchFirstSuccess({ type: 'disconnect-and-edit' });
+  }, [destroyFirstSuccessSession, dispatchFirstSuccess, stopFirstSuccessObservation]);
+
+  const backToFirstSuccessSession = React.useCallback(async (): Promise<void> => {
+    await stopFirstSuccessObservation('back-to-session');
+    dispatchFirstSuccess({ type: 'back-to-session' });
+    setFirstSuccessDraft(null);
+  }, [dispatchFirstSuccess, stopFirstSuccessObservation]);
+
+  const disconnectFirstSuccessSession = React.useCallback(async (): Promise<void> => {
+    await stopFirstSuccessObservation('user');
+    await destroyFirstSuccessSession();
+    dispatchFirstSuccess({ type: 'user-disconnected' });
+  }, [destroyFirstSuccessSession, dispatchFirstSuccess, stopFirstSuccessObservation]);
+
+  const retryFirstSignal = React.useCallback(() => {
+    if (firstSuccessDraft === null) return;
+    void (async () => {
+      await stopFirstSuccessObservation('retry');
+      const previousSessionId = firstSuccessState.sessionId;
+      if (firstSuccessState.ownsSession === true) {
+        await destroyFirstSuccessSession();
+        if (
+          previousSessionId !== undefined &&
+          useAppStore.getState().sessions.has(previousSessionId)
+        ) {
+          return;
+        }
+      }
+      dispatchFirstSuccess({
+        type: 'retry-started',
+        nextClientAttemptKey: createFirstSuccessClientAttemptKey(
+          firstSuccessAttemptCounter.current + 1,
+        ),
+      });
+      await confirmFirstSuccessConnect(firstSuccessDraft);
+    })();
+  }, [
+    confirmFirstSuccessConnect,
+    destroyFirstSuccessSession,
+    dispatchFirstSuccess,
+    firstSuccessDraft,
+    firstSuccessState.ownsSession,
+    firstSuccessState.sessionId,
+    stopFirstSuccessObservation,
+  ]);
+
+  const goToFirstSuccessTerminal = React.useCallback(() => {
+    setFirstSuccessDraft(null);
+  }, []);
+
+  const handleVisibleDeviceSequence = React.useCallback(
+    ({ sessionId, sequence }: { readonly sessionId: SessionId; readonly sequence: number }) => {
+      const attemptId = firstSuccessState.attemptId;
+      if (attemptId === undefined) return;
+      dispatchFirstSuccess({
+        type: 'visible-device-sequence',
+        attemptId,
+        sessionId,
+        sequence,
+        focusPolicy: {
+          canFocusTerminal: canAutoFocusFirstSuccessTerminal({
+            sessionId,
+            activeSessionId: activeId,
+            firstSuccessDraftOpen: firstSuccessDraft !== null,
+            activityDrawerOpen,
+            dialogOpen,
+            agentPanelOpen,
+            controlPanelOpen,
+            activeElement: document.activeElement,
+          }),
+        },
+      });
+    },
+    [
+      activeId,
+      activityDrawerOpen,
+      agentPanelOpen,
+      controlPanelOpen,
+      dialogOpen,
+      dispatchFirstSuccess,
+      firstSuccessDraft,
+      firstSuccessState.attemptId,
+    ],
+  );
+
+  const handleTranscriptDisplayUnavailable = React.useCallback(
+    (reasonCode: string) => {
+      dispatchFirstSuccess({ type: 'transcript-display-unavailable', reasonCode });
+    },
+    [dispatchFirstSuccess],
+  );
+
+  const handleTranscriptDisplayRecovered = React.useCallback(() => {
+    dispatchFirstSuccess({ type: 'transcript-display-recovered' });
+  }, [dispatchFirstSuccess]);
+
+  const closeActivityCenter = React.useCallback(() => {
+    setActivityDrawerOpen(false);
+    const returnFocus = activityReturnFocusRef.current;
+    activityReturnFocusRef.current = null;
+    if (returnFocus?.isConnected === true) returnFocus.focus();
+  }, []);
 
   const rememberOpenedControlProfile = React.useCallback((event: ControlProfileOpenedEvent) => {
     setOpenedControlProfile(event);
@@ -113,6 +540,41 @@ export function App(): React.ReactElement {
   React.useEffect(() => {
     void loadControlProfileRecords();
   }, [loadControlProfileRecords]);
+
+  const loadSavedConnections = React.useCallback(async (): Promise<void> => {
+    const api = getLinkterm();
+    if (!api) return;
+    setSavedConnectionsLoading(true);
+    try {
+      const result = await api.connections.list();
+      if (result.success) setSavedConnections(result.data);
+    } finally {
+      setSavedConnectionsLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void loadSavedConnections();
+  }, [loadSavedConnections]);
+
+  const openSavedConnection = React.useCallback(
+    async (profile: SavedConnectionSummary): Promise<void> => {
+      const api = getLinkterm();
+      if (!api) return;
+      const result = await api.connections.open({ profileId: profile.id });
+      if (!result.success) return;
+      const opened = result.data;
+      addSession({
+        id: opened.sessionId,
+        label: opened.profile.label || opened.sessionId.slice(-4),
+        connectionType: opened.profile.type,
+        state: opened.state,
+        ...(opened.rttLog ? { rttLog: opened.rttLog } : {}),
+      });
+      setActive(opened.sessionId);
+    },
+    [addSession, setActive],
+  );
 
   React.useEffect(() => {
     if (openedControlProfile !== null && openedControlProfileSessionId !== null) {
@@ -296,6 +758,50 @@ export function App(): React.ReactElement {
     setControlProfileDownload({ phase: 'failed', error: result.error.message });
   }, [openedControlProfile, t]);
 
+  const reviewCompensationReflash = React.useCallback(
+    async (candidateId: string): Promise<void> => {
+      const api = getLinkterm();
+      if (!api) {
+        setControlProfileDownload({
+          phase: 'failed',
+          error: t('controlProfile.error.preloadUnavailable'),
+        });
+        return;
+      }
+      const result = await api.controlProfile.startCompensationReflash({ candidateId });
+      if (result.success) {
+        setControlProfileDownload({ phase: 'running', job: result.data });
+        return;
+      }
+      setControlProfileDownload({ phase: 'failed', error: result.error.message });
+    },
+    [t],
+  );
+
+  const saveProfileSuggestion = React.useCallback(
+    async (suggestionId: string): Promise<void> => {
+      const api = getLinkterm();
+      if (!api) {
+        setControlProfileRecordsError(preloadUnavailableMessage);
+        return;
+      }
+      const result = await api.controlProfile.saveProfileSuggestion({ suggestionId });
+      if (!result.success) {
+        setControlProfileRecordsError(result.error.message);
+        return;
+      }
+      if (result.data.record !== undefined) {
+        setControlProfileRecords((records) => upsertControlProfileRecord(records, result.data.record!));
+      }
+      void readinessState.refresh();
+    },
+    [preloadUnavailableMessage, readinessState],
+  );
+
+  const skipProfileSuggestion = React.useCallback((_suggestionId: string): void => {
+    void readinessState.refresh();
+  }, [readinessState]);
+
   const runningDownloadJobId =
     controlProfileDownload.phase === 'running' ? controlProfileDownload.job?.jobId : undefined;
 
@@ -361,22 +867,30 @@ export function App(): React.ReactElement {
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setControlPanelOpen(true)}
-            data-testid="control-profile-open"
-          >
-            {t('controlProfile.entry')}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setAgentPanelOpen(true)}
-            data-testid="agent-integrations-open"
-          >
-            {t('agent.entry')}
-          </Button>
+          <AiStatusCapsule
+            state={activityState}
+            onOpen={openActivityCenter}
+          />
+          {sessionList.length > 0 ? (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setControlPanelOpen(true)}
+                data-testid="control-profile-open"
+              >
+                {t('controlProfile.entry')}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setAgentPanelOpen(true)}
+                data-testid="agent-integrations-open"
+              >
+                {t('agent.entry')}
+              </Button>
+            </>
+          ) : null}
           {(['en', 'zh'] as Locale[]).map((l) => (
             <Button
               key={l}
@@ -391,19 +905,24 @@ export function App(): React.ReactElement {
         </div>
       </header>
 
-      <SessionTabBar />
+      <SessionTabBar
+        onOpenActivityForSession={openActivityCenterForSession}
+        showNew={sessionList.length > 0}
+      />
 
       <main className="flex min-h-0 flex-1 overflow-hidden">
-        <ControlProfileSidebar
-          records={controlProfileRecords}
-          loading={controlProfileRecordsLoading}
-          error={controlProfileRecordsError}
-          activeRecordId={activeControlProfileRecordId}
-          openingRecordId={openingControlProfileId}
-          onOpenRecord={(recordId) => void openControlProfileRecord(recordId)}
-          onRefresh={() => void loadControlProfileRecords()}
-          onConfigure={() => setControlPanelOpen(true)}
-        />
+        {sessionList.length > 0 || firstSuccessDraft !== null || jlinkRttReview !== null || visibleControlProfile !== null ? (
+          <ControlProfileSidebar
+            records={controlProfileRecords}
+            loading={controlProfileRecordsLoading}
+            error={controlProfileRecordsError}
+            activeRecordId={activeControlProfileRecordId}
+            openingRecordId={openingControlProfileId}
+            onOpenRecord={(recordId) => void openControlProfileRecord(recordId)}
+            onRefresh={() => void loadControlProfileRecords()}
+            onConfigure={() => setControlPanelOpen(true)}
+          />
+        ) : null}
         {visibleControlProfile ? (
           <ControlProfileStatusPanel
             event={visibleControlProfile}
@@ -419,28 +938,87 @@ export function App(): React.ReactElement {
           />
         ) : null}
         <div className="relative min-w-0 flex-1 overflow-hidden">
-          {sessionList.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center text-center">
-              <h2 className="text-lg font-medium text-gray-300">{t('tabs.empty.title')}</h2>
-              <p className="mt-1 text-sm text-gray-500">{t('tabs.empty.subtitle')}</p>
-            </div>
+          {sessionList.length === 0 && firstSuccessDraft === null && jlinkRttReview === null ? (
+            <StartCenter
+              state={readinessState}
+              onRefresh={refreshReadiness}
+              onAdvancedConnection={openAdvancedConnection}
+              onAdvancedDevicesOpenChange={setAdvancedDevicesOpen}
+              onOpenControlProfile={() => setControlPanelOpen(true)}
+              onOpenAgentIntegrations={() => setAgentPanelOpen(true)}
+              onOpenSerialTerminal={openSerialTerminal}
+              onOpenFirstSuccessGuide={openFirstSuccessGuide}
+              onUseCandidate={openCandidateSerialConnection}
+              onCopyDiagnostics={copyReadinessDiagnostics}
+              savedConnections={savedConnections}
+              savedConnectionsLoading={savedConnectionsLoading}
+              onOpenSavedConnection={openSavedConnection}
+              onReviewReflash={(candidateId) => void reviewCompensationReflash(candidateId)}
+              onSaveProfileSuggestion={(suggestionId) => void saveProfileSuggestion(suggestionId)}
+              onSkipProfileSuggestion={skipProfileSuggestion}
+            />
+          ) : sessionList.length === 0 && jlinkRttReview !== null ? (
+            <JLinkRttReviewPanel
+              review={jlinkRttReview}
+              onCancel={closeJLinkRttReview}
+              onConfigure={() => setControlPanelOpen(true)}
+            />
+          ) : sessionList.length === 0 && firstSuccessDraft !== null ? (
+            <FirstSuccessFlow
+              draft={firstSuccessDraft}
+              state={firstSuccessState}
+              errorMessage={firstSuccessErrorMessage}
+              onConfirmConnect={(draft) => void confirmFirstSuccessConnect(draft)}
+              onCancel={closeFirstSuccessReview}
+              onKeepWaiting={keepWaitingForFirstSignal}
+              onDisconnectAndEdit={() => void disconnectAndEditFirstSignal()}
+              onBackToSession={() => void backToFirstSuccessSession()}
+              onDisconnect={() => void disconnectFirstSuccessSession()}
+              onRetry={retryFirstSignal}
+              onGoToTerminal={goToFirstSuccessTerminal}
+            />
           ) : (
-            sessionList.map((session) => {
-              const active = session.id === activeId;
-              return (
-                <div
-                  key={session.id}
-                  className={
-                    active
-                      ? 'absolute inset-0 h-full w-full'
-                      : 'absolute inset-0 h-full w-full invisible pointer-events-none'
-                  }
-                  aria-hidden={!active}
-                >
-                  <TerminalView sessionId={session.id} />
+            <>
+              {sessionList.map((session) => {
+                const active = session.id === activeId;
+                return (
+                  <div
+                    key={session.id}
+                    className={
+                      active
+                        ? 'absolute inset-0 h-full w-full'
+                        : 'absolute inset-0 h-full w-full invisible pointer-events-none'
+                    }
+                    aria-hidden={!active}
+                  >
+                    <TerminalView
+                      sessionId={session.id}
+                      focusRequestToken={0}
+                      onVisibleDeviceSequence={handleVisibleDeviceSequence}
+                      onTranscriptDisplayUnavailable={handleTranscriptDisplayUnavailable}
+                      onTranscriptDisplayRecovered={handleTranscriptDisplayRecovered}
+                    />
+                  </div>
+                );
+              })}
+              {firstSuccessDraft !== null ? (
+                <div className="absolute right-4 top-4 z-10 max-h-[calc(100%-2rem)] w-[min(32rem,calc(100%-2rem))] overflow-auto rounded border border-gray-800 bg-gray-950/95 shadow-2xl">
+                  <FirstSuccessFlow
+                    draft={firstSuccessDraft}
+                    state={firstSuccessState}
+                    errorMessage={firstSuccessErrorMessage}
+                    onConfirmConnect={(draft) => void confirmFirstSuccessConnect(draft)}
+                    onCancel={closeFirstSuccessReview}
+                    onKeepWaiting={keepWaitingForFirstSignal}
+                    onDisconnectAndEdit={() => void disconnectAndEditFirstSignal()}
+                    onBackToSession={() => void backToFirstSuccessSession()}
+                    onDisconnect={() => void disconnectFirstSuccessSession()}
+                    onRetry={retryFirstSignal}
+                    onGoToTerminal={goToFirstSuccessTerminal}
+                  />
                 </div>
-              );
-            })
+              ) : null}
+            </>
           )}
         </div>
       </main>
@@ -453,8 +1031,196 @@ export function App(): React.ReactElement {
         onRecordsChanged={() => void loadControlProfileRecords()}
       />
       <AgentIntegrationsPanel open={agentPanelOpen} onOpenChange={setAgentPanelOpen} />
+      <ActivityCenterDrawer
+        open={activityDrawerOpen}
+        state={activityState}
+        filter={activityFilter}
+        onClose={closeActivityCenter}
+      />
     </div>
   );
+}
+
+interface JLinkRttReviewState {
+  readonly draft: JLinkRttDownloadObserveDraft;
+  readonly candidateLabel: string;
+}
+
+function JLinkRttReviewPanel({
+  review,
+  onCancel,
+  onConfigure,
+}: {
+  readonly review: JLinkRttReviewState;
+  readonly onCancel: () => void;
+  readonly onConfigure: () => void;
+}): React.ReactElement {
+  const t = useT();
+  const { draft, candidateLabel } = review;
+  const sideEffects = [
+    draft.sideEffects.connectProbe ? t('jlinkRtt.sideEffect.connectProbe') : null,
+    draft.sideEffects.flashFirmware ? t('jlinkRtt.sideEffect.flashFirmware') : null,
+    draft.sideEffects.resetTarget ? t('jlinkRtt.sideEffect.resetTarget') : null,
+    draft.sideEffects.startsGdbServer ? t('jlinkRtt.sideEffect.startsGdbServer') : null,
+    draft.sideEffects.connectsRtt ? t('jlinkRtt.sideEffect.connectsRtt') : null,
+  ].filter((item): item is string => item !== null);
+
+  return (
+    <section
+      aria-labelledby="jlink-rtt-review-title"
+      className="h-full overflow-auto bg-gray-950 px-6 py-8"
+    >
+      <div className="mx-auto max-w-3xl rounded-xl border border-gray-800 bg-gray-900/80 p-6 shadow-xl">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-300">
+          {t('jlinkRtt.review.kicker')}
+        </p>
+        <h2 id="jlink-rtt-review-title" className="mt-2 text-2xl font-semibold text-gray-50">
+          {t('jlinkRtt.review.title')}
+        </h2>
+        <p className="mt-3 text-sm text-gray-300">{t('jlinkRtt.review.incomplete')}</p>
+
+        <dl className="mt-6 grid gap-3 rounded-lg border border-gray-800 bg-gray-950/70 p-4 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-gray-500">
+              {t('jlinkRtt.review.candidate')}
+            </dt>
+            <dd className="mt-1 font-medium text-gray-100">{candidateLabel}</dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-gray-500">
+              {t('readiness.param.target')}
+            </dt>
+            <dd className="mt-1 font-medium text-gray-100">{draft.target.targetLabel}</dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-gray-500">
+              {t('jlinkRtt.review.interface')}
+            </dt>
+            <dd className="mt-1 font-medium uppercase text-gray-100">{draft.target.interface}</dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-gray-500">
+              {t('jlinkRtt.review.speed')}
+            </dt>
+            <dd className="mt-1 font-medium text-gray-100">{draft.target.speedKHz} kHz</dd>
+          </div>
+        </dl>
+
+        <div className="mt-5 rounded-lg border border-amber-900/70 bg-amber-950/30 p-4">
+          <h3 className="text-sm font-semibold text-amber-100">
+            {t('jlinkRtt.sideEffects.title')}
+          </h3>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-100/90">
+            {sideEffects.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="mt-6 flex flex-wrap gap-2">
+          <Button type="button" onClick={onConfigure}>
+            {t('jlinkRtt.action.openProfile')}
+          </Button>
+          <Button type="button" variant="secondary" onClick={onCancel}>
+            {t('jlinkRtt.action.back')}
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function serialConfigFromDraft(draft: SerialConnectionDraft): SerialSessionConfig | null {
+  if (draft.portLabel === undefined || draft.portLabel.trim().length === 0) return null;
+  return {
+    type: 'serial',
+    port: draft.portLabel.trim(),
+    baudRate: draft.parameters.baudRate.value,
+    mode: 'terminal',
+    dataBits: draft.parameters.dataBits.value as SerialSessionConfig['dataBits'],
+    stopBits: draft.parameters.stopBits.value as SerialSessionConfig['stopBits'],
+    parity: draft.parameters.parity.value,
+  };
+}
+
+function isDraftCandidateStale(
+  draft: SerialConnectionDraft,
+  snapshot: RuntimeReadinessSnapshot | undefined,
+): boolean {
+  if (draft.candidateId === undefined) return false;
+  if (snapshot === undefined) return true;
+  const candidate = snapshot.deviceCandidates.find((item) => item.id === draft.candidateId);
+  if (candidate?.serial === undefined) return true;
+  if (
+    draft.candidateFingerprint !== undefined &&
+    fingerprintDeviceCandidate(candidate) !== draft.candidateFingerprint
+  ) {
+    return true;
+  }
+  if (candidateHasConflictingEvidence(candidate)) return true;
+  return (
+    candidate.serial.portLabel !== draft.portLabel ||
+    candidate.serial.baudRate !== draft.parameters.baudRate.value ||
+    candidate.serial.dataBits !== draft.parameters.dataBits.value ||
+    candidate.serial.stopBits !== draft.parameters.stopBits.value ||
+    candidate.serial.parity !== draft.parameters.parity.value
+  );
+}
+
+function candidateHasConflictingEvidence(candidate: DeviceCandidate): boolean {
+  return candidate.evidence.some((item) => isBlockingReadinessCode(item.summaryCode));
+}
+
+function isBlockingReadinessCode(code: string): boolean {
+  return /(?:^|[._:-])(?:conflict|blocked|permission_blocked)(?:$|[._:-])/u.test(code);
+}
+
+function canAutoFocusFirstSuccessTerminal({
+  sessionId,
+  activeSessionId,
+  firstSuccessDraftOpen,
+  activityDrawerOpen,
+  dialogOpen,
+  agentPanelOpen,
+  controlPanelOpen,
+  activeElement,
+}: {
+  readonly sessionId: SessionId;
+  readonly activeSessionId: SessionId | null;
+  readonly firstSuccessDraftOpen: boolean;
+  readonly activityDrawerOpen: boolean;
+  readonly dialogOpen: boolean;
+  readonly agentPanelOpen: boolean;
+  readonly controlPanelOpen: boolean;
+  readonly activeElement: Element | null;
+}): boolean {
+  if (!firstSuccessDraftOpen) return false;
+  if (sessionId !== activeSessionId) return false;
+  if (activityDrawerOpen || dialogOpen || agentPanelOpen || controlPanelOpen) return false;
+  return !isTextEntryElement(activeElement);
+}
+
+function isTextEntryElement(element: Element | null): boolean {
+  if (!(element instanceof HTMLElement)) return false;
+  if (element.isContentEditable) return true;
+  return element.matches('input, textarea, select, [contenteditable="true"]');
+}
+
+function createFirstSuccessClientAttemptKey(sequence: number): string {
+  return `first_signal_${Date.now()}_${sequence}`;
+}
+
+function toErroredFirstSuccessState(
+  state: FirstSuccessState,
+  errorCode: string,
+): FirstSuccessState {
+  if (state.phase === 'errored') return { ...state, errorCode };
+  return {
+    ...state,
+    errorCode,
+    phase: 'errored',
+    phaseHistory: [...state.phaseHistory, 'errored'],
+  };
 }
 
 function ControlProfileSidebar({
@@ -814,7 +1580,8 @@ function StatusBar({ download }: { download: ControlProfileDownloadState }): Rea
       </div>
       <div className="mt-1 h-1.5 overflow-hidden rounded bg-gray-800">
         <div
-          className={`h-full ${barClass} transition-[width] duration-200 ease-out`}
+          data-testid="control-profile-progress"
+          className={`h-full ${barClass} motion-safe:transition-[width] motion-safe:duration-200 motion-safe:ease-out`}
           style={{ width }}
         />
       </div>

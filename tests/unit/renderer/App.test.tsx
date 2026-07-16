@@ -8,10 +8,22 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useAppStore } from '../../../src/renderer/store/app-store.js';
 import { installMockPreload, type MockPreloadAPI } from '../../fixtures/mock-preload-api.js';
+import { activitySnapshot, operationEvent } from './activity/activity-fixtures.js';
 
 vi.mock('../../../src/renderer/components/TerminalView.js', () => ({
-  TerminalView: ({ sessionId }: { sessionId: string | null }) => (
-    <div data-testid={`terminal-${sessionId ?? 'none'}`}>{sessionId}</div>
+  TerminalView: ({
+    sessionId,
+    focusRequestToken,
+  }: {
+    sessionId: string | null;
+    focusRequestToken?: number;
+  }) => (
+    <div
+      data-testid={`terminal-${sessionId ?? 'none'}`}
+      data-focus-request-token={focusRequestToken ?? 0}
+    >
+      {sessionId}
+    </div>
   ),
 }));
 
@@ -20,6 +32,7 @@ vi.mock('../../../src/renderer/components/ConnectionDialog.js', () => ({
 }));
 
 const resetStore = (): void => {
+  sessionStorage.clear();
   useAppStore.setState({
     sessions: new Map(),
     activeSessionId: null,
@@ -29,6 +42,19 @@ const resetStore = (): void => {
     originActivity: {},
     connectionDialogPrefill: null,
   });
+};
+
+const openControlProfilePanel = async (): Promise<void> => {
+  const direct = screen.queryByTestId('control-profile-open');
+  if (direct !== null) {
+    fireEvent.click(direct);
+    return;
+  }
+  const advanced = await screen.findByTestId('advanced-devices');
+  if (!advanced.hasAttribute('open')) {
+    fireEvent.click(within(advanced).getByText('Advanced devices'));
+  }
+  fireEvent.click(within(advanced).getByRole('button', { name: 'Control Profile' }));
 };
 
 describe('App', () => {
@@ -54,6 +80,214 @@ describe('App', () => {
 
     expect(screen.getByTestId('terminal-sess_1')).toBeInTheDocument();
     expect(screen.getByTestId('terminal-sess_2')).toBeInTheDocument();
+  });
+
+  it('shows the AI status capsule from the activity bridge and opens a non-modal drawer', async () => {
+    mock.spies.activity.subscribe.mockResolvedValueOnce({
+      success: true,
+      data: activitySnapshot([
+        operationEvent({
+          sequence: 1,
+          operationId: 'operation_serial',
+          phase: 'running',
+          action: 'open_session',
+          risk: 'state-affecting',
+          targetKind: 'session',
+          targetId: 'sess_serial',
+          targetLabel: 'serial COM3',
+        }),
+      ]),
+    });
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    const capsule = await screen.findByRole('button', { name: 'AI: Running' });
+    expect(mock.spies.activity.subscribe).toHaveBeenCalledOnce();
+
+    capsule.focus();
+    fireEvent.click(capsule);
+
+    const drawer = screen.getByRole('dialog', { name: 'Activity Center' });
+    expect(within(drawer).getByText('open_session')).toBeInTheDocument();
+    expect(within(drawer).getByText('serial COM3')).toBeInTheDocument();
+    expect(drawer).not.toHaveAttribute('aria-modal', 'true');
+    expect(capsule).toHaveFocus();
+    expect(mock.spies.session.create).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(drawer, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Activity Center' })).toBeNull());
+    expect(capsule).toHaveFocus();
+  });
+
+  it('hydrates activity from a prior renderer cursor on reload', async () => {
+    sessionStorage.setItem(
+      'linkterm:activity-cursor',
+      JSON.stringify({ runtimeId: 'runtime_prior', sequence: 7 }),
+    );
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    await waitFor(() =>
+      expect(mock.spies.activity.subscribe).toHaveBeenCalledWith({
+        cursor: { runtimeId: 'runtime_prior', sequence: 7 },
+      }),
+    );
+  });
+
+  it('uses the mock activity subscribe race helper without exposing ipcRenderer', async () => {
+    const pending = mock.deferActivitySubscribe();
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+    mock.emitActivityEvent(
+      operationEvent({
+        sequence: 2,
+        operationId: 'operation_after_mock_cut',
+        phase: 'running',
+        action: 'open_session',
+        risk: 'state-affecting',
+      }),
+    );
+    pending.resolve({
+      success: true,
+      data: activitySnapshot([
+        operationEvent({
+          sequence: 1,
+          operationId: 'operation_mock_snapshot',
+          phase: 'succeeded',
+          action: 'get_app_status',
+          risk: 'read-only',
+        }),
+      ]),
+    });
+
+    expect(await screen.findByRole('button', { name: 'AI: Running' })).toBeInTheDocument();
+    expect('ipcRenderer' in mock.api).toBe(false);
+  });
+
+  it('opens the Activity Center from a session origin entry filtered to that session', async () => {
+    const { addSession } = useAppStore.getState();
+    addSession({ id: 'sess_1', label: 'COM1', connectionType: 'serial', state: 'open' });
+    mock.spies.activity.subscribe.mockResolvedValueOnce({
+      success: true,
+      data: activitySnapshot([
+        operationEvent({
+          sequence: 1,
+          operationId: 'operation_sess_1',
+          phase: 'running',
+          action: 'open_session',
+          risk: 'state-affecting',
+          targetKind: 'session',
+          targetId: 'sess_1',
+          targetLabel: 'COM1',
+        }),
+        operationEvent({
+          sequence: 2,
+          operationId: 'operation_sess_2',
+          phase: 'failed',
+          action: 'run_control_workflow',
+          risk: 'destructive-or-unknown',
+          targetKind: 'session',
+          targetId: 'sess_2',
+          targetLabel: 'COM2',
+        }),
+        operationEvent({
+          sequence: 3,
+          operationId: 'operation_job_collision',
+          phase: 'failed',
+          action: 'run_control_workflow',
+          risk: 'destructive-or-unknown',
+          targetKind: 'job',
+          targetId: 'sess_1',
+          targetLabel: 'job with colliding id',
+        }),
+      ]),
+    });
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    const originEntry = await screen.findByRole('button', {
+      name: 'Open activity for COM1; AI idle, Human idle, System idle',
+    });
+    originEntry.focus();
+    fireEvent.click(originEntry);
+
+    const drawer = screen.getByRole('dialog', { name: 'Activity Center' });
+    expect(within(drawer).getByText('open_session')).toBeInTheDocument();
+    expect(within(drawer).getByText('COM1')).toBeInTheDocument();
+    expect(within(drawer).queryByText('run_control_workflow')).not.toBeInTheDocument();
+    expect(within(drawer).queryByText('COM2')).not.toBeInTheDocument();
+    expect(within(drawer).queryByText('job with colliding id')).not.toBeInTheDocument();
+
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Close Activity Center' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Activity Center' })).toBeNull());
+    expect(originEntry).toHaveFocus();
+  });
+
+  it('keeps the Activity Center open when the terminal is clicked so both workspaces remain usable', async () => {
+    const { addSession } = useAppStore.getState();
+    addSession({ id: 'sess_1', label: 'COM1', connectionType: 'serial', state: 'open' });
+    mock.spies.activity.subscribe.mockResolvedValueOnce({
+      success: true,
+      data: activitySnapshot([
+        operationEvent({
+          sequence: 1,
+          operationId: 'operation_sess_1',
+          phase: 'running',
+          action: 'open_session',
+          risk: 'state-affecting',
+          targetKind: 'session',
+          targetId: 'sess_1',
+          targetLabel: 'COM1',
+        }),
+      ]),
+    });
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    const originEntry = await screen.findByRole('button', {
+      name: 'Open activity for COM1; AI idle, Human idle, System idle',
+    });
+    fireEvent.click(originEntry);
+    expect(screen.getByRole('dialog', { name: 'Activity Center' })).toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByTestId('terminal-sess_1'));
+
+    expect(screen.getByRole('dialog', { name: 'Activity Center' })).toBeInTheDocument();
+  });
+
+  it('keeps the Activity Center observation-only in the app shell', async () => {
+    const { addSession } = useAppStore.getState();
+    addSession({ id: 'sess_1', label: 'COM1', connectionType: 'serial', state: 'open' });
+    mock.spies.activity.subscribe.mockResolvedValueOnce({
+      success: true,
+      data: activitySnapshot([
+        operationEvent({
+          sequence: 1,
+          operationId: 'operation_sess_1',
+          phase: 'running',
+          action: 'open_session',
+          risk: 'state-affecting',
+          targetKind: 'session',
+          targetId: 'sess_1',
+          targetLabel: 'COM1',
+        }),
+      ]),
+    });
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'AI: Running' }));
+    const drawer = within(screen.getByRole('dialog', { name: 'Activity Center' }));
+    expect(drawer.queryByRole('button', { name: /Go to session/i })).not.toBeInTheDocument();
+    expect(drawer.queryByRole('button', { name: /stop/i })).not.toBeInTheDocument();
+    expect(useAppStore.getState().activeSessionId).toBe('sess_1');
+    expect(mock.spies.session.create).not.toHaveBeenCalled();
   });
 
   it('opens a saved serial control profile and shows profile details with live status', async () => {
@@ -89,7 +323,7 @@ describe('App', () => {
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);
 
-    fireEvent.click(screen.getByTestId('control-profile-open'));
+    await openControlProfilePanel();
     expect(within(await screen.findByRole('dialog')).getByText('repo - Serial')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
 
@@ -123,6 +357,9 @@ describe('App', () => {
     expect(screen.getByTestId('control-profile-status')).toHaveTextContent('STM32H743II');
     expect(screen.getByTestId('control-profile-status')).toHaveTextContent('build/app.bin');
     expect(screen.getByTestId('control-profile-status')).toHaveTextContent('open');
+    expect(screen.getByTestId('control-profile-progress')).toHaveClass(
+      'motion-safe:transition-[width]',
+    );
     expect(screen.getByTestId('terminal-sess_serial_profile')).toBeVisible();
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
@@ -133,53 +370,13 @@ describe('App', () => {
     );
   });
 
-  it('shows saved control profiles in the side bar on startup and opens one directly', async () => {
-    const record = {
-      id: 'ctrl_sidebar_serial',
-      label: 'repo - Sidebar Serial',
-      root: 'C:/repo',
-      source: 'manual' as const,
-      profile: {
-        schemaVersion: 'linkterm-control/1.0.0' as const,
-        serial: { enabled: true, port: 'COM9', baudRate: 230400, mode: 'terminal' as const },
-        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd' as const },
-        flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
-      },
-      createdAt: new Date(0).toISOString(),
-      updatedAt: new Date(0).toISOString(),
-    };
-    mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
-    mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
-      success: true,
-      data: { path: 'C:/repo/.linkterm/control-profile.json', record },
-    });
-    mock.spies.session.create.mockResolvedValueOnce({
-      success: true,
-      data: { sessionId: 'sess_sidebar_serial', state: 'open' },
-    });
-
+  it('keeps the control-profile sidebar out of the no-session Start Center', async () => {
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);
 
-    const sidebar = await screen.findByTestId('control-profile-sidebar');
-    expect(within(sidebar).getByText('repo - Sidebar Serial')).toBeInTheDocument();
-    expect(within(sidebar).getByText(/COM9/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId('control-profile-sidebar-item-ctrl_sidebar_serial'));
-
-    await waitFor(() =>
-      expect(mock.spies.controlProfile.openRecord).toHaveBeenCalledWith({
-        recordId: 'ctrl_sidebar_serial',
-      }),
-    );
-    expect(await screen.findByTestId('control-profile-status')).toHaveTextContent(
-      'repo - Sidebar Serial',
-    );
-    expect(screen.getByTestId('terminal-sess_sidebar_serial')).toBeVisible();
-    expect(screen.getByTestId('control-profile-sidebar-item-ctrl_sidebar_serial')).toHaveAttribute(
-      'aria-current',
-      'page',
-    );
+    expect(await screen.findByRole('heading', { name: 'Start Center' })).toBeVisible();
+    expect(screen.queryByTestId('control-profile-sidebar')).toBeNull();
+    expect(screen.queryByText('repo - Sidebar Serial')).toBeNull();
   });
 
   it('switches between already opened control profiles from the side bar without reopening them', async () => {
@@ -238,6 +435,14 @@ describe('App', () => {
         channelIndex: 1,
       },
     });
+
+    useAppStore.getState().addSession({
+      id: 'sess_existing',
+      label: 'Existing terminal',
+      connectionType: 'serial',
+      state: 'open',
+    });
+    useAppStore.getState().setActive('sess_existing');
 
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);
@@ -393,7 +598,7 @@ describe('App', () => {
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);
 
-    fireEvent.click(screen.getByTestId('control-profile-open'));
+    await openControlProfilePanel();
     expect(within(await screen.findByRole('dialog')).getByText('repo - Download')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
 
@@ -465,7 +670,7 @@ describe('App', () => {
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);
 
-    fireEvent.click(screen.getByTestId('control-profile-open'));
+    await openControlProfilePanel();
     expect(
       within(await screen.findByRole('dialog')).getByText('repo - Legacy Serial'),
     ).toBeInTheDocument();
@@ -526,7 +731,7 @@ describe('App', () => {
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);
 
-    fireEvent.click(screen.getByTestId('control-profile-open'));
+    await openControlProfilePanel();
     expect(
       within(await screen.findByRole('dialog')).getByText('repo - Close With Session'),
     ).toBeInTheDocument();
@@ -585,7 +790,7 @@ describe('App', () => {
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);
 
-    fireEvent.click(screen.getByTestId('control-profile-open'));
+    await openControlProfilePanel();
     expect(
       within(await screen.findByRole('dialog')).getByText('repo - Disconnect'),
     ).toBeInTheDocument();
@@ -664,7 +869,7 @@ describe('App', () => {
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);
 
-    fireEvent.click(screen.getByTestId('control-profile-open'));
+    await openControlProfilePanel();
     expect(
       within(await screen.findByRole('dialog')).getByText('repo - Chip Lifecycle'),
     ).toBeInTheDocument();
@@ -728,7 +933,7 @@ describe('App', () => {
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);
 
-    fireEvent.click(screen.getByTestId('control-profile-open'));
+    await openControlProfilePanel();
     expect(within(await screen.findByRole('dialog')).getByText('repo - RTT')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
 
@@ -786,7 +991,7 @@ describe('App', () => {
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);
 
-    fireEvent.click(screen.getByTestId('control-profile-open'));
+    await openControlProfilePanel();
     expect(
       within(await screen.findByRole('dialog')).getByText('repo - Missing Serial'),
     ).toBeInTheDocument();
@@ -832,7 +1037,7 @@ describe('App', () => {
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);
 
-    fireEvent.click(screen.getByTestId('control-profile-open'));
+    await openControlProfilePanel();
     expect(
       within(await screen.findByRole('dialog')).getByText('repo - Retry Serial'),
     ).toBeInTheDocument();

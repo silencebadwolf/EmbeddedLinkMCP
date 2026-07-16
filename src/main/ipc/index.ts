@@ -1,8 +1,38 @@
 import { readdirSync } from 'node:fs';
 import type { Dirent } from 'node:fs';
+import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type { BrowserWindow } from 'electron';
 import { electron } from '../electron-runtime.js';
+import { readCurrentControlProfileDeploymentEvidence } from './current-deployment-evidence.js';
+import { ActivityHealthMonitor } from '../../core/activity/activity-health.js';
+import { OperationLedger } from '../../core/activity/operation-ledger.js';
+import { AuditStore } from '../../core/activity/audit-store.js';
+import {
+  OperationRecorder,
+  type OperationRecorderProvider,
+} from '../../core/activity/operation-recorder.js';
+import { RuntimeReadinessService } from '../../core/readiness/runtime-readiness-service.js';
+import { OperationAdmissionCoordinator } from '../../core/operation-admission/operation-admission-coordinator.js';
+import {
+  createAgentIntegrationProvider,
+  createCompensationSummaryProvider,
+  createFirmwareReadinessProvider,
+  createJLinkReadinessProvider,
+  createReusableSessionsProvider,
+  createRttReadinessProvider,
+  createRuntimeStatusProvider,
+  createSerialDiscoveryProvider,
+  createWorkspaceProfileProvider,
+  type FirmwareReadinessMetadata,
+  type JLinkReadinessProbeSummary,
+  type RttReadinessConfig,
+} from '../../core/readiness/readiness-providers.js';
+import {
+  CompensationCandidateService,
+  type VerifiedDeploymentEvidence,
+} from '../../core/compensation/index.js';
 import { SessionManager } from '../../core/session/session-manager.js';
 import {
   ControlProfileManager,
@@ -17,13 +47,16 @@ import {
 } from '../../core/agent-integrations/index.js';
 import { createWslAgentConfigFileBridge } from './wsl-agent-config-file-bridge.js';
 import { JLinkAdapter, createJLinkDeviceCatalog } from '../../jlink/index.js';
-import type { IJLinkBackend, JLinkDeviceCatalog } from '../../jlink/index.js';
+import type { IJLinkBackend, JLinkDeviceCatalog, ProbeInfo } from '../../jlink/index.js';
 import { createMcpServer, type LinkTermMcpServer } from '../../mcp/index.js';
 import {
   startMcpHttpRuntimeServer,
   type McpHttpRuntimeServer,
 } from '../../mcp/http-runtime-server.js';
-import { createRuntimeDiagnosticsProvider } from '../../mcp/runtime-diagnostics.js';
+import {
+  createRuntimeDiagnosticsProvider,
+  type RuntimeDiagnosticsProvider,
+} from '../../mcp/runtime-diagnostics.js';
 import {
   readOrCreateRuntimeHttpSettings,
   runtimeHttpSettingsPath,
@@ -46,6 +79,14 @@ import { registerAgentIntegrationsIpc } from './agent-integrations-ipc.js';
 import { buildDefaultAgentIntegrationTargets } from './agent-integration-targets.js';
 import { createCodexTokenEnvWriter } from './codex-token-env.js';
 import { registerControlProfileIpc } from './control-profile-ipc.js';
+import { registerActivityIpc } from './activity-ipc.js';
+import { registerAuditIpc } from './audit-ipc.js';
+import { registerReadinessIpc } from './readiness-ipc.js';
+import { registerFirstSignalIpc } from './first-signal-ipc.js';
+import {
+  FirstSignalObservationService,
+  type FirstSignalObservableSession,
+} from '../../core/session/first-signal-observation/first-signal-observation-service.js';
 import { SafeStorageSecretCodec } from '../connections/safe-storage-secret-codec.js';
 import { createUiBridge } from './ui-bridge.js';
 export { createUiBridge, type UiPatchTarget } from './ui-bridge.js';
@@ -79,6 +120,16 @@ export interface MainProcessContext {
   jlinkDeviceCatalog: JLinkDeviceCatalog;
   /** 控制工作流后台 job 管理器，必须在 HTTP 短生命周期 MCP server 间共享。 */
   controlWorkflowJobManager: ControlWorkflowJobManager;
+  /** Main-owned activity ledger；renderer 只通过 activity IPC 读取 display-safe DTO。 */
+  operationLedger: OperationLedger;
+  /** Main-owned best-effort durable activity projection; raw paths and authority stay private. */
+  auditStore: AuditStore;
+  /** Main-owned runtime readiness service；renderer 只通过 readiness IPC 读取 display-safe DTO。 */
+  runtimeReadinessService: RuntimeReadinessService;
+  /** Main-owned first-signal observation service；renderer 只通过 firstSignal IPC 读取 display-safe DTO。 */
+  firstSignalObservationService: FirstSignalObservationService;
+  /** Main-only admission coordinator；execution leases 不跨 preload。 */
+  operationAdmissionCoordinator: OperationAdmissionCoordinator;
   mcpServer: LinkTermMcpServer;
   /** 本地 HTTP MCP endpoint，供后启动的 stdio proxy 连接到同一 runtime。 */
   mcpHttpServer: McpHttpRuntimeServer;
@@ -157,7 +208,27 @@ export async function registerIpcHandlers(
   });
   const jlinkBackend: IJLinkBackend = new JLinkAdapter();
   const jlinkDeviceCatalog = createJLinkDeviceCatalog();
-  const controlWorkflowJobManager = new ControlWorkflowJobManager();
+  const activityHealth = new ActivityHealthMonitor();
+  const operationLedger = new OperationLedger({ health: activityHealth });
+  const auditStore = new AuditStore({
+    directory: path.join(app.getPath('userData'), 'activity'),
+    onWarning: () => activityHealth.recordCaptureFailure('provider', 'capture-failed', 0),
+  });
+  await auditStore.initialize();
+  const unsubscribeAudit = operationLedger.subscribe((event) => auditStore.enqueue(event));
+  const operationRecorder = new OperationRecorder({
+    ledger: operationLedger,
+    health: activityHealth,
+  });
+  const compensationCandidateService = new CompensationCandidateService();
+  const onVerifiedDeployment = (evidence: VerifiedDeploymentEvidence): void => {
+    compensationCandidateService.recordDeployment(evidence);
+  };
+  const controlWorkflowJobManager = new ControlWorkflowJobManager({
+    observer: (observation) => operationRecorder.observeWorkflowJob(observation),
+  });
+  const operationRecorderProvider: OperationRecorderProvider = (input) =>
+    operationRecorder.beginMcpCall(input);
 
   const uiBridge = createUiBridge(() =>
     ElectronBrowserWindow.getAllWindows().map((w) => w.webContents),
@@ -183,7 +254,32 @@ export async function registerIpcHandlers(
     artifactPaths: runtimeFreshnessArtifactPaths(),
   });
   const runtimeRestartScheduler = createElectronRuntimeRestartScheduler();
-
+  const runtimeReadinessService = createRuntimeReadinessService({
+    runtimeDiagnostics: ownerRuntimeDiagnostics,
+    serialDiscovery,
+    sessionManager,
+    controlProfileManager,
+    controlProfileRecordManager,
+    agentIntegrationManager,
+    jlinkBackend,
+    jlinkDeviceCatalog,
+    compensationCandidateService,
+  });
+  const firstSignalObservationService = new FirstSignalObservationService({
+    resolveSession: (sessionId) => {
+      const session = sessionManager.get(sessionId);
+      return isFirstSignalObservableSession(session) ? session : undefined;
+    },
+    now: () => new Date().toISOString(),
+    nowMs: () => Date.now(),
+    createAttemptId: () => `attempt_${randomUUID()}`,
+    terminalRetentionMs: 30_000,
+  });
+  const operationAdmissionCoordinator = new OperationAdmissionCoordinator({
+    runtimeId: `operation_admission_runtime_${randomUUID().replaceAll('-', '')}`,
+    now: () => new Date().toISOString(),
+    createLeaseId: () => `lease_${randomUUID().replaceAll('-', '')}`,
+  });
   const mcpServer = createMcpServer({
     sessionManager,
     serialDiscovery,
@@ -200,6 +296,9 @@ export async function registerIpcHandlers(
     getActiveWindow,
     runtimeDiagnostics: directStdioRuntimeDiagnostics,
     runtimeRestartScheduler,
+    operationRecorderProvider,
+    operationAdmissionCoordinator,
+    onVerifiedDeployment,
   });
 
   const mcpHttpServer = await startMcpHttpRuntimeServer({
@@ -218,6 +317,9 @@ export async function registerIpcHandlers(
     getActiveWindow,
     runtimeDiagnostics: ownerRuntimeDiagnostics,
     runtimeRestartScheduler,
+    operationRecorderProvider,
+    operationAdmissionCoordinator,
+    onVerifiedDeployment,
     metadataPath,
     port: httpSettings.port,
     token: httpSettings.token,
@@ -243,10 +345,26 @@ export async function registerIpcHandlers(
   const unregisterControlProfile = registerControlProfileIpc(
     controlProfileManager,
     controlProfileRecordManager,
-    { sessionManager, jlinkBackend, jlinkDeviceCatalog, controlWorkflowJobManager },
+    {
+      sessionManager,
+      jlinkBackend,
+      jlinkDeviceCatalog,
+      controlWorkflowJobManager,
+      compensationCandidateService,
+      onVerifiedDeployment,
+    },
   );
   const unregisterJLinkDeviceCatalog = registerJLinkDeviceCatalogIpc(jlinkDeviceCatalog);
-
+  const unregisterActivity = registerActivityIpc(operationLedger);
+  const unregisterAudit = registerAuditIpc({
+    auditStore,
+    isTrustedSender: (senderId) => {
+      const win = options.getMainWindow?.();
+      return win !== undefined && win !== null && !win.isDestroyed() && win.webContents.id === senderId;
+    },
+  });
+  const unregisterReadiness = registerReadinessIpc(runtimeReadinessService);
+  const unregisterFirstSignal = registerFirstSignalIpc(firstSignalObservationService);
   const shouldAutoStart = options.autoStartMcp ?? process.env.LINKTERM_MCP_STDIO === '1';
   if (shouldAutoStart) {
     try {
@@ -261,8 +379,14 @@ export async function registerIpcHandlers(
       unregisterAgentIntegrations();
       unregisterControlProfile();
       unregisterJLinkDeviceCatalog();
+      unregisterActivity();
+      unregisterAudit();
+      unregisterReadiness();
+      unregisterFirstSignal();
       await mcpHttpServer.close().catch(() => undefined);
       serialDiscovery.dispose();
+      unsubscribeAudit();
+      await auditStore.dispose().catch(() => undefined);
       throw err;
     }
   }
@@ -276,11 +400,18 @@ export async function registerIpcHandlers(
     unregisterAgentIntegrations();
     unregisterControlProfile();
     unregisterJLinkDeviceCatalog();
+    unregisterActivity();
+    unregisterAudit();
+    unregisterReadiness();
+    unregisterFirstSignal();
+    firstSignalObservationService.shutdown();
     // 先停 MCP，避免 destroyAll 期间还有新工具调用进来
     await mcpServer.stop().catch(() => undefined);
     await mcpHttpServer.close().catch(() => undefined);
     await sessionManager.destroyAll().catch(() => undefined);
     serialDiscovery.dispose();
+    unsubscribeAudit();
+    await auditStore.dispose().catch(() => undefined);
   };
 
   return {
@@ -294,10 +425,224 @@ export async function registerIpcHandlers(
     jlinkBackend,
     jlinkDeviceCatalog,
     controlWorkflowJobManager,
+    operationLedger,
+    auditStore,
+    runtimeReadinessService,
+    firstSignalObservationService,
+    operationAdmissionCoordinator,
     mcpServer,
     mcpHttpServer,
     dispose,
   };
+}
+
+function isFirstSignalObservableSession(
+  session: ReturnType<SessionManager['get']>,
+): session is FirstSignalObservableSession {
+  return (
+    session !== undefined &&
+    typeof (session as FirstSignalObservableSession).off === 'function'
+  );
+}
+
+function createRuntimeReadinessService(input: {
+  readonly runtimeDiagnostics: RuntimeDiagnosticsProvider;
+  readonly serialDiscovery: SerialDiscovery;
+  readonly sessionManager: SessionManager;
+  readonly controlProfileManager: ControlProfileManager;
+  readonly controlProfileRecordManager: ControlProfileRecordManager;
+  readonly agentIntegrationManager: AgentIntegrationManager;
+  readonly jlinkBackend: IJLinkBackend;
+  readonly jlinkDeviceCatalog: JLinkDeviceCatalog;
+  readonly compensationCandidateService: CompensationCandidateService;
+}): RuntimeReadinessService {
+  return new RuntimeReadinessService({
+    providers: [
+      createRuntimeStatusProvider({
+        getStatus: async () => {
+          const diagnostics = await input.runtimeDiagnostics();
+          return {
+            codeFresh: diagnostics.code?.fresh !== false,
+            runtimeFresh: diagnostics.metadata.fresh,
+          };
+        },
+      }),
+      createSerialDiscoveryProvider({
+        listPorts: () => input.serialDiscovery.listPorts(),
+        savedProfiles: async () => {
+          try {
+            const records = await input.controlProfileRecordManager.list();
+            return records.map((record) => ({
+              id: record.id,
+              label: record.label,
+              portLabel: record.profile.serial?.port,
+              baudRate: record.profile.serial?.baudRate,
+            }));
+          } catch {
+            return [];
+          }
+        },
+      }),
+      createReusableSessionsProvider({
+        listSessions: async () => input.sessionManager.listSummaries(),
+      }),
+      createWorkspaceProfileProvider({
+        listProfiles: async () => {
+          const records = await input.controlProfileRecordManager.list();
+          return records.map((record) => ({
+            id: record.id,
+            label: record.label,
+            root: record.root,
+          }));
+        },
+      }),
+      createJLinkReadinessProvider({
+        detectProbes: async () =>
+          (await input.jlinkBackend.probeDetect()).map(projectJLinkReadinessProbe),
+        targetName: async () => readSavedJLinkTarget(input.controlProfileRecordManager),
+        hasTargetInCatalog: async (targetName) => input.jlinkDeviceCatalog.has(targetName),
+      }),
+      createFirmwareReadinessProvider({
+        readFirmwareMetadata: async () =>
+          readSavedFirmwareMetadata(input.controlProfileRecordManager),
+      }),
+      createRttReadinessProvider({
+        readRttConfig: async () => readSavedRttConfig(input.controlProfileRecordManager),
+      }),
+      createCompensationSummaryProvider({
+        summaries: async () => {
+          const root = input.compensationCandidateService.activeCandidateWorkspaceRoot();
+          const currentEvidence =
+            root === null
+              ? undefined
+              : await readCurrentControlProfileDeploymentEvidence(
+                  input.controlProfileManager,
+                  root,
+                );
+          return input.compensationCandidateService.summaries({ currentEvidence });
+        },
+        profileSuggestions: () => input.compensationCandidateService.profileSuggestions(),
+      }),
+      createAgentIntegrationProvider({
+        listAgents: async () => {
+          const statuses = await input.agentIntegrationManager.listStatuses();
+          return statuses.map((status) => ({
+            id: status.id,
+            label: status.label,
+            installed: status.configured,
+            diagnosticCode: 'readiness.agent.integration_missing',
+          }));
+        },
+      }),
+    ],
+  });
+}
+
+function projectJLinkReadinessProbe(probe: ProbeInfo): JLinkReadinessProbeSummary {
+  const maybeLabel = (probe as { readonly label?: unknown }).label;
+  return {
+    probeId: probe.probeId,
+    label: typeof maybeLabel === 'string' && maybeLabel.trim() !== '' ? maybeLabel : 'J-Link probe',
+    target: probe.target,
+    connected: probe.connected,
+  };
+}
+
+async function readSavedJLinkTarget(
+  manager: ControlProfileRecordManager,
+): Promise<string | undefined> {
+  const record = (await manager.list()).find(
+    (item) => item.profile.jlink?.enabled === true && item.profile.jlink.target !== undefined,
+  );
+  return record?.profile.jlink?.target;
+}
+
+async function readSavedFirmwareMetadata(
+  manager: ControlProfileRecordManager,
+): Promise<FirmwareReadinessMetadata | undefined> {
+  const record = (await manager.list()).find(
+    (item) =>
+      item.profile.flash?.binary !== undefined && item.profile.flash.baseAddress !== undefined,
+  );
+  const flash = record?.profile.flash;
+  if (record === undefined || flash?.binary === undefined || flash.baseAddress === undefined) {
+    return undefined;
+  }
+
+  const firmwarePath = resolveWorkspaceChildPath(record.root, flash.binary);
+  const baseAddress = parseReadinessHexAddress(flash.baseAddress);
+  if (firmwarePath === undefined || baseAddress === undefined) return undefined;
+
+  const safeFirmwarePath = await resolveWorkspaceRealChildPath(record.root, firmwarePath);
+  if (safeFirmwarePath === undefined) return undefined;
+
+  const firmwareStat = await stat(safeFirmwarePath);
+  if (!firmwareStat.isFile()) return undefined;
+  return {
+    displayName: flash.binary,
+    byteLength: firmwareStat.size,
+    format: firmwareFormatForPath(flash.binary),
+    baseAddress,
+    verify: flash.verify ?? true,
+  };
+}
+
+async function readSavedRttConfig(
+  manager: ControlProfileRecordManager,
+): Promise<RttReadinessConfig | undefined> {
+  const record = (await manager.list()).find((item) => item.profile.rtt?.enabled === true);
+  const rtt = record?.profile.rtt;
+  if (rtt?.enabled !== true) return undefined;
+  return {
+    channelIndex: rtt.channels?.[0] ?? 0,
+    maxBytes: 4096,
+    timeoutMs: 15_000,
+    markers: [],
+  };
+}
+
+function resolveWorkspaceChildPath(root: string, childPath: string): string | undefined {
+  const trimmed = childPath.trim();
+  if (trimmed === '') return undefined;
+  const normalizedRoot = path.resolve(root);
+  const resolved = path.resolve(normalizedRoot, trimmed);
+  const relative = path.relative(normalizedRoot, resolved);
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    return undefined;
+  }
+  return resolved;
+}
+
+async function resolveWorkspaceRealChildPath(
+  root: string,
+  resolvedChildPath: string,
+): Promise<string | undefined> {
+  try {
+    const realRoot = await realpath(root);
+    const realChild = await realpath(resolvedChildPath);
+    return isPathInside(realRoot, realChild) ? realChild : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isPathInside(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function parseReadinessHexAddress(value: string): number | undefined {
+  if (!/^0x[0-9a-fA-F]+$/u.test(value)) return undefined;
+  const parsed = Number.parseInt(value.slice(2), 16);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function firmwareFormatForPath(filePath: string): FirmwareReadinessMetadata['format'] {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === '.bin') return 'bin';
+  if (extension === '.hex') return 'hex';
+  if (extension === '.elf') return 'elf';
+  return 'unknown';
 }
 
 /**

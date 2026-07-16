@@ -42,6 +42,32 @@ describe('useAppStore', () => {
     expect(useAppStore.getState().activeSessionId).toBe('sess_1');
   });
 
+  it('addSession keeps the human-focused tab when an AI-origin session appears', () => {
+    const { addSession, setActive } = useAppStore.getState();
+    addSession({
+      id: 'sess_human',
+      label: 'Human console',
+      connectionType: 'serial',
+      state: 'open',
+      lastOrigin: 'human',
+      lastOriginAt: 1,
+    });
+    setActive('sess_human');
+
+    addSession({
+      id: 'sess_ai',
+      label: 'AI-created observation',
+      connectionType: 'ssh',
+      state: 'opening',
+      lastOrigin: 'ai',
+      lastOriginAt: 2,
+    });
+
+    const state = useAppStore.getState();
+    expect(state.activeSessionId).toBe('sess_human');
+    expect(state.sessions.get('sess_ai')?.lastOrigin).toBe('ai');
+  });
+
   it('removeSession reassigns active to first remaining', () => {
     const { addSession, removeSession } = useAppStore.getState();
     addSession({ id: 's1', label: 'A', connectionType: 'serial', state: 'idle' });

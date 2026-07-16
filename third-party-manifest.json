@@ -1,6 +1,6 @@
 {
-  "schemaVersion": "1.0.0",
-  "generatedAt": "2026-06-13",
+  "schemaVersion": "1.1.0",
+  "generatedAt": "2026-07-12",
   "dependencies": [
     {
       "name": "@modelcontextprotocol/sdk",
@@ -116,5 +116,189 @@
       "license": "MIT",
       "licenseFile": "licenses/tailwind-merge.LICENSE"
     }
-  ]
+  ],
+  "auditedDevTooling": {
+    "roots": [
+      {
+        "name": "@vitest/coverage-v8",
+        "specifier": "4.1.8"
+      }
+    ],
+    "productionClosure": [
+      {
+        "name": "@vitest/coverage-v8",
+        "version": "4.1.8",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/vitest-coverage-v8.LICENSE"
+      },
+      {
+        "name": "@bcoe/v8-coverage",
+        "version": "1.0.2",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/bcoe-v8-coverage.LICENSE"
+      },
+      {
+        "name": "@vitest/utils",
+        "version": "4.1.8",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/vitest-utils.LICENSE"
+      },
+      {
+        "name": "@vitest/pretty-format",
+        "version": "4.1.8",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/vitest-pretty-format.LICENSE"
+      },
+      {
+        "name": "ast-v8-to-istanbul",
+        "version": "1.0.4",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/ast-v8-to-istanbul.LICENSE"
+      },
+      {
+        "name": "@jridgewell/trace-mapping",
+        "version": "0.3.31",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/jridgewell-trace-mapping.LICENSE"
+      },
+      {
+        "name": "@jridgewell/resolve-uri",
+        "version": "3.1.2",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/jridgewell-resolve-uri.LICENSE"
+      },
+      {
+        "name": "@jridgewell/sourcemap-codec",
+        "version": "1.5.5",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/jridgewell-sourcemap-codec.LICENSE"
+      },
+      {
+        "name": "estree-walker",
+        "version": "3.0.3",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/estree-walker.LICENSE"
+      },
+      {
+        "name": "@types/estree",
+        "version": "1.0.9",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/types-estree.LICENSE"
+      },
+      {
+        "name": "js-tokens",
+        "version": "10.0.0",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/js-tokens.LICENSE"
+      },
+      {
+        "name": "istanbul-lib-coverage",
+        "version": "3.2.2",
+        "license": "BSD-3-Clause",
+        "licenseFile": "licenses/dev-tooling/istanbul-lib-coverage.LICENSE"
+      },
+      {
+        "name": "istanbul-lib-report",
+        "version": "3.0.1",
+        "license": "BSD-3-Clause",
+        "licenseFile": "licenses/dev-tooling/istanbul-lib-report.LICENSE"
+      },
+      {
+        "name": "istanbul-reports",
+        "version": "3.2.0",
+        "license": "BSD-3-Clause",
+        "licenseFile": "licenses/dev-tooling/istanbul-reports.LICENSE"
+      },
+      {
+        "name": "make-dir",
+        "version": "4.0.0",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/make-dir.LICENSE"
+      },
+      {
+        "name": "semver",
+        "version": "7.8.4",
+        "license": "ISC",
+        "licenseFile": "licenses/dev-tooling/semver.LICENSE"
+      },
+      {
+        "name": "supports-color",
+        "version": "7.2.0",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/supports-color.LICENSE"
+      },
+      {
+        "name": "has-flag",
+        "version": "4.0.0",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/has-flag.LICENSE"
+      },
+      {
+        "name": "html-escaper",
+        "version": "2.0.2",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/html-escaper.LICENSE"
+      },
+      {
+        "name": "magicast",
+        "version": "0.5.3",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/magicast.LICENSE"
+      },
+      {
+        "name": "@babel/parser",
+        "version": "7.29.7",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/babel-parser.LICENSE"
+      },
+      {
+        "name": "@babel/types",
+        "version": "7.29.7",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/babel-types.LICENSE"
+      },
+      {
+        "name": "@babel/helper-string-parser",
+        "version": "7.29.7",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/babel-helper-string-parser.LICENSE"
+      },
+      {
+        "name": "@babel/helper-validator-identifier",
+        "version": "7.29.7",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/babel-helper-validator-identifier.LICENSE"
+      },
+      {
+        "name": "source-map-js",
+        "version": "1.2.1",
+        "license": "BSD-3-Clause",
+        "licenseFile": "licenses/dev-tooling/source-map-js.LICENSE"
+      },
+      {
+        "name": "obug",
+        "version": "2.1.3",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/obug.LICENSE"
+      },
+      {
+        "name": "std-env",
+        "version": "4.1.0",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/std-env.LICENSE"
+      },
+      {
+        "name": "tinyrainbow",
+        "version": "3.1.0",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/tinyrainbow.LICENSE"
+      },
+      {
+        "name": "convert-source-map",
+        "version": "2.0.0",
+        "license": "MIT",
+        "licenseFile": "licenses/dev-tooling/convert-source-map.LICENSE"
+      }
+    ]
+  }
 }

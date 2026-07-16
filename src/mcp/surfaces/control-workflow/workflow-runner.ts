@@ -1,7 +1,9 @@
 /** run_control_workflow 的确定性状态机实现。 */
 
+import { createHash } from 'node:crypto';
 import { open, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import type { VerifiedDeploymentEvidence } from '../../../core/compensation/index.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
 import {
   defaultHostPathResolver,
@@ -30,7 +32,7 @@ import type { SerialSessionConfig, SessionSummary } from '../../../shared/types.
 import { ERROR_CODES } from '../../../shared/error-codes.js';
 import { MAX_BINARY_BYTES } from '../../limits.js';
 import { ToolError, type ToolErrorCode } from '../../registry.js';
-import { ConfirmationRequiredError, translateJLinkError } from '../debug/error-translate.js';
+import { translateJLinkError } from '../debug/error-translate.js';
 import { validateFirmwareVectorTable } from '../debug/firmware-sanity.js';
 import type { ControlProfileOpenSerial } from '../control-profile/tools.js';
 import type { RunControlWorkflowInput } from './schemas.js';
@@ -57,6 +59,7 @@ export interface ControlWorkflowRunnerDeps {
 export interface ControlWorkflowRunOptions {
   signal?: AbortSignal;
   onUpdate?: (data: ControlWorkflowData) => void;
+  onVerifiedDeployment?: (evidence: VerifiedDeploymentEvidence) => void;
 }
 
 interface ResolvedFirmware {
@@ -109,8 +112,10 @@ interface WorkflowContext {
   rttChannelIndex?: number;
   probe?: Omit<ProbeInfo, 'serialNumber'>;
   targetResolution?: JLinkTargetResolution;
+  compensationFirmware?: ResolvedFirmware;
   signal?: AbortSignal;
   onUpdate?: (data: ControlWorkflowData) => void;
+  onVerifiedDeployment?: (evidence: VerifiedDeploymentEvidence) => void;
 }
 
 interface CommanderAvailability {
@@ -174,6 +179,9 @@ export async function runControlWorkflow(
   };
   if (options.signal !== undefined) ctx.signal = options.signal;
   if (options.onUpdate !== undefined) ctx.onUpdate = options.onUpdate;
+  if (options.onVerifiedDeployment !== undefined) {
+    ctx.onVerifiedDeployment = options.onVerifiedDeployment;
+  }
 
   pushStep(ctx, 'load_profile', 'passed', {
     profileLoaded: true,
@@ -183,10 +191,6 @@ export async function runControlWorkflow(
   });
 
   try {
-    if (requiresHighImpact(input) && input.confirm !== true && input.dryRun !== true) {
-      throw new ConfirmationRequiredError('run_control_workflow');
-    }
-
     throwIfAborted(ctx.signal);
     const firmware = await preflight(
       ctx,
@@ -194,6 +198,7 @@ export async function runControlWorkflow(
       deps.jlinkDeviceCatalog,
       deps.hostPathResolver ?? defaultHostPathResolver,
     );
+    if (firmware !== undefined) ctx.compensationFirmware = firmware;
     if (ctx.failedStep !== undefined) {
       return await finalizeWorkflow(ctx, deps.jlinkBackend);
     }
@@ -834,7 +839,86 @@ async function finalizeWorkflow(
   jlinkBackend: IJLinkBackend,
 ): Promise<ControlWorkflowData> {
   await stopManagedGdbServerStep(ctx, jlinkBackend);
+  recordVerifiedDeploymentIfEligible(ctx);
   return toData(ctx);
+}
+
+function recordVerifiedDeploymentIfEligible(ctx: WorkflowContext): void {
+  if (ctx.onVerifiedDeployment === undefined) return;
+  if (ctx.compensationFirmware === undefined) return;
+  if (ctx.input.dryRun === true) return;
+  if (ctx.failedStep !== undefined) return;
+  if (ctx.steps.some((step) => step.status === 'failed')) return;
+  if (!ctx.summary.flashed || !ctx.summary.verified || !observationSucceeded(ctx)) return;
+
+  try {
+    ctx.onVerifiedDeployment(buildVerifiedDeploymentEvidence(ctx, ctx.compensationFirmware));
+  } catch {
+    // Known-good projection is advisory Main-only state; it must not alter workflow outcome.
+  }
+}
+
+function buildVerifiedDeploymentEvidence(
+  ctx: WorkflowContext,
+  firmware: ResolvedFirmware,
+): VerifiedDeploymentEvidence {
+  const targetLabel = ctx.targetResolution?.target ?? ctx.profile.jlink?.target ?? 'J-Link target';
+  const contentSha256 = createHash('sha256').update(firmware.binary).digest('hex');
+  const targetBindingDigest = digestCanonical({
+    target: targetLabel,
+    interface: ctx.profile.jlink?.interface,
+    speedKHz: ctx.profile.jlink?.speedKHz,
+  });
+  return {
+    workspace: {
+      root: ctx.hostRoot,
+      profile: {
+        schemaVersion: ctx.profile.schemaVersion,
+        ...(ctx.profile.serial !== undefined ? { serial: { ...ctx.profile.serial } } : {}),
+        ...(ctx.profile.jlink !== undefined ? { jlink: { ...ctx.profile.jlink } } : {}),
+        ...(ctx.profile.flash !== undefined ? { flash: { ...ctx.profile.flash } } : {}),
+        ...(ctx.profile.rtt !== undefined
+          ? { rtt: { ...ctx.profile.rtt, channels: ctx.profile.rtt.channels?.slice() } }
+          : {}),
+      },
+    },
+    sourceOperationId: `workflow_${digestHex({
+      root: ctx.hostRoot,
+      targetBindingDigest,
+      sourcePath: firmware.sourcePath,
+      contentSha256,
+    }).slice(0, 32)}`,
+    targetLabel,
+    targetBindingDigest,
+    profileRevision: digestCanonical({ root: ctx.hostRoot, profile: ctx.profile }),
+    workflowMode: ctx.input.mode,
+    manifestDigest: digestCanonical({
+      mode: ctx.input.mode,
+      observe: ctx.input.observe,
+      targetBindingDigest,
+      firmware: {
+        sourcePath: firmware.sourcePath,
+        baseAddress: firmware.baseAddress,
+        verify: firmware.verify,
+        format: firmware.format,
+        byteLength: firmware.binary.byteLength,
+        contentSha256,
+      },
+    }),
+    firmware: {
+      mainOwnedSourceRef: firmware.absolutePath,
+      displayName: path.basename(firmware.absolutePath),
+      contentSha256,
+      byteLength: firmware.binary.byteLength,
+      format: readinessFirmwareFormat(firmware.format),
+      baseAddress: firmware.baseAddress,
+    },
+    result: {
+      flashed: ctx.summary.flashed,
+      verified: ctx.summary.verified,
+      observationSucceeded: observationSucceeded(ctx),
+    },
+  };
 }
 
 async function stopManagedGdbServerStep(
@@ -1149,6 +1233,13 @@ function firmwareFormatLabel(format: FirmwareImageFormat): string {
   return 'Firmware';
 }
 
+function readinessFirmwareFormat(format: FirmwareImageFormat): VerifiedDeploymentEvidence['firmware']['format'] {
+  if (format === 'raw-binary') return 'bin';
+  if (format === 'intel-hex') return 'hex';
+  if (format === 'elf') return 'elf';
+  return 'unknown';
+}
+
 /**
  * 确保相对路径解析后仍位于 root 内。
  *
@@ -1312,15 +1403,6 @@ function needsRtt(input: RunControlWorkflowInput, profile?: ControlProfile): boo
 
 function needsReset(input: RunControlWorkflowInput): boolean {
   return input.mode === 'flash-observe' || input.mode === 'flash-observe-diagnose';
-}
-
-function requiresHighImpact(input: RunControlWorkflowInput): boolean {
-  return (
-    input.mode === 'debug-diagnose' ||
-    needsFlash(input) ||
-    needsReset(input) ||
-    input.debug?.haltOnFailure === true
-  );
 }
 
 function shouldCaptureDebug(ctx: WorkflowContext): boolean {
@@ -1524,9 +1606,9 @@ function addNextActionForFailure(
       kind: 'retry',
       tool: 'run_control_workflow',
       message:
-        'J-Link 烧录前保存目标 RAM 失败；请将 control-profile 的 jlink.speedKHz 固定为 4000 kHz 后，带 confirm=true 重试高层工作流。',
+        'J-Link 烧录前保存目标 RAM 失败；请将 control-profile 的 jlink.speedKHz 固定为 4000 kHz 后重试高层工作流。',
       argsPatch: { jlink: { speedKHz: SAFE_RAW_FLASH_SPEED_KHZ } },
-      requiresConfirm: true,
+      requiresConfirm: false,
     });
   }
   if (failureCode === 'rtt_connect_failed') {
@@ -1536,7 +1618,7 @@ function addNextActionForFailure(
       message:
         '固件已烧录/校验，但 RTT 连接失败；建议先运行 debug-diagnose 或检查固件 RTT control block/channel 配置，不要重复发起第二次烧录。',
       argsPatch: { mode: 'debug-diagnose', debug: { rttRead: true } },
-      requiresConfirm: true,
+      requiresConfirm: false,
     });
   }
   if (failureCode === 'flash_sector_erase_timeout') {
@@ -1681,4 +1763,29 @@ function safeErrorMessage(err: unknown): string {
   if (err instanceof ToolError) return err.message;
   if (err instanceof Error) return err.message.slice(0, 1000);
   return String(err).slice(0, 1000);
+}
+
+function digestCanonical(value: unknown): string {
+  return `sha256:${digestHex(value)}`;
+}
+
+function digestHex(value: unknown): string {
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalize(value)), 'utf8')
+    .digest('hex');
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entryValue]) => entryValue !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entryValue]) => [key, canonicalize(entryValue)]),
+    );
+  }
+  return value;
 }

@@ -27,7 +27,7 @@ import { defaultHostPathResolver } from '../../../core/workspace/index.js';
 import { controlProfileSchema } from '../../../core/workspace/control-profile-schema.js';
 import { registerTool, ToolError, type ToolHandlerResult } from '../../registry.js';
 import { decodeBase64Capped } from './binary-codec.js';
-import { ok, runJLink, withAbortableTimeout, ConfirmationRequiredError } from './error-translate.js';
+import { ok, runJLink, withAbortableTimeout } from './error-translate.js';
 import { validateFirmwareVectorTable } from './firmware-sanity.js';
 import type { DebugToolsDeps } from './tools.js';
 import {
@@ -184,13 +184,12 @@ export function registerDebugBinaryTools(server: McpServer, deps: DebugToolsDeps
     description:
       'Download a binary image to flash. binaryBase64 is decoded server-side and capped at 16 MiB. ' +
       'timeoutMs aborts long downloads. ' +
-      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned (no decode, no backend call). ' +
+      'High-impact binary operations execute immediately after strict payload validation and remain visible in Activity Center and audit records. ' +
       'No external CLI fallback.',
     sensitivity: 'state-affecting',
     inputSchema: flashDownloadInputSchema,
     handler: async (input: FlashDownloadInput): Promise<ToolHandlerResult> => {
       return runJLink(async () => {
-        if (input.confirm !== true) throw new ConfirmationRequiredError('flash_download');
         const binary = decodeBase64Capped(input.binaryBase64, 'binaryBase64');
         const opts: { address?: number; verify?: boolean; timeoutMs?: number } = {
           verify: input.verify ?? true,
@@ -234,13 +233,12 @@ export function registerDebugBinaryTools(server: McpServer, deps: DebugToolsDeps
     name: 'flash_write',
     description:
       'Write bytes to a flash address (no erase). ' +
-      'High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned. ' +
+      'High-impact binary operations execute immediately after strict payload validation and remain visible in Activity Center and audit records. ' +
       'No external CLI fallback.',
     sensitivity: 'state-affecting',
     inputSchema: flashWriteInputSchema,
     handler: async (input: FlashWriteInput): Promise<ToolHandlerResult> => {
       return runJLink(async () => {
-        if (input.confirm !== true) throw new ConfirmationRequiredError('flash_write');
         const buf = decodeBase64Capped(input.dataBase64, 'dataBase64');
         await jlinkBackend.flashWrite(input.probeId, input.address, buf);
         return ok({

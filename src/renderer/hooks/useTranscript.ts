@@ -27,9 +27,21 @@ import {
   renderEventToXterm,
   type RenderState,
 } from '../lib/render-event.js';
+import type { SerializedTranscriptEvent } from '../../shared/transcript-ipc-types.js';
 
 /** Origin 活动节流间隔（ms）：呼吸灯不需要 60Hz 精度，250ms 足够人眼察觉。 */
 const ORIGIN_ACTIVITY_THROTTLE_MS = 250;
+
+export interface VisibleDeviceSequenceAck {
+  readonly sessionId: SessionId;
+  readonly sequence: number;
+}
+
+export interface UseTranscriptOptions {
+  readonly onVisibleDeviceSequence?: (ack: VisibleDeviceSequenceAck) => void;
+  readonly onDisplayUnavailable?: (reasonCode: string) => void;
+  readonly onDisplayRecovered?: () => void;
+}
 
 /**
  * 订阅指定 session 的 transcript 并喂入给定 Terminal。
@@ -40,6 +52,7 @@ const ORIGIN_ACTIVITY_THROTTLE_MS = 250;
 export function useTranscript(
   sessionId: SessionId | null,
   terminal: Pick<Terminal, 'write' | 'clear'> | null,
+  options: UseTranscriptOptions = {},
 ): void {
   const updateSessionState = useAppStore((s) => s.updateSessionState);
   const removeSession = useAppStore((s) => s.removeSession);
@@ -57,6 +70,10 @@ export function useTranscript(
   // 节流 markOriginActivity：每 (sessionId, origin) 至多每 250ms 落一次 store
   // 用 ref 跨渲染保留，避免每次 hook 重跑都重置时间戳
   const lastOriginAtRef = useRef<Map<string, number>>(new Map());
+  const renderedSequencesRef = useRef<Map<SessionId, Set<number>>>(new Map());
+  const onVisibleDeviceSequence = options.onVisibleDeviceSequence;
+  const onDisplayUnavailable = options.onDisplayUnavailable;
+  const onDisplayRecovered = options.onDisplayRecovered;
 
   useEffect(() => {
     if (!sessionId || !terminal) return;
@@ -64,6 +81,7 @@ export function useTranscript(
     if (!api) return;
     const renderState = renderStateRef.current!;
     const lastOriginAt = lastOriginAtRef.current;
+    const renderedSequences = renderedSequencesRef.current;
     let cancelled = false;
     let unsubscribeOnEvent: (() => void) | null = null;
 
@@ -77,6 +95,31 @@ export function useTranscript(
       markOriginActivity(sessionId, origin, now);
     };
 
+    const hasRenderedSequence = (event: SerializedTranscriptEvent): boolean => {
+      const rendered = renderedSequences.get(sessionId) ?? new Set<number>();
+      if (!renderedSequences.has(sessionId)) renderedSequences.set(sessionId, rendered);
+      if (rendered.has(event.sequence)) return true;
+      rendered.add(event.sequence);
+      return false;
+    };
+
+    const renderTranscriptEvent = (event: SerializedTranscriptEvent): void => {
+      if (hasRenderedSequence(event)) return;
+      const result = renderEventToXterm(terminal, event, renderState, sessionId, { connectionType });
+      void result.completion.then((ack) => {
+        if (cancelled) return;
+        if (ack.visibleDeviceSequence !== undefined) {
+          onVisibleDeviceSequence?.({ sessionId, sequence: ack.visibleDeviceSequence });
+        }
+      });
+      tickOriginActivity(event.origin);
+      // state 事件：同步 UI store 上的 state 字段
+      if (event.type === 'state') {
+        const meta = event.meta as { to?: SessionState } | undefined;
+        if (meta?.to) updateSessionState(sessionId, meta.to);
+      }
+    };
+
     const start = async (): Promise<void> => {
       // 1) 必须先注册 onEvent 监听，再 subscribe；否则 subscribe 期间到达的事件会丢失
       unsubscribeOnEvent = api.transcript.onEvent((envelope) => {
@@ -88,13 +131,7 @@ export function useTranscript(
           return;
         }
         const event = envelope.event;
-        renderEventToXterm(terminal, event, renderState, sessionId, { connectionType });
-        tickOriginActivity(event.origin);
-        // state 事件：同步 UI store 上的 state 字段
-        if (event.type === 'state') {
-          const meta = event.meta as { to?: SessionState } | undefined;
-          if (meta?.to) updateSessionState(sessionId, meta.to);
-        }
+        renderTranscriptEvent(event);
       });
 
       // 2) subscribe 同时拿到历史快照；主进程按 webContents.id 跟踪游标，
@@ -102,22 +139,45 @@ export function useTranscript(
       const subResult = await api.session.subscribe({ sessionId });
       if (cancelled) return;
       if (subResult.success) {
+        onDisplayRecovered?.();
         for (const event of subResult.data.events) {
-          renderEventToXterm(terminal, event, renderState, sessionId, { connectionType });
+          if (hasRenderedSequence(event)) continue;
+          const result = renderEventToXterm(terminal, event, renderState, sessionId, { connectionType });
+          void result.completion.then((ack) => {
+            if (cancelled) return;
+            if (ack.visibleDeviceSequence !== undefined) {
+              onVisibleDeviceSequence?.({ sessionId, sequence: ack.visibleDeviceSequence });
+            }
+          });
           // 历史回放不触发呼吸灯（lastOriginAt 不更新），避免视觉突兀
         }
+        // 历史出站事件只用于重建屏幕，不应成为未来 live device 数据的 echo 匹配队列。
+        renderState.pendingEcho.delete(sessionId);
+        return;
       }
+      onDisplayUnavailable?.('firstSignal.display.subscribeFailed');
     };
 
     void start().catch(() => {
-      // 主进程未就绪时静默忽略
+      onDisplayUnavailable?.('firstSignal.display.subscribeFailed');
     });
 
     return () => {
       cancelled = true;
       if (unsubscribeOnEvent) unsubscribeOnEvent();
+      renderedSequences.delete(sessionId);
       // 不主动 unsubscribe 主进程：那是 webContents.destroyed 时机的事；
       // 多组件共用同一 sessionId 的订阅时，提前 unsubscribe 会让其它组件失去推送
     };
-  }, [sessionId, terminal, updateSessionState, removeSession, markOriginActivity, connectionType]);
+  }, [
+    sessionId,
+    terminal,
+    updateSessionState,
+    removeSession,
+    markOriginActivity,
+    connectionType,
+    onVisibleDeviceSequence,
+    onDisplayUnavailable,
+    onDisplayRecovered,
+  ]);
 }

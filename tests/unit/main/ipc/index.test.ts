@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 const {
   appMock,
@@ -8,6 +11,18 @@ const {
   agentManagerCtorMock,
   tokenEnvWriterMock,
   safeStorageMock,
+  createMcpServerMock,
+  jlinkProbeDetectMock,
+  jlinkCatalogHasMock,
+  createJLinkDeviceCatalogMock,
+  unregisterActivityIpcMock,
+  registerActivityIpcMock,
+  unregisterAuditIpcMock,
+  registerAuditIpcMock,
+  unregisterReadinessIpcMock,
+  registerReadinessIpcMock,
+  unregisterFirstSignalIpcMock,
+  registerFirstSignalIpcMock,
 } = vi.hoisted(() => ({
   appMock: {
     getPath: vi.fn((name: string) => {
@@ -41,6 +56,26 @@ const {
     encryptString: vi.fn((value: string) => Buffer.from(value, 'utf-8')),
     decryptString: vi.fn((value: Buffer) => value.toString('utf-8')),
   },
+  createMcpServerMock: vi.fn(() => ({
+    start: vi.fn(async () => undefined),
+    stop: vi.fn(async () => undefined),
+  })),
+  jlinkProbeDetectMock: vi.fn(async () => []),
+  jlinkCatalogHasMock: vi.fn(async () => true),
+  createJLinkDeviceCatalogMock: vi.fn(() => ({
+    search: vi.fn(async () => ({ available: true, devices: [], sourceFiles: [] })),
+    get: vi.fn(async () => undefined),
+    has: jlinkCatalogHasMock,
+    refresh: vi.fn(async () => undefined),
+  })),
+  unregisterActivityIpcMock: vi.fn(),
+  registerActivityIpcMock: vi.fn(() => unregisterActivityIpcMock),
+  unregisterAuditIpcMock: vi.fn(),
+  registerAuditIpcMock: vi.fn(() => unregisterAuditIpcMock),
+  unregisterReadinessIpcMock: vi.fn(),
+  registerReadinessIpcMock: vi.fn(() => unregisterReadinessIpcMock),
+  unregisterFirstSignalIpcMock: vi.fn(),
+  registerFirstSignalIpcMock: vi.fn(() => unregisterFirstSignalIpcMock),
 }));
 
 const electronMock = {
@@ -64,6 +99,19 @@ vi.mock('../../../../src/mcp/http-runtime-server.js', () => ({
   startMcpHttpRuntimeServer: startHttpMock,
 }));
 
+vi.mock('../../../../src/mcp/index.js', () => ({
+  createMcpServer: createMcpServerMock,
+}));
+
+vi.mock('../../../../src/jlink/index.js', () => ({
+  JLinkAdapter: vi.fn(function JLinkAdapter() {
+    return {
+      probeDetect: jlinkProbeDetectMock,
+    };
+  }),
+  createJLinkDeviceCatalog: createJLinkDeviceCatalogMock,
+}));
+
 vi.mock('../../../../src/mcp/runtime-metadata.js', async () => {
   const actual = await vi.importActual<typeof import('../../../../src/mcp/runtime-metadata.js')>(
     '../../../../src/mcp/runtime-metadata.js',
@@ -82,7 +130,7 @@ vi.mock('../../../../src/core/agent-integrations/index.js', async () => {
     ...actual,
     AgentIntegrationManager: vi.fn(function AgentIntegrationManager(options) {
       agentManagerCtorMock(options);
-      return { listStatuses: vi.fn(), install: vi.fn() };
+      return { listStatuses: vi.fn(async () => []), install: vi.fn() };
     }),
   };
 });
@@ -119,10 +167,24 @@ vi.mock('../../../../src/main/ipc/agent-integrations-ipc.js', () => ({
 vi.mock('../../../../src/main/ipc/control-profile-ipc.js', () => ({
   registerControlProfileIpc: vi.fn(() => vi.fn()),
 }));
+vi.mock('../../../../src/main/ipc/activity-ipc.js', () => ({
+  registerActivityIpc: registerActivityIpcMock,
+}));
+vi.mock('../../../../src/main/ipc/audit-ipc.js', () => ({
+  registerAuditIpc: registerAuditIpcMock,
+}));
+vi.mock('../../../../src/main/ipc/readiness-ipc.js', () => ({
+  registerReadinessIpc: registerReadinessIpcMock,
+}));
+vi.mock('../../../../src/main/ipc/first-signal-ipc.js', () => ({
+  registerFirstSignalIpc: registerFirstSignalIpcMock,
+}));
 
 describe('registerIpcHandlers HTTP MCP wiring', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    jlinkProbeDetectMock.mockResolvedValue([]);
+    jlinkCatalogHasMock.mockResolvedValue(true);
   });
 
   it('uses stable HTTP settings for the runtime and Codex targets', async () => {
@@ -150,6 +212,7 @@ describe('registerIpcHandlers HTTP MCP wiring', () => {
         sessionManager: context.sessionManager,
         jlinkBackend: context.jlinkBackend,
         jlinkDeviceCatalog: context.jlinkDeviceCatalog,
+        compensationCandidateService: expect.any(Object),
       }),
     );
     expect(buildTargetsMock).toHaveBeenCalledWith(
@@ -167,6 +230,279 @@ describe('registerIpcHandlers HTTP MCP wiring', () => {
     );
 
     await context.dispose();
+  });
+
+  it('composes one Main-owned activity runtime for direct MCP, HTTP MCP, and activity IPC', async () => {
+    const { registerIpcHandlers } = await import('../../../../src/main/ipc/index.js');
+
+    const context = await registerIpcHandlers({ autoStartMcp: false });
+    const directOptions = createMcpServerMock.mock.calls[0]?.[0] as {
+      operationRecorderProvider?: unknown;
+      controlWorkflowJobManager?: unknown;
+    };
+    const httpOptions = startHttpMock.mock.calls[0]?.[0] as {
+      operationRecorderProvider?: unknown;
+      controlWorkflowJobManager?: unknown;
+    };
+
+    expect(context.operationLedger.snapshot()).toMatchObject({
+      cursor: { runtimeId: expect.any(String), sequence: 0 },
+      events: [],
+      operations: [],
+      calls: [],
+    });
+    expect(registerActivityIpcMock).toHaveBeenCalledWith(context.operationLedger);
+    expect(directOptions.operationRecorderProvider).toEqual(expect.any(Function));
+    expect(httpOptions.operationRecorderProvider).toBe(directOptions.operationRecorderProvider);
+    expect(directOptions.controlWorkflowJobManager).toBe(context.controlWorkflowJobManager);
+    expect(httpOptions.controlWorkflowJobManager).toBe(context.controlWorkflowJobManager);
+    expect(context).not.toHaveProperty('operationRecorder');
+    expect(context).not.toHaveProperty('activityHealth');
+    expect(context).not.toHaveProperty('rawActivityEvents');
+
+    await context.dispose();
+
+    expect(unregisterActivityIpcMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates a fresh in-memory activity runtime for each Main context', async () => {
+    const { registerIpcHandlers } = await import('../../../../src/main/ipc/index.js');
+
+    const first = await registerIpcHandlers({ autoStartMcp: false });
+    const second = await registerIpcHandlers({ autoStartMcp: false });
+
+    expect(first.operationLedger.snapshot().cursor).toMatchObject({ sequence: 0 });
+    expect(second.operationLedger.snapshot().cursor).toMatchObject({ sequence: 0 });
+    expect(first.operationLedger.snapshot().cursor.runtimeId).not.toBe(
+      second.operationLedger.snapshot().cursor.runtimeId,
+    );
+
+    await first.dispose();
+    await second.dispose();
+  });
+
+  it('composes one Main-owned readiness runtime for renderer startup state', async () => {
+    const { registerIpcHandlers } = await import('../../../../src/main/ipc/index.js');
+
+    jlinkProbeDetectMock.mockResolvedValue([
+      {
+        probeId: 'probe_a',
+        label: 'J-Link probe A',
+        serialNumber: '123456789',
+        target: 'STM32H743',
+        connected: false,
+      },
+    ]);
+    const context = await registerIpcHandlers({ autoStartMcp: false });
+
+    expect(registerReadinessIpcMock).toHaveBeenCalledWith(context.runtimeReadinessService);
+    expect(context.runtimeReadinessService.getCurrent()).toMatchObject({
+      schemaVersion: '1.0.0',
+      generation: 0,
+      checks: [],
+    });
+    const refreshed = await context.runtimeReadinessService.refresh();
+    expect(refreshed.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'jlink', scope: 'jlink' }),
+        expect.objectContaining({ id: 'firmware', scope: 'firmware' }),
+        expect.objectContaining({ id: 'rtt', scope: 'rtt' }),
+      ]),
+    );
+    expect(refreshed.deviceCandidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'candidate_jlink_probe_a',
+          kind: 'jlink',
+          label: 'J-Link probe A · STM32H743',
+          requiresUserConfirmation: true,
+        }),
+      ]),
+    );
+    expect(jlinkProbeDetectMock).toHaveBeenCalledTimes(1);
+    expect(createJLinkDeviceCatalogMock).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(refreshed)).not.toContain('123456789');
+    expect(context).not.toHaveProperty('readinessRawProviders');
+    expect(context).not.toHaveProperty('rawReadinessEvents');
+
+    await context.dispose();
+
+    expect(unregisterReadinessIpcMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report firmware ready when the saved profile points through a workspace symlink', async () => {
+    const { registerIpcHandlers } = await import('../../../../src/main/ipc/index.js');
+    const root = await mkdtemp(path.join(os.tmpdir(), 'linkterm-readiness-root-'));
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'linkterm-readiness-outside-'));
+    const userData = await mkdtemp(path.join(os.tmpdir(), 'linkterm-readiness-userdata-'));
+
+    try {
+      appMock.getPath.mockImplementation((name: string) => {
+        const paths: Record<string, string> = {
+          appData: userData,
+          home: userData,
+          userData,
+        };
+        return paths[name] ?? path.join(userData, name);
+      });
+      await mkdir(path.join(root, 'build'));
+      await writeFile(path.join(outside, 'app.bin'), Buffer.from([0x00, 0x20, 0x00, 0x20]));
+      await symlink(outside, path.join(root, 'build', 'linked'), 'junction');
+
+      const context = await registerIpcHandlers({ autoStartMcp: false });
+      const profile = await context.controlProfileManager.init(root, {
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd' },
+        flash: { binary: 'build/linked/app.bin', baseAddress: '0x08000000', verify: true },
+      });
+      await context.controlProfileRecordManager.save({
+        root,
+        source: 'manual',
+        label: 'symlinked firmware',
+        profile,
+      });
+
+      const refreshed = await context.runtimeReadinessService.refresh();
+
+      expect(refreshed.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'firmware',
+            scope: 'firmware',
+            status: 'action-required',
+          }),
+        ]),
+      );
+      expect(JSON.stringify(refreshed)).not.toContain('app.bin');
+      expect(JSON.stringify(refreshed)).not.toContain(outside);
+
+      await context.dispose();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+      await rm(userData, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps compensation candidates Main-owned while projecting readiness summaries', async () => {
+    const { registerIpcHandlers } = await import('../../../../src/main/ipc/index.js');
+    const { registerControlProfileIpc } =
+      await import('../../../../src/main/ipc/control-profile-ipc.js');
+
+    const context = await registerIpcHandlers({ autoStartMcp: false });
+    const directOptions = createMcpServerMock.mock.calls[0]?.[0] as {
+      onVerifiedDeployment?: (evidence: unknown) => void;
+    };
+    const httpOptions = startHttpMock.mock.calls[0]?.[0] as {
+      onVerifiedDeployment?: (evidence: unknown) => void;
+    };
+    const controlProfileOptions = vi.mocked(registerControlProfileIpc).mock.calls[0]?.[2] as {
+      onVerifiedDeployment?: (evidence: unknown) => void;
+    };
+
+    expect(directOptions.onVerifiedDeployment).toEqual(expect.any(Function));
+    expect(httpOptions.onVerifiedDeployment).toBe(directOptions.onVerifiedDeployment);
+    expect(controlProfileOptions.onVerifiedDeployment).toBe(directOptions.onVerifiedDeployment);
+
+    directOptions.onVerifiedDeployment?.({
+      workspace: {
+        root: 'C:/repo',
+        profile: {
+          schemaVersion: 'linkterm-control/1.0.0',
+          jlink: { enabled: true, target: 'STM32H743', interface: 'swd', speedKHz: 4000 },
+          flash: { binary: 'build/rtthread.bin', baseAddress: '0x08000000', verify: true },
+          rtt: { enabled: true, channels: [0], controlBlockAddress: '0x24000000' },
+        },
+      },
+      sourceOperationId: 'operation_1',
+      targetLabel: 'STM32H743',
+      targetBindingDigest: 'target_digest_1',
+      profileRevision: 'profile_revision_1',
+      workflowMode: 'flash-observe',
+      manifestDigest: 'manifest_digest_1',
+      firmware: {
+        mainOwnedSourceRef: String.raw`C:\Users\Admin\private\rtthread.bin`,
+        displayName: 'rtthread.bin',
+        contentSha256: 'a'.repeat(64),
+        byteLength: 4096,
+        format: 'bin',
+        baseAddress: 0x08000000,
+      },
+      result: {
+        flashed: true,
+        verified: true,
+        observationSucceeded: true,
+      },
+    });
+
+    const refreshed = await context.runtimeReadinessService.refresh();
+
+    expect(refreshed.compensationCandidates).toEqual([
+      expect.objectContaining({
+        targetLabel: 'STM32H743',
+        firmware: expect.objectContaining({
+          displayName: 'rtthread.bin',
+          hashSha256Prefix: 'aaaaaaaaaaaaaaaa',
+          byteLength: 4096,
+        }),
+        eligibility: {
+          status: 'disabled',
+          reasonCode: 'compensation.reflash.evidence_mismatch',
+        },
+      }),
+    ]);
+    expect(refreshed.compensationCandidates[0]).not.toHaveProperty('actionCode');
+    expect(refreshed.profileSuggestions).toEqual([
+      expect.objectContaining({
+        profileLabel: 'STM32H743',
+        provenance: 'verified-jlink-rtt-success',
+        saveActionCode: 'profile.suggestion.save',
+        skipActionCode: 'profile.suggestion.skip',
+      }),
+    ]);
+    expect(JSON.stringify(refreshed)).not.toContain('mainOwnedSourceRef');
+    expect(JSON.stringify(refreshed)).not.toContain('private');
+    expect(context).not.toHaveProperty('compensationCandidates');
+    expect(context).not.toHaveProperty('rawCompensationCandidate');
+
+    await context.dispose();
+  });
+
+  it('composes one Main-owned first-signal runtime for renderer first-success state', async () => {
+    const { registerIpcHandlers } = await import('../../../../src/main/ipc/index.js');
+
+    const context = await registerIpcHandlers({ autoStartMcp: false });
+
+    expect(registerFirstSignalIpcMock).toHaveBeenCalledWith(
+      context.firstSignalObservationService,
+    );
+    expect(context.firstSignalObservationService).toEqual(expect.any(Object));
+    expect(context).not.toHaveProperty('rawFirstSignalEvents');
+    expect(context).not.toHaveProperty('firstSignalRendererState');
+
+    await context.dispose();
+
+    expect(unregisterFirstSignalIpcMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps execution directly observable without an approval IPC surface', async () => {
+    const { registerIpcHandlers } = await import('../../../../src/main/ipc/index.js');
+    const { registerControlProfileIpc } =
+      await import('../../../../src/main/ipc/control-profile-ipc.js');
+
+    const context = await registerIpcHandlers({ autoStartMcp: false });
+
+    expect(registerControlProfileIpc).toHaveBeenCalledWith(
+      context.controlProfileManager,
+      context.controlProfileRecordManager,
+      expect.not.objectContaining({ controlProfileApprovalGate: expect.anything() }),
+    );
+    expect(context).not.toHaveProperty('approvalIpcService');
+    expect(context).not.toHaveProperty('approvalBroker');
+    expect(context).not.toHaveProperty('approvalGrants');
+    expect(context).not.toHaveProperty('callerPrincipalIds');
+
+    await context.dispose();
+
   });
 
   it('watches all compiled main runtime JavaScript artifacts in development', async () => {

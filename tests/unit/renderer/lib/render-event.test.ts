@@ -26,6 +26,24 @@ const makeWriteStub = (): { write: ReturnType<typeof vi.fn>; calls: () => string
   };
 };
 
+const makeDeferredWriteStub = (): {
+  write: ReturnType<typeof vi.fn>;
+  flush: () => void;
+  calls: () => string[];
+} => {
+  const callbacks: Array<() => void> = [];
+  const fn = vi.fn((data: string, callback?: () => void) => {
+    if (callback) callbacks.push(callback);
+  });
+  return {
+    write: fn,
+    flush: () => {
+      for (const callback of callbacks.splice(0)) callback();
+    },
+    calls: () => fn.mock.calls.map((c) => c[0] as string),
+  };
+};
+
 const b64 = (s: string): string => {
   const bytes = new TextEncoder().encode(s);
   let bin = '';
@@ -57,7 +75,7 @@ describe('decodeBase64', () => {
 });
 
 describe('renderEventToXterm', () => {
-  it('does not render human data in UI to avoid duplicate local echo', () => {
+  it('renders serial human data locally without an origin label', () => {
     const term = makeWriteStub();
     const state = createRenderState();
     const event: SerializedTranscriptEvent = {
@@ -68,7 +86,7 @@ describe('renderEventToXterm', () => {
       dataBase64: b64('hello'),
     };
     renderEventToXterm({ write: term.write }, event, state, SID);
-    expect(term.calls()).toEqual([]);
+    expect(term.calls().join('')).toBe('hello');
   });
 
   it('renders human data locally for RTT log sessions', () => {
@@ -87,7 +105,7 @@ describe('renderEventToXterm', () => {
     expect(term.calls().join('')).toBe('help\r\n');
   });
 
-  it('does not render ai data in UI to avoid duplicate device echo', () => {
+  it('renders serial AI data locally without an origin label', () => {
     const term = makeWriteStub();
     const state = createRenderState();
     renderEventToXterm(
@@ -102,7 +120,34 @@ describe('renderEventToXterm', () => {
       state,
       SID,
     );
-    expect(term.calls()).toEqual([]);
+    expect(term.calls().join('')).toBe('help\r\n');
+  });
+
+  it('removes a matching device echo but keeps the device response', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'human', sequence: 1, timestamp: 0, dataBase64: b64('ps\r') },
+      state,
+      SID,
+      { connectionType: 'serial' },
+    );
+    renderEventToXterm(
+      { write: term.write },
+      {
+        type: 'data',
+        origin: 'device',
+        sequence: 2,
+        timestamp: 0,
+        dataBase64: b64('ps\r\nCPU 1\r\nmsh >'),
+      },
+      state,
+      SID,
+      { connectionType: 'serial' },
+    );
+    expect(term.calls().join('')).toContain('ps\r\nCPU 1');
+    expect(term.calls().join('')).toContain('msh >');
   });
 
   it('renders ai data locally for RTT log sessions', () => {
@@ -141,6 +186,87 @@ describe('renderEventToXterm', () => {
     );
     const out = term.calls().join('');
     expect(out).toBe('output');
+  });
+
+  it('reports visible-device ack only after xterm write completion callback fires', async () => {
+    const term = makeDeferredWriteStub();
+    const state = createRenderState();
+    const result = renderEventToXterm(
+      { write: term.write },
+      {
+        type: 'data',
+        origin: 'device',
+        sequence: 7,
+        timestamp: 0,
+        dataBase64: b64('boot ok'),
+      },
+      state,
+      SID,
+    );
+    const visible: number[] = [];
+    void result.completion.then((ack) => {
+      if (ack.visibleDeviceSequence !== undefined) visible.push(ack.visibleDeviceSequence);
+    });
+
+    await Promise.resolve();
+    expect(result.wroteDeviceText).toBe(true);
+    expect(visible).toEqual([]);
+
+    term.flush();
+    await Promise.resolve();
+    expect(visible).toEqual([7]);
+  });
+
+  it('does not treat synchronous term.write return as visible-device ack', async () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    const result = renderEventToXterm(
+      { write: term.write },
+      {
+        type: 'data',
+        origin: 'device',
+        sequence: 8,
+        timestamp: 0,
+        dataBase64: b64('boot ok'),
+      },
+      state,
+      SID,
+    );
+    const visible: number[] = [];
+    void result.completion.then((ack) => {
+      if (ack.visibleDeviceSequence !== undefined) visible.push(ack.visibleDeviceSequence);
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(term.calls()).toEqual(['boot ok']);
+    expect(visible).toEqual([]);
+  });
+
+  it('does not create visible-device ack for state, error, clear, outgoing, empty, or incomplete UTF-8 events', async () => {
+    const term = makeDeferredWriteStub();
+    const state = createRenderState();
+    const events: SerializedTranscriptEvent[] = [
+      { type: 'state', origin: 'system', sequence: 1, timestamp: 0, meta: { to: 'open' } },
+      { type: 'error', origin: 'system', sequence: 2, timestamp: 0, meta: { message: 'boom' } },
+      { type: 'clear', origin: 'human', sequence: 3, timestamp: 0 },
+      { type: 'data', origin: 'human', sequence: 4, timestamp: 0, dataBase64: b64('cmd') },
+      { type: 'data', origin: 'device', sequence: 5, timestamp: 0, dataBase64: '' },
+      { type: 'data', origin: 'device', sequence: 6, timestamp: 0, dataBase64: b64Bytes([0xe4, 0xb8]) },
+    ];
+    const results = events.map((event) =>
+      renderEventToXterm({ write: term.write }, event, state, SID),
+    );
+    term.flush();
+    const acks = await Promise.all(results.map((result) => result.completion));
+    expect(acks.map((ack) => ack.visibleDeviceSequence)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
   });
 
   it('resets unterminated ANSI color at line breaks for embedded terminal output', () => {
@@ -372,7 +498,7 @@ describe('renderEventToXterm', () => {
     expect(matches?.length).toBe(2);
   });
 
-  it('keeps device prompt and echo contiguous when human input is hidden', () => {
+  it('shows human input separately from a device echo', () => {
     const term = makeWriteStub();
     const state = createRenderState();
     renderEventToXterm(
@@ -407,12 +533,9 @@ describe('renderEventToXterm', () => {
     );
     const out = term.calls().join('');
     expect(out).toBe('msh />ls\r\n');
-    expect(out).not.toContain('[H]');
-    expect(out).not.toContain('ll');
-    expect(out).not.toContain('ss');
   });
 
-  it('keeps device prompt and echo contiguous when ai input is hidden', () => {
+  it('shows AI input through the device echo without duplicating the command', () => {
     const term = makeWriteStub();
     const state = createRenderState();
     renderEventToXterm(
@@ -435,7 +558,6 @@ describe('renderEventToXterm', () => {
     );
     const out = term.calls().join('');
     expect(out).toBe('msh />help\r\nRT-Thread shell commands:\r\nmsh />');
-    expect(out).not.toContain('[A]');
     expect(out.match(/help/g)?.length).toBe(1);
   });
 

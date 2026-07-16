@@ -110,6 +110,11 @@ export interface SessionManagerLike {
     data: Uint8Array,
     options: { origin: 'ai'; correlationId?: string },
   ): Promise<void>;
+  /** Mark this session's AI write path as unresponsive after a timeout. */
+  markAiUnresponsive?(
+    id: SessionId,
+    details: { cursorBefore: SequenceCursor; cursorAfter: SequenceCursor },
+  ): void;
   /**
    * 等待匹配 predicate 的 transcript event。语义见 SessionManager.waitFor。
    *

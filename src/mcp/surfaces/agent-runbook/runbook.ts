@@ -28,14 +28,13 @@ export interface RunbookWorkflow {
 
 export interface RunbookHighImpactTool {
   name: string;
-  requiresConfirmation: true;
-  missingConfirmationCode: 'CONFIRMATION_REQUIRED';
-  backendInvokedWithoutConfirmation: false;
+  requiresConfirmation: false;
+  backendInvokedWithoutConfirmation: true;
 }
 
 export interface RunbookControlWorkflowMode {
   mode: 'flash-observe' | 'debug-diagnose' | 'flash-observe-diagnose';
-  requiresConfirmation: true;
+  requiresConfirmation: false;
 }
 
 export interface RunbookProfileSummary {
@@ -142,7 +141,7 @@ export const RUNBOOK_WORKFLOWS: readonly RunbookWorkflow[] = [
       'cleanup_control_workflow_jobs',
     ],
     riskLevel: 'high',
-    requiresConfirmation: true,
+    requiresConfirmation: false,
     expectedEvidenceKind: 'debug_output',
   },
   {
@@ -159,7 +158,7 @@ export const RUNBOOK_WORKFLOWS: readonly RunbookWorkflow[] = [
       'crash_diagnose',
     ],
     riskLevel: 'high',
-    requiresConfirmation: true,
+    requiresConfirmation: false,
     expectedEvidenceKind: 'debug_output',
   },
   {
@@ -210,15 +209,14 @@ export const HIGH_IMPACT_TOOLS: readonly RunbookHighImpactTool[] = [
   'jlink_commander_script',
 ].map((name) => ({
   name,
-  requiresConfirmation: true,
-  missingConfirmationCode: 'CONFIRMATION_REQUIRED',
-  backendInvokedWithoutConfirmation: false,
+  requiresConfirmation: false,
+  backendInvokedWithoutConfirmation: true,
 })) as readonly RunbookHighImpactTool[];
 
 export const HIGH_IMPACT_CONTROL_WORKFLOW_MODES: readonly RunbookControlWorkflowMode[] = [
-  { mode: 'flash-observe', requiresConfirmation: true },
-  { mode: 'debug-diagnose', requiresConfirmation: true },
-  { mode: 'flash-observe-diagnose', requiresConfirmation: true },
+  { mode: 'flash-observe', requiresConfirmation: false },
+  { mode: 'debug-diagnose', requiresConfirmation: false },
+  { mode: 'flash-observe-diagnose', requiresConfirmation: false },
 ] as const;
 
 const SAFETY_RULES = [
@@ -228,14 +226,15 @@ const SAFETY_RULES = [
   'Use ui_screenshot only when visual evidence is needed; prefer get_app_status for startup state checks.',
   'All terminal writes must go through LinkTerm MCP session tools so human and AI input share the same WriteQueue and transcript.',
   'For terminal commands, use write_to_session or send_and_wait to send data and read_from_session to read transcript evidence; do not infer that LinkTerm lacks a send interface from a partial host tool view.',
+  'If send_and_wait returns TIMEOUT with retryable=false, do not resend automatically: read the session status/transcript first and wait for fresh device-origin output or reopen the session. DEVICE_UNRESPONSIVE blocks AI writes only; human input and reads remain available.',
   'For continuous RTT log observation, prefer open_rtt_log_session with root/profile so LinkTerm starts the managed GDB server, connects RTT, and opens the App-visible session in one high-level operation; use probeId only to reuse an already prepared RTT backend.',
   'For RTT sessions, a successful write_to_session/send_and_wait bytesWritten result only proves LinkTerm accepted bytes into the shared write path; it does not prove target firmware consumed RTT down-channel input. Use device-origin transcript bytes or diagnose_rtt_log_session target_input_unanswered evidence before claiming interactive board success.',
   'If a continuous RTT log session is silent or only shows a SEGGER banner, call diagnose_rtt_log_session and treat it as a firmware-output/channel/control-block diagnosis; when the firmware exposes a known _SEGGER_RTT address, save it as profile.rtt.controlBlockAddress and reopen the root/profile RTT log path instead of repeating flash.',
   'Prefer the current workspace control profile: inspect or read <root>/.linkterm/control-profile.json first, and omit firmware.filePath when profile.flash.binary already names the firmware.',
   'When only the chip/J-Link target should be connected, use connect_control_profile_chip and disconnect_control_profile_chip; keep serial/RTT session lifecycle separate.',
   FIRMWARE_IMAGE_USAGE_GUIDANCE,
-  'High-impact J-Link and workflow operations require confirm=true; without it LinkTerm returns CONFIRMATION_REQUIRED and does not invoke the backend.',
-  'When runtime diagnostics report stale code, call restart_mcp_runtime with confirm=true, then call get_app_status after restart before hardware operations.',
+  'High-impact J-Link and workflow operations execute immediately after validation; observe progress and results in Activity Center, transcript, and audit records.',
+  'When runtime diagnostics report stale code, call restart_mcp_runtime, then call get_app_status after restart before hardware operations.',
   'For long flash/observe/debug workflows, use run_control_workflow background job mode and recover with get_control_workflow_job_status plus read_control_workflow_job instead of retrying flash or using external tools.',
   'Conclusions must cite fresh LinkTerm MCP evidence; old serial output or external tool logs are not proof.',
 ] as const;
@@ -256,13 +255,14 @@ export function createAgentRunbookInstructions(schemaVersion: string): string {
     'Call LinkTerm MCP tools sequentially; do not batch or parallelize first contact, health checks, or hardware-control steps.',
     'After a new MCP session or server reload, make one lightweight health-check call such as get_app_status or get_agent_runbook before dependent operations.',
     'Prefer get_app_status for startup health: it is read-only, includes runtime identity and core tool-set diagnostics, and never captures screenshots or touches hardware.',
-    'Startup model: use initialize instructions or get_agent_runbook for MCP usage, then call get_app_status for current state; if recommendedWorkflows contains profile_flash_observe, use those run_control_workflow arguments and add confirm=true only for explicit user-requested high-impact runs.',
+    'Startup model: use initialize instructions or get_agent_runbook for MCP usage, then call get_app_status for current state; if recommendedWorkflows contains profile_flash_observe, use those run_control_workflow arguments and observe Activity Center, transcript, and audit evidence.',
     'If core tools are missing, repair or restart the LinkTerm MCP runtime instead of falling back to external tools.',
-    'If runtime code is stale, call restart_mcp_runtime with confirm=true, then call get_app_status after the runtime restarts before hardware operations.',
+    'If runtime code is stale, call restart_mcp_runtime, then call get_app_status after the runtime restarts before hardware operations.',
     'Use ui_screenshot only when visual evidence is needed; prefer get_app_status for startup state checks.',
     'LinkTerm MCP tools are the required path for J-Link, debug, flash, and serial operations exposed through the LinkTerm runtime.',
     'All terminal writes must use LinkTerm MCP session tools so AI and human input share the same WriteQueue and transcript.',
     'For terminal commands, send bytes with write_to_session or send_and_wait, then read transcript evidence with read_from_session; never claim LinkTerm lacks a send interface before checking get_app_status terminalCommandTools.',
+    'If send_and_wait returns TIMEOUT with retryable=false, do not resend automatically: read the session status/transcript first and wait for fresh device-origin output or reopen the session. DEVICE_UNRESPONSIVE blocks AI writes only; human input and reads remain available.',
     'For RTT terminal sessions, bytesWritten from write_to_session/send_and_wait is host-side acceptance only; require later device-origin output or diagnose_rtt_log_session evidence that is not target_input_unanswered before claiming the board consumed the input.',
     'For continuous RTT log observation, call open_rtt_log_session with root/profile and then read_from_session; this high-level path owns managed GDB server startup and RTT connect internally. If the session is silent or only shows a SEGGER banner, call diagnose_rtt_log_session before considering flash/reset/debug recovery; when _SEGGER_RTT is known, persist it as profile.rtt.controlBlockAddress so LinkTerm configures SEGGER RTT Telnet with that control block. Use probeId only to reuse an already prepared RTT backend; use rtt_read/rtt_search/rtt_clear only for bounded one-shot debug evidence.',
     'Prefer the current workspace control profile: inspect or read <root>/.linkterm/control-profile.json first, and omit firmware.filePath when profile.flash.binary already names the firmware.',
@@ -271,7 +271,7 @@ export function createAgentRunbookInstructions(schemaVersion: string): string {
     'Prefer run_control_workflow for supported hardware workflows before manually chaining low-level serial and J-Link tools.',
     'For long-running flash/observe/debug workflows, use run_control_workflow background job mode, then poll get_control_workflow_job_status and read_control_workflow_job; cancel with cancel_control_workflow_job when needed.',
     `Available workflow hints: ${workflowIds}.`,
-    `High-impact tools require confirm=true and return CONFIRMATION_REQUIRED without backend invocation when confirmation is absent: ${highImpactTools}.`,
+    `High-impact tools execute immediately after validation; observe their Activity/Audit lifecycle and backend evidence: ${highImpactTools}.`,
     'Collect fresh MCP evidence before claiming success or failure.',
   ].join(' ');
 }
@@ -398,17 +398,17 @@ function renderRunbookMarkdown(payload: Omit<AgentRunbook, 'markdown'>): string 
   const workflowLines = payload.workflows
     .map(
       (workflow) =>
-        `- ${workflow.id}: use ${workflow.recommendedTools.join(' -> ')}; risk=${workflow.riskLevel}; confirm=${String(workflow.requiresConfirmation)}; evidence=${workflow.expectedEvidenceKind}`,
+        `- ${workflow.id}: use ${workflow.recommendedTools.join(' -> ')}; risk=${workflow.riskLevel}; execution=automatic; observe=${workflow.expectedEvidenceKind}`,
     )
     .join('\n');
   const highImpactLines = payload.highImpactTools
     .map(
       (tool) =>
-        `- ${tool.name}: requires confirm=true; missing confirmation returns CONFIRMATION_REQUIRED before backend invocation.`,
+        `- ${tool.name}: executes immediately after validation; observe Activity/Audit lifecycle and backend evidence.`,
     )
     .join('\n');
   const workflowModeLines = payload.highImpactControlWorkflowModes
-    .map((entry) => `- run_control_workflow mode ${entry.mode}: requires confirm=true.`)
+    .map((entry) => `- run_control_workflow mode ${entry.mode}: executes immediately; observe Activity/Audit lifecycle.`)
     .join('\n');
   const safetyLines = payload.safetyRules.map((rule) => `- ${rule}`).join('\n');
 
@@ -425,11 +425,11 @@ function renderRunbookMarkdown(payload: Omit<AgentRunbook, 'markdown'>): string 
     '',
     'Use get_app_status as the preferred lightweight health-check call after initialize or server reload. It is read-only and reports runtime identity, metadata freshness, UI availability without screenshot capture, sanitized profile status, J-Link probe visibility, and core tool-set diagnostics without flashing, resetting, starting GDB, opening sessions, or writing to terminals.',
     '',
-    'Startup model: treat MCP usage and MCP current state as the only required pre-run inputs. Use initialize instructions or get_agent_runbook for usage, then call get_app_status for current state. If get_app_status returns recommendedWorkflows.profile_flash_observe, use its run_control_workflow arguments, add confirm=true only for an explicit user-requested high-impact run, and recover evidence with the listed follow-up tools.',
+    'Startup model: treat MCP usage and MCP current state as the only required pre-run inputs. Use initialize instructions or get_agent_runbook for usage, then call get_app_status for current state. If get_app_status returns recommendedWorkflows.profile_flash_observe, use its run_control_workflow arguments and recover evidence with the listed follow-up tools.',
     '',
     'If get_app_status reports missing core tools, repair or restart the LinkTerm MCP runtime. Do not treat missing tools as a hardware failure and do not recover by running external J-Link, GDB, flash, serial CLI, or VS Code task commands.',
     '',
-    'If get_app_status reports stale runtime code, call restart_mcp_runtime with confirm=true, then call get_app_status after the runtime restarts before hardware operations.',
+    'If get_app_status reports stale runtime code, call restart_mcp_runtime, then call get_app_status after the runtime restarts before hardware operations.',
     '',
     '## Ownership boundary',
     '',
@@ -451,7 +451,7 @@ function renderRunbookMarkdown(payload: Omit<AgentRunbook, 'markdown'>): string 
     '',
     workflowLines,
     '',
-    '## High-impact confirmations',
+    '## High-impact observe-only operations',
     '',
     highImpactLines,
     workflowModeLines,

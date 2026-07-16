@@ -1,0 +1,7 @@
+schema: spec-driven
+created: 2026-07-13
+goal: Add the Phase 2 read-only Activity Center renderer experience on top of
+  the Phase 1 Main-owned activity ledger, making AI actions, workflow steps,
+  active/attention states, filters, session navigation, diagnostics, and safe
+  summaries visible without changing authorization, readiness, first-success,
+  pause, persistence, or hardware behavior.

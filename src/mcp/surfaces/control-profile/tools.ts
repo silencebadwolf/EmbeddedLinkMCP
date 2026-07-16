@@ -114,7 +114,7 @@ export function registerControlProfileTools(
         const profile = await deps.controlProfileManager.init(rootContext.hostRoot, input.profile, {
           force: input.force ?? false,
         });
-        await saveAiControlProfileRecord(
+        await saveControlProfileRecord(
           deps.controlProfileRecordManager,
           rootContext.hostRoot,
           profile,
@@ -222,7 +222,7 @@ export function registerControlProfileTools(
         const profile = await deps.controlProfileManager.init(rootContext.hostRoot, nextPatch, {
           force: true,
         });
-        await saveAiControlProfileRecord(
+        await saveControlProfileRecord(
           deps.controlProfileRecordManager,
           rootContext.hostRoot,
           profile,
@@ -517,7 +517,7 @@ function successProfile(
   };
 }
 
-async function saveAiControlProfileRecord(
+async function saveControlProfileRecord(
   manager: ControlProfileRecordManager | undefined,
   root: string,
   profile: ControlProfile,

@@ -1,0 +1,7 @@
+schema: spec-driven
+created: 2026-07-12
+goal: Add a best-effort, queryable in-memory Operation and per-invocation
+  CallAttempt ledger for every MCP call that enters a LinkTerm handler through
+  the supported Electron Main-owned runtime, plus workflow-job milestones and
+  a display-safe activity IPC bridge, without changing business results or
+  authorization behavior.

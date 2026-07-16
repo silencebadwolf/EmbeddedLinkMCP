@@ -60,9 +60,11 @@ describe('resolveElectronRuntime', () => {
     processWithElectronBinding.electron = electronApi;
 
     try {
-      expect(resolveElectronRuntime(() => {
-        throw new Error('npm electron wrapper should not be required inside Electron runtime');
-      })).toBe(electronApi);
+      expect(
+        resolveElectronRuntime(() => {
+          throw new Error('npm electron wrapper should not be required inside Electron runtime');
+        }),
+      ).toBe(electronApi);
     } finally {
       if (originalElectron === undefined) {
         delete processWithElectronBinding.electron;
@@ -94,6 +96,12 @@ describe('resolveElectronRuntime', () => {
     expect(exposeInMainWorld).toHaveBeenCalledWith(
       'linkterm',
       expect.objectContaining({
+        activity: expect.objectContaining({
+          subscribe: expect.any(Function),
+          snapshot: expect.any(Function),
+          unsubscribe: expect.any(Function),
+          onEvent: expect.any(Function),
+        }),
         agentIntegrations: expect.objectContaining({
           list: expect.any(Function),
           install: expect.any(Function),
