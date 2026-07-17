@@ -3,6 +3,7 @@
 import {
   COMPLETION_BUFFER_MAX_BYTES,
   DEFAULT_LINE_ENDING,
+  TERMINAL_RULES_DEFAULT_SETTLE_MS,
   TERMINAL_RULES_DEFAULT_TIMEOUT_MS,
 } from '../../shared/constants.js';
 import type { CompletionMarker, TerminalRuleSet } from './types.js';
@@ -10,13 +11,14 @@ import type { CompletionMarker, TerminalRuleSet } from './types.js';
 /**
  * 项目级默认规则。
  *
- * 决策：completionMarkers 默认空数组 —— Phase 7 不预设 prompt 形态（嵌入式设备各异）。
- * 调用方（MCP 工具 / 工作区配置）显式提供时由 mergeRules 整体替换。
+ * 决策：completionMarkers 默认空数组 —— 不预设 prompt 形态（嵌入式设备各异）。
+ * 显式提供时只用于 settle 结果标注，不作为返回前提。
  */
 export const DEFAULT_TERMINAL_RULES: TerminalRuleSet = {
   lineEnding: DEFAULT_LINE_ENDING,
   completionMarkers: [],
   defaultTimeoutMs: TERMINAL_RULES_DEFAULT_TIMEOUT_MS,
+  defaultSettleMs: TERMINAL_RULES_DEFAULT_SETTLE_MS,
   echoStrategy: 'auto',
   completionBufferMaxBytes: COMPLETION_BUFFER_MAX_BYTES,
 };
@@ -43,6 +45,7 @@ export function mergeRules(
         ? [...override.completionMarkers]
         : [...base.completionMarkers],
     defaultTimeoutMs: override.defaultTimeoutMs ?? base.defaultTimeoutMs,
+    defaultSettleMs: override.defaultSettleMs ?? base.defaultSettleMs,
     echoStrategy: override.echoStrategy ?? base.echoStrategy,
     completionBufferMaxBytes: override.completionBufferMaxBytes ?? base.completionBufferMaxBytes,
   };

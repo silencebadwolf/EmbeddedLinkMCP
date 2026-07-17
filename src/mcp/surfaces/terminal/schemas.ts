@@ -145,19 +145,20 @@ const completionMarkerSchema = z.union([
 ]);
 
 /**
- * send_and_wait 入参 —— Phase 7：扩展 completion marker / echo strategy / line ending。
+ * send_and_wait 入参：发送后固定观察窗口，再返回设备输出。
  *
- * 兼容性：未提供新字段时默认行为退化为"等任意 device 输出"；
- * 但实际由 core orchestrator 做更稳健的处理（当 completionMarkers 为空时
- * 取首个 device data event 作为命中证据）。
+ * 兼容性：`timeoutMs` 保留为 `settleMs` 的废弃别名；completionMarkers
+ * 保留用于结果标注，不再阻塞返回。
  */
 export const sendAndWaitInputSchema = z.object({
   ...commonSchema,
   sessionId: z.string().min(1),
   payload: dataPayloadSchema,
-  /** 最长等待时间（毫秒）；缺省使用 TerminalRuleSet 默认值。 */
+  /** 发送后的固定观察窗口（毫秒）；缺省使用 TerminalRuleSet 默认值。 */
+  settleMs: z.number().int().positive().max(300_000).optional(),
+  /** @deprecated 兼容旧客户端；等价于 settleMs，settleMs 优先。 */
   timeoutMs: z.number().int().positive().max(300_000).optional(),
-  /** 完成标记列表；为空数组时 orchestrator 将 fallback 为"任意 device 输出即视为完成"。 */
+  /** 完成标记列表；只用于结果标注，不是成功前提。 */
   completionMarkers: z.array(completionMarkerSchema).optional(),
   /** 回显处理策略；缺省 'auto'。 */
   echoStrategy: z.enum(['auto', 'keep']).optional(),

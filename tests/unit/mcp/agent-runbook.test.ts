@@ -120,8 +120,8 @@ describe('agent runbook builder', () => {
     expect(runbook.markdown).toContain('write_to_session');
     expect(runbook.markdown).toContain('send_and_wait');
     expect(runbook.markdown).toContain('read_from_session');
-    expect(runbook.markdown).toContain('retryable=false');
-    expect(runbook.markdown).toContain('DEVICE_UNRESPONSIVE');
+    expect(runbook.markdown).toContain('bounded settle window');
+    expect(runbook.markdown).toContain('hasDeviceOutput');
     expect(runbook.markdown).toContain('open_rtt_log_session');
     expect(runbook.markdown).toContain('diagnose_rtt_log_session');
     expect(runbook.markdown).toContain('continuous RTT log');
@@ -287,8 +287,8 @@ describe('MCP agent runbook tool', () => {
     expect(instructions).toContain('write_to_session');
     expect(instructions).toContain('send_and_wait');
     expect(instructions).toContain('read_from_session');
-    expect(instructions).toContain('retryable=false');
-    expect(instructions).toContain('DEVICE_UNRESPONSIVE');
+    expect(instructions).toContain('bounded settle window');
+    expect(instructions).toContain('hasDeviceOutput');
     expect(instructions).toContain('diagnose_rtt_log_session');
     expect(instructions).toContain('SEGGER banner');
     expect(instructions).toContain('target_input_unanswered');

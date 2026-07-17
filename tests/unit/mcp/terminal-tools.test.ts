@@ -178,11 +178,14 @@ describe('MCP terminal tools', () => {
       sessionId: session.id,
       payload: { encoding: 'utf-8', data: 'cmd' },
       completionMarkers: ['DONE'],
+      settleMs: 5,
       timeoutMs: 1000,
     });
 
-    expect(out.success).toBe(false);
-    expect((out.error as { code: string }).code).toBe('TIMEOUT');
+    expect(out.success).toBe(true);
+    expect(
+      (out.evidence as { data: { hasDeviceOutput: boolean } }).data.hasDeviceOutput,
+    ).toBe(false);
     expect(transport.writes).toHaveLength(1);
   });
 
@@ -397,7 +400,7 @@ describe('MCP terminal tools', () => {
     expect(ports).toEqual([{ path: '/dev/tty.fake', manufacturer: 'TestCo' }]);
   });
 
-  it('send_and_wait resolves on first device output (no markers => fallback) and returns matched evidence', async () => {
+  it('send_and_wait returns settled evidence after observing device output', async () => {
     const transport = new MockTransport();
     const session = injectTestSession(harness.manager, transport);
     await session.open();
@@ -408,7 +411,7 @@ describe('MCP terminal tools', () => {
         sessionId: session.id,
         payload: { encoding: 'utf-8', data: 'cmd' },
         timeoutMs: 1000,
-        // no completionMarkers => fallback to "any device output"
+        // no completionMarkers => output is observed until the settle boundary
       },
     });
 
@@ -436,7 +439,7 @@ describe('MCP terminal tools', () => {
     expect(evidence.data.cursorAfter).toBeGreaterThanOrEqual(evidence.data.cursorBefore);
   });
 
-  it('send_and_wait matches a cross-chunk completion marker', async () => {
+  it('send_and_wait reports a cross-chunk completion marker as metadata', async () => {
     const transport = new MockTransport();
     const session = injectTestSession(harness.manager, transport);
     await session.open();
@@ -468,7 +471,7 @@ describe('MCP terminal tools', () => {
     expect(new TextDecoder().decode(fromB64(evidence.data.receivedBase64))).toContain('DONE');
   });
 
-  it('send_and_wait returns TIMEOUT and includes received bytes captured so far', async () => {
+  it('send_and_wait returns settled evidence with received bytes even without a marker', async () => {
     const transport = new MockTransport();
     const session = injectTestSession(harness.manager, transport);
     await session.open();
@@ -491,18 +494,23 @@ describe('MCP terminal tools', () => {
 
     const result = await callPromise;
     const out = result.structuredContent as Record<string, unknown>;
-    expect(out.success).toBe(false);
-    const error = out.error as {
-      code: string;
-      details?: { receivedBase64?: string; cursorBefore?: number };
+    expect(out.success).toBe(true);
+    const evidence = out.evidence as {
+      data: {
+        receivedBase64?: string;
+        cursorBefore?: number;
+        hasDeviceOutput?: boolean;
+        reason?: string;
+      };
     };
-    expect(error.code).toBe('TIMEOUT');
-    expect(error.details?.receivedBase64).toBeDefined();
-    expect(new TextDecoder().decode(fromB64(error.details!.receivedBase64!))).toContain('partial');
-    expect(typeof error.details?.cursorBefore).toBe('number');
+    expect(evidence.data.reason).toBe('settled');
+    expect(evidence.data.receivedBase64).toBeDefined();
+    expect(new TextDecoder().decode(fromB64(evidence.data.receivedBase64!))).toContain('partial');
+    expect(evidence.data.hasDeviceOutput).toBe(true);
+    expect(typeof evidence.data.cursorBefore).toBe('number');
   });
 
-  it('blocks a second AI write after send_and_wait timeout until device output resumes', async () => {
+  it('does not block a second AI write when settle produces no device output', async () => {
     const transport = new MockTransport();
     const session = injectTestSession(harness.manager, transport);
     await session.open();
@@ -517,13 +525,10 @@ describe('MCP terminal tools', () => {
       },
     });
     const firstOut = first.structuredContent as Record<string, unknown>;
-    expect(firstOut.success).toBe(false);
-    expect((firstOut.error as { code: string; details?: Record<string, unknown> }).code).toBe(
-      'TIMEOUT',
-    );
+    expect(firstOut.success).toBe(true);
     expect(
-      (firstOut.error as { details?: Record<string, unknown> }).details,
-    ).toMatchObject({ retryable: false, recoveryRequired: true });
+      (firstOut.evidence as { data: { hasDeviceOutput: boolean } }).data.hasDeviceOutput,
+    ).toBe(false);
 
     const second = await harness.client.callTool({
       name: 'write_to_session',
@@ -533,9 +538,8 @@ describe('MCP terminal tools', () => {
       },
     });
     const secondOut = second.structuredContent as Record<string, unknown>;
-    expect(secondOut.success).toBe(false);
-    expect((secondOut.error as { code: string }).code).toBe('DEVICE_UNRESPONSIVE');
-    expect(transport.writes).toHaveLength(1);
+    expect(secondOut.success).toBe(true);
+    expect(transport.writes).toHaveLength(2);
 
     const read = await callTool(harness.client, 'read_from_session', {
       sessionId: session.id,
@@ -543,19 +547,9 @@ describe('MCP terminal tools', () => {
     });
     expect(read.success).toBe(true);
 
-    transport.pushIncoming(utf8('late device response'));
-    const third = await harness.client.callTool({
-      name: 'write_to_session',
-      arguments: {
-        sessionId: session.id,
-        payload: { encoding: 'utf-8', data: 'after-recovery' },
-      },
-    });
-    expect((third.structuredContent as Record<string, unknown>).success).toBe(true);
-    expect(transport.writes).toHaveLength(2);
   });
 
-  it('translates a second send_and_wait after timeout without writing again', async () => {
+  it('allows a second send_and_wait after an empty settle observation', async () => {
     const transport = new MockTransport();
     const session = injectTestSession(harness.manager, transport);
     await session.open();
@@ -569,7 +563,7 @@ describe('MCP terminal tools', () => {
         timeoutMs: 40,
       },
     });
-    expect((first.structuredContent as Record<string, unknown>).success).toBe(false);
+    expect((first.structuredContent as Record<string, unknown>).success).toBe(true);
 
     const second = await harness.client.callTool({
       name: 'send_and_wait',
@@ -581,13 +575,8 @@ describe('MCP terminal tools', () => {
       },
     });
     const out = second.structuredContent as Record<string, unknown>;
-    expect(out.success).toBe(false);
-    expect((out.error as { code: string }).code).toBe('DEVICE_UNRESPONSIVE');
-    expect((out.error as { details?: Record<string, unknown> }).details).toMatchObject({
-      retryable: false,
-      recoveryRequired: true,
-    });
-    expect(transport.writes).toHaveLength(1);
+    expect(out.success).toBe(true);
+    expect(transport.writes).toHaveLength(2);
   });
 
   it('send_and_wait translates session-closed to SESSION_CLOSED with sessionState detail', async () => {

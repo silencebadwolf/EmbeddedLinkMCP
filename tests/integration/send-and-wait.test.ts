@@ -13,7 +13,7 @@ describe('Phase 7 — sendAndWait integration', () => {
     await new Promise((r) => setImmediate(r));
   };
 
-  it('cross-chunk completion marker over LocalShellSession + FakePty', async () => {
+  it('cross-chunk completion marker is reported as metadata over LocalShellSession + FakePty', async () => {
     const manager = new SessionManager();
     const { factory, created } = createMockPtyFactory();
     let session!: LocalShellSession;
@@ -49,7 +49,7 @@ describe('Phase 7 — sendAndWait integration', () => {
     const result = await orchestrator;
     expect(result.success).toBe(true);
     if (!result.success) throw new Error('expected success');
-    expect(result.reason).toBe('matched');
+    expect(result.reason).toBe('settled');
     expect(result.matchedMarkerIndex).toBe(0);
     // received buffer should at least include DONE
     expect(new TextDecoder().decode(result.received)).toContain('DONE');
@@ -57,7 +57,7 @@ describe('Phase 7 — sendAndWait integration', () => {
     await manager.destroyAll();
   });
 
-  it('timeout returns received bytes accumulated so far (no completion marker hit)', async () => {
+  it('settle returns received bytes accumulated so far (no completion marker hit)', async () => {
     const manager = new SessionManager();
     const { factory, created } = createMockPtyFactory();
     let session!: LocalShellSession;
@@ -83,9 +83,10 @@ describe('Phase 7 — sendAndWait integration', () => {
     pty.pushIncoming('partial output');
 
     const result = await orchestrator;
-    expect(result.success).toBe(false);
-    if (result.success) throw new Error('expected failure');
-    expect(result.reason).toBe('timeout');
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error('expected success');
+    expect(result.reason).toBe('settled');
+    expect(result.hasDeviceOutput).toBe(true);
     expect(new TextDecoder().decode(result.received)).toContain('partial output');
 
     await manager.destroyAll();
@@ -120,8 +121,7 @@ describe('Phase 7 — sendAndWait integration', () => {
     const result = await orchestrator;
     expect(result.success).toBe(false);
     if (result.success) throw new Error('expected failure');
-    // either session-closed (preferred) or aborted/timeout depending on race; must not be timeout-hung
-    expect(['session-closed', 'timeout']).toContain(result.reason);
+    expect(result.reason).toBe('session-closed');
 
     await manager.destroyAll();
   });

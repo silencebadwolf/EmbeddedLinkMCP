@@ -1,7 +1,8 @@
-// Phase 7 sendAndWait orchestrator：串联 EchoHandler + CompletionDetector + SessionManager.write/waitFor，输出结构化结果。
+// sendAndWait orchestrator：发送后固定观察窗口，再返回 transcript 中的设备输出。
 
 import type { TranscriptEvent } from '../transcript/types.js';
 import { WriteQueueFullError } from '../write-queue/types.js';
+import { TERMINAL_OBSERVATION_MAX_BYTES } from '../../shared/constants.js';
 import { CompletionDetector } from './completion-detector.js';
 import { EchoHandler } from './echo-handler.js';
 import { DEFAULT_TERMINAL_RULES, appendLineEnding, mergeRules } from './rules.js';
@@ -18,7 +19,7 @@ const EMPTY = new Uint8Array(0);
  * sendAndWait orchestrator —— 注入式纯函数。
  *
  * @param deps  注入的 SessionManagerLike（生产环境 = SessionManager；测试 = mock）
- * @param args  写入 payload + 规则覆盖 + 超时/correlationId/signal
+ * @param args  写入 payload + 规则覆盖 + settle 窗口/correlationId/signal
  * @returns     结构化结果；调用方据此决定是否翻译为 ToolError
  */
 export async function sendAndWait(
@@ -27,7 +28,7 @@ export async function sendAndWait(
 ): Promise<SendAndWaitResult> {
   const { sessionManager } = deps;
   const rules = mergeRules(DEFAULT_TERMINAL_RULES, args.rules);
-  const timeoutMs = args.timeoutMs ?? rules.defaultTimeoutMs;
+  const settleMs = args.settleMs ?? args.timeoutMs ?? rules.defaultSettleMs;
 
   const writeBytes =
     args.appendLineEnding === false
@@ -44,42 +45,47 @@ export async function sendAndWait(
 
   const detector = new CompletionDetector(rules.completionMarkers, rules.completionBufferMaxBytes);
   const echo = new EchoHandler(rules.echoStrategy);
+  const observedChunks: Uint8Array[] = [];
+  let observedStoredBytes = 0;
+  let observedTotalBytes = 0;
 
-  // 终态构造 helper：四分支共用 received/cursor/bytesWritten 抓取，差异化部分通过 extras 注入
+  // 终态构造 helper：所有路径共用 received/cursor/bytesWritten 抓取，
+  // settle 是正常成功结果，marker 只作为观察元数据。
   const finalize = (
-    reason: 'matched' | 'timeout' | 'session-closed' | 'aborted',
+    reason: 'settled' | 'session-closed' | 'aborted',
     extras: {
       bytesWritten: number;
       matchedMarkerIndex?: number | null;
       sessionState?: 'closed' | 'errored';
     },
   ): SendAndWaitResult => {
-    const buffer = detector.snapshotBuffer();
+    const buffer = joinObservedChunks(observedChunks, observedStoredBytes);
     const cursorAfter = safeReadCursor(sessionManager, args.sessionId, cursorBefore);
-    if (reason === 'matched') {
+    if (reason === 'settled') {
+      const detectorState = detector.feed(EMPTY);
       return {
         success: true,
-        reason: 'matched',
+        reason: 'settled',
         bytesWritten: extras.bytesWritten,
-        matchedMarkerIndex: extras.matchedMarkerIndex ?? null,
+        matchedMarkerIndex:
+          extras.matchedMarkerIndex ??
+          (detectorState.matchedMarkerIndex >= 0 ? detectorState.matchedMarkerIndex : null),
+        hasDeviceOutput: buffer.byteLength > 0,
+        receivedTruncated: observedTotalBytes > observedStoredBytes,
+        receivedTotalBytes: observedTotalBytes,
         received: buffer,
         receivedBase64: toBase64(buffer),
         cursorBefore,
         cursorAfter,
       };
     }
-    if (reason === 'timeout') {
-      try {
-        sessionManager.markAiUnresponsive?.(args.sessionId, { cursorBefore, cursorAfter });
-      } catch {
-        // A concurrent destroy must not replace the timeout evidence with a mark failure.
-      }
-    }
     const base = {
       success: false as const,
       bytesWritten: extras.bytesWritten,
       received: buffer,
       receivedBase64: toBase64(buffer),
+      receivedTruncated: observedTotalBytes > observedStoredBytes,
+      receivedTotalBytes: observedTotalBytes,
       cursorBefore,
       cursorAfter,
     };
@@ -111,6 +117,8 @@ export async function sendAndWait(
         bytesWritten: 0,
         received: EMPTY,
         receivedBase64: '',
+        receivedTruncated: false,
+        receivedTotalBytes: 0,
         cursorBefore,
         cursorAfter,
       };
@@ -123,17 +131,24 @@ export async function sendAndWait(
     return finalize('aborted', { bytesWritten: writeBytes.byteLength });
   }
 
-  // 当 completionMarkers 为空数组时退化为 "任意 device 输出即视为完成"
-  const fallbackOnAny = rules.completionMarkers.length === 0;
   const predicate = (event: TranscriptEvent): boolean => {
     if (event.type !== 'data' || event.origin !== 'device') return false;
     const raw = event.data;
     if (!raw) return false;
     const filtered = echo.filter(raw);
     if (filtered.byteLength === 0) return false;
-    const state = detector.feed(filtered);
-    if (fallbackOnAny) return true;
-    return state.matched;
+    // 设备输出只进入观察缓冲区；既不因任意输出提前返回，也不因 marker
+    // 缺失把健康设备误判成 timeout/unresponsive。
+    detector.feed(filtered);
+    observedTotalBytes += filtered.byteLength;
+    const remaining = TERMINAL_OBSERVATION_MAX_BYTES - observedStoredBytes;
+    if (remaining > 0) {
+      const stored =
+        filtered.byteLength <= remaining ? new Uint8Array(filtered) : filtered.slice(0, remaining);
+      observedChunks.push(stored);
+      observedStoredBytes += stored.byteLength;
+    }
+    return false;
   };
 
   type RaceResult =
@@ -142,7 +157,7 @@ export async function sendAndWait(
 
   const waitPromise = sessionManager
     .waitFor(args.sessionId, predicate, {
-      timeoutMs,
+      timeoutMs: settleMs,
       replayHistorySince: cursorBefore,
     })
     .then((outcome): RaceResult => ({ kind: 'wait', outcome }));
@@ -170,16 +185,14 @@ export async function sendAndWait(
   const outcome = raceResult.outcome;
 
   if (outcome.kind === 'match') {
-    const state = detector.feed(EMPTY); // 取最新快照
-    const matchedMarkerIndex =
-      fallbackOnAny && state.matchedMarkerIndex < 0 ? null : state.matchedMarkerIndex;
-    return finalize('matched', {
+    // predicate 当前永不返回 true；保留该分支以防未来 SessionManager 注入
+    // 实现改变时破坏结果契约。
+    return finalize('settled', {
       bytesWritten: writeBytes.byteLength,
-      matchedMarkerIndex,
     });
   }
   if (outcome.kind === 'timeout') {
-    return finalize('timeout', { bytesWritten: writeBytes.byteLength });
+    return finalize('settled', { bytesWritten: writeBytes.byteLength });
   }
   return finalize('session-closed', {
     bytesWritten: writeBytes.byteLength,
@@ -198,6 +211,18 @@ function safeReadCursor(
   } catch {
     return fallback;
   }
+}
+
+/** 在独立观察缓冲中拼接已保留的设备字节，不受 marker 检测窗口影响。 */
+function joinObservedChunks(chunks: readonly Uint8Array[], totalBytes: number): Uint8Array {
+  if (totalBytes === 0) return EMPTY;
+  const out = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 /**

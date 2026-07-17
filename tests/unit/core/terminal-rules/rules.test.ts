@@ -8,6 +8,7 @@ import {
 import {
   COMPLETION_BUFFER_MAX_BYTES,
   DEFAULT_LINE_ENDING,
+  TERMINAL_RULES_DEFAULT_SETTLE_MS,
   TERMINAL_RULES_DEFAULT_TIMEOUT_MS,
 } from '@/shared/constants.js';
 
@@ -19,6 +20,7 @@ describe('terminal-rules / rules', () => {
     it('uses constants from src/shared/constants.ts', () => {
       expect(DEFAULT_TERMINAL_RULES.lineEnding).toBe(DEFAULT_LINE_ENDING);
       expect(DEFAULT_TERMINAL_RULES.defaultTimeoutMs).toBe(TERMINAL_RULES_DEFAULT_TIMEOUT_MS);
+      expect(DEFAULT_TERMINAL_RULES.defaultSettleMs).toBe(TERMINAL_RULES_DEFAULT_SETTLE_MS);
       expect(DEFAULT_TERMINAL_RULES.completionBufferMaxBytes).toBe(COMPLETION_BUFFER_MAX_BYTES);
       expect(DEFAULT_TERMINAL_RULES.echoStrategy).toBe('auto');
       expect(DEFAULT_TERMINAL_RULES.completionMarkers).toEqual([]);
@@ -41,10 +43,12 @@ describe('terminal-rules / rules', () => {
       const out = mergeRules(DEFAULT_TERMINAL_RULES, {
         lineEnding: '\n',
         defaultTimeoutMs: 1234,
+        defaultSettleMs: 321,
         echoStrategy: 'keep',
       });
       expect(out.lineEnding).toBe('\n');
       expect(out.defaultTimeoutMs).toBe(1234);
+      expect(out.defaultSettleMs).toBe(321);
       expect(out.echoStrategy).toBe('keep');
       expect(out.completionMarkers).toEqual([]);
     });

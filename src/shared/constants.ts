@@ -74,6 +74,22 @@ export const DEFAULT_PTY_COLS = 80;
 export const TERMINAL_RULES_DEFAULT_TIMEOUT_MS = 5_000;
 
 /**
+ * send_and_wait 默认 settle 窗口（毫秒）。
+ *
+ * 这是发送后的观察窗口，不是完成标记超时；窗口结束后调用方拿到已收集
+ * 的设备输出，自行决定是否继续读取或发送下一步命令。
+ */
+export const TERMINAL_RULES_DEFAULT_SETTLE_MS = 500;
+
+/**
+ * send_and_wait 返回的设备观察缓冲上限（字节）。
+ *
+ * 与 completion detector 的匹配窗口分离；超过上限时结果会带
+ * `receivedTruncated=true` 与完整累计字节数，避免 marker 规则改变可见输出。
+ */
+export const TERMINAL_OBSERVATION_MAX_BYTES = 1024 * 1024;
+
+/**
  * CompletionDetector 累计 buffer 上限（字节）。
  *
  * RegExp 完成标记需要在累计 buffer 上重复 test()，长跑命令（如 `dmesg`）下

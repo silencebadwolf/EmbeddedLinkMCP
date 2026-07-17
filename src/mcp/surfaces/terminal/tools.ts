@@ -241,9 +241,9 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
   registerTool(server, {
     name: 'send_and_wait',
     description:
-      'Write bytes to a session and wait until a completion marker is observed in device output, ' +
-      'or timeoutMs elapses. Phase 7: supports cross-chunk string/RegExp markers, echo stripping, ' +
-      'and structured timeout/closed payloads (received bytes are returned even on failure).',
+      'Write bytes to a session, wait a bounded settle interval, and return the device output observed ' +
+      'during that interval. Completion markers are optional result metadata, not a success gate; ' +
+      'settleMs is preferred and timeoutMs remains a compatibility alias.',
     sensitivity: 'state-affecting',
     inputSchema: sendAndWaitInputSchema,
     handler: async (input: SendAndWaitInput): Promise<ToolHandlerResult> => {
@@ -271,7 +271,8 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
         result = await sendAndWait(deps, {
           sessionId: input.sessionId,
           payload: data,
-          // 仅当 caller 显式传 timeoutMs 时覆盖；否则交给 core 默认（TerminalRuleSet.defaultTimeoutMs = 5s）
+          ...(input.settleMs !== undefined ? { settleMs: input.settleMs } : {}),
+          // 兼容旧客户端：core 仅在 settleMs 未提供时使用 timeoutMs。
           ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
           ...(input.correlationId !== undefined ? { correlationId: input.correlationId } : {}),
           ...(input.appendLineEnding !== undefined
@@ -310,21 +311,6 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
       }
 
       if (!result.success) {
-        if (result.reason === 'timeout') {
-          throw new ToolError(
-            ERROR_CODES.TIMEOUT,
-            `Timed out waiting for completion`,
-            {
-              sessionId: session.id,
-              cursorBefore: result.cursorBefore,
-              cursorAfter: result.cursorAfter,
-              receivedBase64: result.receivedBase64,
-              bytesWritten: result.bytesWritten,
-              retryable: false,
-              recoveryRequired: true,
-            },
-          );
-        }
         if (result.reason === 'queue-full') {
           throw new ToolError(ERROR_CODES.QUEUE_FULL, 'Write queue is full; back off and retry', {
             sessionId: session.id,
@@ -340,6 +326,8 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
               cursorBefore: result.cursorBefore,
               cursorAfter: result.cursorAfter,
               receivedBase64: result.receivedBase64,
+              receivedTruncated: result.receivedTruncated,
+              receivedTotalBytes: result.receivedTotalBytes,
               bytesWritten: result.bytesWritten,
             },
           );
@@ -359,6 +347,10 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
           data: {
             bytesWritten: result.bytesWritten,
             matchedMarkerIndex: result.matchedMarkerIndex,
+            hasDeviceOutput: result.hasDeviceOutput,
+            reason: result.reason,
+            receivedTruncated: result.receivedTruncated,
+            receivedTotalBytes: result.receivedTotalBytes,
             receivedBase64: result.receivedBase64,
             cursorBefore: result.cursorBefore,
             cursorAfter: result.cursorAfter,

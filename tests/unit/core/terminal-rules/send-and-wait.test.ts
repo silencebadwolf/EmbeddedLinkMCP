@@ -75,47 +75,51 @@ describe('sendAndWait orchestrator', () => {
     await Promise.resolve();
   };
 
-  it('matched: writes payload (with appended lineEnding) and returns matchedMarkerIndex', async () => {
+  it('settled: returns device output even when the completion marker is not required', async () => {
     const { manager, state } = makeMock();
     const args: SendAndWaitArgs = {
       sessionId: 'sess_1',
       payload: utf8('ls'),
       rules: { completionMarkers: ['# '], lineEnding: '\r\n' },
       timeoutMs: 1000,
+      settleMs: 123,
     };
 
     const promise = sendAndWait({ sessionManager: manager }, args);
 
     await flushMicrotasks();
 
+    expect(state.capturedOptions?.timeoutMs).toBe(123);
+
     expect(state.writeArgs).toHaveLength(1);
     expect(decode(state.writeArgs[0]!.data)).toBe('ls\r\n');
     expect(state.writeArgs[0]!.opts.origin).toBe('ai');
 
     // Drive a device output event through the captured predicate manually
-    // simulating SessionManager.waitFor's behaviour: it would call predicate then
-    // resolve with kind:'match' once it returns true.
+    // simulating SessionManager.waitFor's behaviour: it calls predicate for
+    // each device event and resolves only at the settle boundary.
     const predicate = state.capturedPredicate!;
     // Echo first (simulating device echoing 'ls\r\n')
     expect(predicate(makeDataEvent('ls\r\n'))).toBe(false); // echo stripped
-    // Then real reply matches the marker
+    // A marker is metadata only; it must not resolve the wait early.
     const replyEvent = makeDataEvent('result\r\n# ', 5);
-    expect(predicate(replyEvent)).toBe(true);
+    expect(predicate(replyEvent)).toBe(false);
 
-    state.pendingResolve!({ kind: 'match', event: replyEvent });
+    state.pendingResolve!({ kind: 'timeout', lastCursor: 6 });
 
     const result = await promise;
     expect(result.success).toBe(true);
     if (!result.success) throw new Error('expected success');
-    expect(result.reason).toBe('matched');
+    expect(result.reason).toBe('settled');
     expect(result.matchedMarkerIndex).toBe(0);
+    expect(result.hasDeviceOutput).toBe(true);
     expect(result.bytesWritten).toBe(utf8('ls\r\n').byteLength);
     expect(result.cursorBefore).toBe(0);
     expect(result.cursorAfter).toBeGreaterThanOrEqual(1);
     expect(decode(result.received)).toContain('# ');
   });
 
-  it('timeout: returns received buffer captured so far + cursorBefore/cursorAfter', async () => {
+  it('settled with no output: returns an observation without latching the session', async () => {
     const { manager, state } = makeMock();
     const promise = sendAndWait(
       { sessionManager: manager },
@@ -137,16 +141,63 @@ describe('sendAndWait orchestrator', () => {
     state.pendingResolve!({ kind: 'timeout', lastCursor: 7 });
 
     const result = await promise;
-    expect(result.success).toBe(false);
-    if (result.success) throw new Error('expected failure');
-    expect(result.reason).toBe('timeout');
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error('expected success');
+    expect(result.reason).toBe('settled');
     expect(decode(result.received)).toContain('partial output here');
+    expect(result.hasDeviceOutput).toBe(true);
     expect(result.bytesWritten).toBeGreaterThan(0);
-    expect(state.markAiUnresponsive).toEqual({
-      sessionId: 'sess_2',
-      cursorBefore: 0,
-      cursorAfter: 7,
-    });
+    expect(state.markAiUnresponsive).toBeUndefined();
+  });
+
+  it('settled with no device bytes: returns empty observation and leaves AI writes unlatched', async () => {
+    const { manager, state } = makeMock();
+    const promise = sendAndWait(
+      { sessionManager: manager },
+      {
+        sessionId: 'sess_2b',
+        payload: utf8('cmd'),
+        timeoutMs: 25,
+      },
+    );
+
+    await flushMicrotasks();
+
+    state.pendingResolve!({ kind: 'timeout', lastCursor: 1 });
+
+    const result = await promise;
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error('expected success');
+    expect(result.reason).toBe('settled');
+    expect(result.hasDeviceOutput).toBe(false);
+    expect(result.received).toHaveLength(0);
+    expect(state.markAiUnresponsive).toBeUndefined();
+  });
+
+  it('keeps large observed output independent from the marker detector buffer', async () => {
+    const { manager, state } = makeMock();
+    const largeOutput = `${'x'.repeat(70 * 1024)}DONE`;
+    const promise = sendAndWait(
+      { sessionManager: manager },
+      {
+        sessionId: 'sess_large',
+        payload: utf8('cmd'),
+        rules: { completionMarkers: [/DONE/] },
+        timeoutMs: 25,
+      },
+    );
+
+    await flushMicrotasks();
+    state.capturedPredicate!(makeDataEvent(largeOutput, 2));
+    state.pendingResolve!({ kind: 'timeout', lastCursor: 2 });
+
+    const result = await promise;
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error('expected success');
+    expect(result.received.byteLength).toBe(largeOutput.length);
+    expect(result.receivedTotalBytes).toBe(largeOutput.length);
+    expect(result.receivedTruncated).toBe(false);
+    expect(result.matchedMarkerIndex).toBe(0);
   });
 
   it('session-closed: returns sessionState in result', async () => {
@@ -277,14 +328,14 @@ describe('sendAndWait orchestrator', () => {
     ).rejects.toThrow('not open');
   });
 
-  it('fallback: empty completionMarkers triggers match on first non-empty filtered device chunk', async () => {
+  it('does not resolve early when completionMarkers is empty', async () => {
     const { manager, state } = makeMock();
     const promise = sendAndWait(
       { sessionManager: manager },
       {
         sessionId: 'sess_10',
         payload: utf8('cmd'),
-        // no completionMarkers => fallbackOnAny
+        // no completionMarkers => still wait for the settle boundary
       },
     );
     await flushMicrotasks();
@@ -293,12 +344,13 @@ describe('sendAndWait orchestrator', () => {
     // simulate echo first
     expect(predicate(makeDataEvent('cmd\r\n'))).toBe(false);
     const reply = makeDataEvent('hello', 4);
-    expect(predicate(reply)).toBe(true);
-    state.pendingResolve!({ kind: 'match', event: reply });
+    expect(predicate(reply)).toBe(false);
+    state.pendingResolve!({ kind: 'timeout', lastCursor: 2 });
     const result = await promise;
     expect(result.success).toBe(true);
     if (!result.success) throw new Error('expected success');
-    expect(result.reason).toBe('matched');
+    expect(result.reason).toBe('settled');
+    expect(result.hasDeviceOutput).toBe(true);
   });
 
   it('correlationId is forwarded to write options', async () => {

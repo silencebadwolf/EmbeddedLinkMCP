@@ -33,8 +33,10 @@ export interface TerminalRuleSet {
   readonly lineEnding: string;
   /** 完成标记列表；按数组顺序优先（先列出的 marker 命中时取其下标）。 */
   readonly completionMarkers: readonly CompletionMarker[];
-  /** sendAndWait 默认超时（毫秒）。 */
+  /** @deprecated sendAndWait 旧默认等待值；新调用应使用 defaultSettleMs。 */
   readonly defaultTimeoutMs: number;
+  /** sendAndWait 默认观察窗口（毫秒）。 */
+  readonly defaultSettleMs: number;
   /** 回显处理策略。 */
   readonly echoStrategy: EchoStrategy;
   /** CompletionDetector 累计 buffer 上限（字节）；超出时丢头保尾。 */
@@ -110,7 +112,7 @@ export interface SessionManagerLike {
     data: Uint8Array,
     options: { origin: 'ai'; correlationId?: string },
   ): Promise<void>;
-  /** Mark this session's AI write path as unresponsive after a timeout. */
+  /** Legacy health latch retained for older callers; sendAndWait no longer sets it. */
   markAiUnresponsive?(
     id: SessionId,
     details: { cursorBefore: SequenceCursor; cursorAfter: SequenceCursor },
@@ -156,6 +158,11 @@ export interface SendAndWaitArgs {
   appendLineEnding?: boolean;
   /** 覆盖默认超时（毫秒）。 */
   timeoutMs?: number;
+  /**
+   * 发送后的固定观察窗口（毫秒）。
+   * `settleMs` 优先于已废弃的 `timeoutMs`；窗口结束后返回已收到的设备输出。
+   */
+  settleMs?: number;
   /** 关联 ID（写入 transcript audit 用）。 */
   correlationId?: string;
   /** 外部取消信号；触发后 orchestrator 立即结束等待并返回 `reason: 'aborted'`。 */
@@ -165,16 +172,22 @@ export interface SendAndWaitArgs {
 /**
  * sendAndWait 结构化结果。
  *
- * **超时不抛 ToolError** —— 由调用方（MCP 工具层）决定是否翻成 ToolError(TIMEOUT)。
- * 这样 IPC / 工作流编排层可以统一拿到 received（含部分输出）做下一步决策。
+ * **settle 不抛 ToolError** —— 调用方拿到 hasDeviceOutput/received 后自行决定下一步。
+ * 只有队列、会话终态或取消等控制失败才会走 `success:false`。
  */
 export type SendAndWaitResult =
   | {
       success: true;
-      reason: 'matched';
+      reason: 'settled';
       bytesWritten: number;
-      /** 命中的 marker 下标；fallback 模式（completionMarkers 为空）下命中时为 null。 */
+      /** 观察窗口内命中的 marker 下标；未命中时为 null。 */
       matchedMarkerIndex: number | null;
+      /** 观察窗口内是否收到过滤回显后的设备字节。 */
+      hasDeviceOutput: boolean;
+      /** 观察输出是否因安全缓冲上限被截断。 */
+      receivedTruncated: boolean;
+      /** 观察窗口内过滤回显后的设备字节总数。 */
+      receivedTotalBytes: number;
       received: Uint8Array;
       receivedBase64: string;
       cursorBefore: SequenceCursor;
@@ -182,10 +195,12 @@ export type SendAndWaitResult =
     }
   | {
       success: false;
-      reason: 'timeout' | 'session-closed' | 'queue-full' | 'aborted';
+      reason: 'session-closed' | 'queue-full' | 'aborted';
       bytesWritten: number;
       received: Uint8Array;
       receivedBase64: string;
+      receivedTruncated: boolean;
+      receivedTotalBytes: number;
       cursorBefore: SequenceCursor;
       cursorAfter: SequenceCursor;
       /** 仅 `reason='session-closed'` 时存在；标识 session 终态。 */
