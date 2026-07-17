@@ -112,7 +112,7 @@ Expected: PASS for all adapter tests.
 - Modify: `tests/unit/renderer/readiness/start-center-bounded-render.test.tsx`
 - Modify: `tests/unit/renderer/readiness/start-center-no-side-effects.test.tsx`
 
-Change the public props from a primary manual-open action plus saved connections to a saved-workspace list plus one new-workspace callback. Keep advanced readiness data behind the existing disclosure. The Start Center must not render a COM candidate list, a manual serial form, MCP/Agent configuration fields, or a first-success button in the primary path.
+Change the public props from a primary manual-open action plus saved connections to a saved-workspace list plus one new-workspace callback. The product workspace mode must not render the advanced-device disclosure, a COM candidate list, a manual serial form, MCP/Agent configuration fields, readiness diagnostics, or a first-success button.
 
 - [ ] **Step 1: Add failing component tests**
 
@@ -125,7 +125,7 @@ expect(screen.queryByRole('region', { name: 'Manual open' })).toBeNull();
 expect(screen.queryByText('COM10 · USB Serial Device')).toBeNull();
 ```
 
-Also test that a full workspace and a serial-only workspace render their type labels, that clicking a card calls the correct callback with its summary, and that advanced devices remain collapsed.
+Also test that a full workspace and a serial-only workspace render their type labels, that clicking a card calls the correct callback with its summary, and that advanced devices are absent.
 
 - [ ] **Step 2: Run the focused StartCenter tests and capture failures**
 
@@ -143,7 +143,7 @@ Run GitNexus impact for `StartCenter`, `SavedConnectionList`, and any helper tha
 
 - [ ] **Step 4: Implement the minimal workspace-first layout**
 
-Render in this order: saved workspaces, empty state when none exist, one “New device workspace” entry, then the collapsed advanced disclosure. Keep `min-h-0`, `overflow-y-auto`, bounded lists, keyboard-operable buttons, and `aria-expanded` on the disclosure. Do not call preload or transport APIs from StartCenter.
+Render in this order: saved workspaces, empty state when none exist, then one “New device workspace” entry. Keep `min-h-0`, `overflow-y-auto`, bounded lists, and keyboard-operable buttons. Do not call preload or transport APIs from StartCenter.
 
 - [ ] **Step 5: Rerun focused StartCenter tests**
 

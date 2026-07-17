@@ -34,6 +34,14 @@ vi.mock('../../../src/renderer/components/ConnectionDialog.js', () => ({
   ConnectionDialog: () => <div data-testid="connection-dialog" />,
 }));
 
+vi.mock('../../../src/renderer/features/readiness/StartCenter.js', () => ({
+  StartCenter: ({ onOpenFirstSuccessGuide }: { onOpenFirstSuccessGuide?: () => void }) => (
+    <button type="button" onClick={onOpenFirstSuccessGuide}>
+      First-success guide
+    </button>
+  ),
+}));
+
 vi.mock('../../../src/renderer/features/first-success/FirstSuccessFlow.js', () => ({
   FirstSuccessFlow: ({ draft, state, onConfirmConnect }: FirstSuccessFlowProps) => (
     <section aria-label="mock first success flow">

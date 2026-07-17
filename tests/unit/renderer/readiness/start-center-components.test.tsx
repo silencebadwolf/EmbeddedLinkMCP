@@ -11,6 +11,7 @@ import {
 import type { SavedConnectionSummary } from '@/shared/preload-api.js';
 import { createInitialRuntimeReadinessState } from '@/renderer/features/readiness/readiness-reducer.js';
 import { StartCenter } from '@/renderer/features/readiness/StartCenter.js';
+import type { WorkspaceSummary } from '@/renderer/features/workspaces/workspace-model.js';
 
 function snapshot(
   input: Partial<RuntimeReadinessSnapshot> = {},
@@ -54,6 +55,202 @@ function snapshot(
 }
 
 describe('StartCenter readiness components', () => {
+  it('renders saved workspaces before the single new-workspace entry', () => {
+    const onOpenWorkspace = vi.fn();
+    const onDeleteWorkspace = vi.fn();
+    const onNewWorkspace = vi.fn();
+    const savedWorkspaces: WorkspaceSummary[] = [
+      {
+        id: 'workspace_fna',
+        label: 'FNA test bench',
+        kind: 'full',
+        source: 'control-profile',
+        details: ['COM6 · 115200', 'J-Link · STM32H743II'],
+        updatedAt: '2026-07-16T00:00:00.000Z',
+        controlProfileRecordId: 'workspace_fna',
+      },
+      {
+        id: 'connection_com7',
+        label: 'Temporary board serial',
+        kind: 'serial-only',
+        source: 'connection-profile',
+        details: ['COM7 · 921600'],
+        updatedAt: '2026-07-16T01:00:00.000Z',
+        connectionProfileId: 'connection_com7',
+      },
+    ];
+
+    render(
+      <StartCenter
+        state={createInitialRuntimeReadinessState()}
+        savedWorkspaces={savedWorkspaces}
+        onOpenWorkspace={onOpenWorkspace}
+        onDeleteWorkspace={onDeleteWorkspace}
+        onNewWorkspace={onNewWorkspace}
+        onRefresh={vi.fn()}
+        onAdvancedConnection={vi.fn()}
+        onUseCandidate={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+      />,
+    );
+
+    const region = screen.getByRole('region', { name: 'Saved workspaces' });
+    expect(region).toHaveTextContent('FNA test bench');
+    expect(region).toHaveTextContent('Full device workspace');
+    expect(region).toHaveTextContent('Serial-only workspace');
+    expect(
+      region.compareDocumentPosition(screen.getByTestId('new-workspace-entry')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    fireEvent.click(within(region).getAllByRole('button', { name: 'Open workspace' })[0]);
+    expect(onOpenWorkspace).toHaveBeenCalledWith(savedWorkspaces[0]);
+    fireEvent.click(within(region).getAllByRole('button', { name: 'Delete workspace' })[1]);
+    expect(onDeleteWorkspace).toHaveBeenCalledWith(savedWorkspaces[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'New device workspace' }));
+    expect(onNewWorkspace).toHaveBeenCalledOnce();
+  });
+
+  it('disables both workspace actions while that saved item is being deleted', () => {
+    const workspace: WorkspaceSummary = {
+      id: 'workspace_fna',
+      label: 'FNA test bench',
+      kind: 'full',
+      source: 'control-profile',
+      details: ['COM6 · 115200'],
+      updatedAt: '2026-07-16T00:00:00.000Z',
+      controlProfileRecordId: 'workspace_fna',
+    };
+
+    render(
+      <StartCenter
+        state={createInitialRuntimeReadinessState()}
+        savedWorkspaces={[workspace]}
+        onOpenWorkspace={vi.fn()}
+        onDeleteWorkspace={vi.fn()}
+        deletingWorkspaceId={workspace.id}
+        onNewWorkspace={vi.fn()}
+        onAdvancedConnection={vi.fn()}
+        onUseCandidate={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Open workspace' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Deleting workspace' })).toBeDisabled();
+  });
+
+  it('prevents a second workspace deletion while one storage request is pending', () => {
+    const first: WorkspaceSummary = {
+      id: 'workspace_first',
+      label: 'First workspace',
+      kind: 'full',
+      source: 'control-profile',
+      details: [],
+      updatedAt: '2026-07-16T00:00:00.000Z',
+      controlProfileRecordId: 'workspace_first',
+    };
+    const second: WorkspaceSummary = {
+      id: 'workspace_second',
+      label: 'Second workspace',
+      kind: 'serial-only',
+      source: 'connection-profile',
+      details: ['COM8 · 115200'],
+      updatedAt: '2026-07-16T01:00:00.000Z',
+      connectionProfileId: 'workspace_second',
+    };
+
+    render(
+      <StartCenter
+        state={createInitialRuntimeReadinessState()}
+        savedWorkspaces={[first, second]}
+        onOpenWorkspace={vi.fn()}
+        onDeleteWorkspace={vi.fn()}
+        deletingWorkspaceId={first.id}
+        onNewWorkspace={vi.fn()}
+        onAdvancedConnection={vi.fn()}
+        onUseCandidate={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Deleting workspace' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Delete workspace' })).toBeDisabled();
+  });
+
+  it('shows a loading state instead of a false empty state while saved workspaces load', () => {
+    render(
+      <StartCenter
+        state={createInitialRuntimeReadinessState()}
+        savedWorkspaces={[]}
+        savedWorkspacesLoading
+        onNewWorkspace={vi.fn()}
+        onAdvancedConnection={vi.fn()}
+        onUseCandidate={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Loading saved workspaces…')).toBeInTheDocument();
+    expect(screen.queryByText('No saved workspaces yet.')).toBeNull();
+  });
+
+  it('shows a load error instead of presenting an empty saved-workspace list', () => {
+    render(
+      <StartCenter
+        state={createInitialRuntimeReadinessState()}
+        savedWorkspaces={[]}
+        workspaceLoadError="saved workspaces could not be loaded"
+        onNewWorkspace={vi.fn()}
+        onAdvancedConnection={vi.fn()}
+        onUseCandidate={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('saved workspaces could not be loaded');
+    expect(screen.queryByText('No saved workspaces yet.')).toBeNull();
+  });
+
+  it('does not render a COM list or manual serial card on the home page', () => {
+    const current = snapshot({
+      deviceCandidates: [
+        {
+          id: 'candidate_serial_COM10',
+          kind: 'serial',
+          label: 'COM10 · USB Serial Device',
+          confidence: 'likely',
+          requiresUserConfirmation: false,
+          evidence: [{ source: 'live-discovery', summaryCode: 'readiness.serial.detected' }],
+          serial: {
+            portLabel: 'COM10',
+            baudRate: 115200,
+            dataBits: 8,
+            stopBits: 1,
+            parity: 'none',
+          },
+        },
+      ],
+    });
+
+    render(
+      <StartCenter
+        state={{ phase: 'ready', refreshing: false, snapshot: current, diagnostics: [] }}
+        savedWorkspaces={[]}
+        onNewWorkspace={vi.fn()}
+        onRefresh={vi.fn()}
+        onAdvancedConnection={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText('COM10 · USB Serial Device')).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Manual open' })).toBeNull();
+    expect(screen.queryByTestId('advanced-devices')).toBeNull();
+    expect(screen.queryByText('Advanced devices')).toBeNull();
+    expect(screen.getByRole('button', { name: 'New device workspace' })).toBeInTheDocument();
+  });
+
   it('shows saved connections before the single manual-open entry', () => {
     const onOpenSavedConnection = vi.fn();
     const saved: SavedConnectionSummary = {

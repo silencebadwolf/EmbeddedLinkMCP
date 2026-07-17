@@ -12,9 +12,18 @@ import type {
 } from './readiness-reducer.js';
 import { useT, type TranslationKey } from '../../i18n/index.js';
 import type { SavedConnectionSummary } from '../../../shared/preload-api.js';
+import type { WorkspaceSummary } from '../workspaces/workspace-model.js';
 
 export interface StartCenterProps {
   readonly state: RuntimeReadinessViewState;
+  readonly savedWorkspaces?: readonly WorkspaceSummary[];
+  readonly savedWorkspacesLoading?: boolean;
+  readonly workspaceLoadError?: string | null;
+  readonly onOpenWorkspace?: (workspace: WorkspaceSummary) => void;
+  readonly onDeleteWorkspace?: (workspace: WorkspaceSummary) => void;
+  readonly deletingWorkspaceId?: string | null;
+  readonly workspaceDeleteError?: string | null;
+  readonly onNewWorkspace?: () => void;
   /** Deprecated compatibility prop; readiness is loaded when Advanced devices opens. */
   readonly onRefresh?: () => void;
   readonly onAdvancedConnection: () => void;
@@ -35,6 +44,14 @@ export interface StartCenterProps {
 
 export function StartCenter({
   state,
+  savedWorkspaces,
+  savedWorkspacesLoading = false,
+  workspaceLoadError = null,
+  onOpenWorkspace,
+  onDeleteWorkspace,
+  deletingWorkspaceId = null,
+  workspaceDeleteError = null,
+  onNewWorkspace,
   onRefresh,
   onAdvancedConnection,
   onAdvancedDevicesOpenChange,
@@ -57,6 +74,7 @@ export function StartCenter({
   const candidates = snapshot?.deviceCandidates ?? [];
   const advancedCandidates = candidates.filter((candidate) => candidate.serial === undefined);
   const openSerialTerminal = onOpenSerialTerminal ?? onAdvancedConnection;
+  const workspaceMode = savedWorkspaces !== undefined || onNewWorkspace !== undefined;
 
   return (
     <section
@@ -80,41 +98,58 @@ export function StartCenter({
         </div>
       </header>
 
-      <SavedConnectionList
-        profiles={savedConnections}
-        loading={savedConnectionsLoading}
-        onOpen={onOpenSavedConnection}
-      />
-
-      <section
-        role="region"
-        aria-labelledby="readiness-manual-open-title"
-        data-testid="manual-open-entry"
-        className="rounded border border-blue-500/40 bg-blue-950/20 p-4"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 id="readiness-manual-open-title" className="text-sm font-semibold">
-              {t('readiness.action.manualOpen')}
-            </h3>
-            <p className="mt-1 text-xs text-gray-400">{t('readiness.action.manualHint')}</p>
-          </div>
-          <button
-            type="button"
-            data-testid="start-center-primary-action"
-            className="rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500"
-            onClick={openSerialTerminal}
+      {workspaceMode ? (
+        <>
+          <SavedWorkspaceList
+            workspaces={savedWorkspaces ?? []}
+            loading={savedWorkspacesLoading}
+            loadError={workspaceLoadError}
+            onOpen={onOpenWorkspace}
+            onDelete={onDeleteWorkspace}
+            deletingWorkspaceId={deletingWorkspaceId}
+            deleteError={workspaceDeleteError}
+          />
+          <NewWorkspaceEntry onNewWorkspace={onNewWorkspace} />
+        </>
+      ) : (
+        <>
+          <SavedConnectionList
+            profiles={savedConnections}
+            loading={savedConnectionsLoading}
+            onOpen={onOpenSavedConnection}
+          />
+          <section
+            role="region"
+            aria-labelledby="readiness-manual-open-title"
+            data-testid="manual-open-entry"
+            className="rounded border border-blue-500/40 bg-blue-950/20 p-4"
           >
-            {t('readiness.action.manualOpen')}
-          </button>
-        </div>
-      </section>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 id="readiness-manual-open-title" className="text-sm font-semibold">
+                  {t('readiness.action.manualOpen')}
+                </h3>
+                <p className="mt-1 text-xs text-gray-400">{t('readiness.action.manualHint')}</p>
+              </div>
+              <button
+                type="button"
+                data-testid="start-center-primary-action"
+                className="rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500"
+                onClick={openSerialTerminal}
+              >
+                {t('readiness.action.manualOpen')}
+              </button>
+            </div>
+          </section>
+        </>
+      )}
 
-      <details
-        data-testid="advanced-devices"
-        className="rounded border border-gray-800 bg-gray-950/60 p-4"
-        onToggle={(event) => onAdvancedDevicesOpenChange?.(event.currentTarget.open)}
-      >
+      {!workspaceMode ? (
+        <details
+          data-testid="advanced-devices"
+          className="rounded border border-gray-800 bg-gray-950/60 p-4"
+          onToggle={(event) => onAdvancedDevicesOpenChange?.(event.currentTarget.open)}
+        >
         <summary className="cursor-pointer text-sm font-semibold text-gray-100">
           {t('readiness.advanced.title')}
           <span className="ml-2 text-xs font-normal text-gray-500">
@@ -158,7 +193,7 @@ export function StartCenter({
               {state.refreshing ? t('readiness.action.refreshing') : t('readiness.action.refresh')}
             </button>
           ) : null}
-          {onOpenControlProfile !== undefined ? (
+          {!workspaceMode && onOpenControlProfile !== undefined ? (
             <button
               type="button"
               className="rounded border border-gray-700 px-3 py-2 text-sm text-gray-100 hover:bg-gray-900"
@@ -167,7 +202,7 @@ export function StartCenter({
               {t('controlProfile.entry')}
             </button>
           ) : null}
-          {onOpenAgentIntegrations !== undefined ? (
+          {!workspaceMode && onOpenAgentIntegrations !== undefined ? (
             <button
               type="button"
               className="rounded border border-gray-700 px-3 py-2 text-sm text-gray-100 hover:bg-gray-900"
@@ -186,7 +221,128 @@ export function StartCenter({
             </button>
           ) : null}
         </div>
-      </details>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
+function SavedWorkspaceList({
+  workspaces,
+  loading,
+  loadError,
+  onOpen,
+  onDelete,
+  deletingWorkspaceId,
+  deleteError,
+}: {
+  readonly workspaces: readonly WorkspaceSummary[];
+  readonly loading: boolean;
+  readonly loadError: string | null;
+  readonly onOpen?: (workspace: WorkspaceSummary) => void;
+  readonly onDelete?: (workspace: WorkspaceSummary) => void;
+  readonly deletingWorkspaceId: string | null;
+  readonly deleteError: string | null;
+}): React.ReactElement {
+  const t = useT();
+  return (
+    <section
+      role="region"
+      aria-labelledby="readiness-saved-workspaces-title"
+      data-testid="saved-workspaces"
+      className="rounded border border-gray-800 bg-gray-950/60 p-4"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 id="readiness-saved-workspaces-title" className="text-sm font-semibold">
+            {t('workspace.saved.title')}
+          </h3>
+          <p className="mt-1 text-xs text-gray-500">{t('workspace.saved.description')}</p>
+        </div>
+      </div>
+      {loading ? (
+        <p className="mt-3 text-sm text-gray-400">{t('workspace.saved.loading')}</p>
+      ) : workspaces.length === 0 && loadError === null ? (
+        <p className="mt-3 text-sm text-gray-400">{t('workspace.saved.empty')}</p>
+      ) : workspaces.length > 0 ? (
+        <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
+          {workspaces.map((workspace) => (
+            <li
+              key={workspace.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded border border-gray-800 bg-gray-900 px-3 py-2"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm text-gray-100">{workspace.label}</p>
+                <p className="truncate text-xs text-gray-500">
+                  {workspace.kind === 'full'
+                    ? t('workspace.kind.full')
+                    : t('workspace.kind.serialOnly')}
+                  {workspace.details.length > 0 ? ` · ${workspace.details.join(' · ')}` : ''}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded border border-blue-500/60 px-3 py-1.5 text-xs text-blue-200 hover:bg-blue-950/40 disabled:opacity-50"
+                  disabled={onOpen === undefined || deletingWorkspaceId === workspace.id}
+                  onClick={() => onOpen?.(workspace)}
+                >
+                  {t('workspace.action.open')}
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-red-500/50 px-3 py-1.5 text-xs text-red-200 hover:bg-red-950/40 disabled:opacity-50"
+                  disabled={onDelete === undefined || deletingWorkspaceId !== null}
+                  onClick={() => onDelete?.(workspace)}
+                >
+                  {deletingWorkspaceId === workspace.id
+                    ? t('workspace.action.deleting')
+                    : t('workspace.action.delete')}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {loadError !== null ? (
+        <p role="alert" className="mt-3 text-sm text-red-300">
+          {loadError}
+        </p>
+      ) : null}
+      {deleteError !== null ? (
+        <p role="alert" className="mt-3 text-sm text-red-300">
+          {deleteError}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function NewWorkspaceEntry({ onNewWorkspace }: { readonly onNewWorkspace?: () => void }): React.ReactElement {
+  const t = useT();
+  return (
+    <section
+      role="region"
+      aria-labelledby="new-workspace-entry-title"
+      data-testid="new-workspace-entry"
+      className="rounded border border-blue-500/40 bg-blue-950/20 p-4"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 id="new-workspace-entry-title" className="text-sm font-semibold">
+            {t('workspace.new.title')}
+          </h3>
+          <p className="mt-1 text-xs text-gray-400">{t('workspace.new.description')}</p>
+        </div>
+        <button
+          type="button"
+          className="rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+          disabled={onNewWorkspace === undefined}
+          onClick={() => onNewWorkspace?.()}
+        >
+          {t('workspace.action.new')}
+        </button>
+      </div>
     </section>
   );
 }

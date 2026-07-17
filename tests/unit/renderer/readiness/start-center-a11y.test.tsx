@@ -10,6 +10,7 @@ import {
 } from '@/shared/readiness-contract.js';
 import { createInitialRuntimeReadinessState } from '@/renderer/features/readiness/readiness-reducer.js';
 import { StartCenter } from '@/renderer/features/readiness/StartCenter.js';
+import type { WorkspaceSummary } from '@/renderer/features/workspaces/workspace-model.js';
 
 function snapshot(status: RuntimeReadinessSnapshot['status']): RuntimeReadinessSnapshot {
   const checkedAt = '2026-07-13T06:00:00.000Z';
@@ -53,6 +54,38 @@ function renderStartCenter(state = createInitialRuntimeReadinessState()) {
 }
 
 describe('StartCenter accessibility', () => {
+  it('names the saved-workspace region and exposes a keyboard-operable creation entry', () => {
+    const workspace: WorkspaceSummary = {
+      id: 'workspace_fna',
+      label: 'FNA test bench',
+      kind: 'full',
+      source: 'control-profile',
+      details: ['COM6 · 115200'],
+      updatedAt: '2026-07-16T00:00:00.000Z',
+      controlProfileRecordId: 'workspace_fna',
+    };
+    const onNewWorkspace = vi.fn();
+
+    render(
+      <StartCenter
+        state={createInitialRuntimeReadinessState()}
+        savedWorkspaces={[workspace]}
+        onNewWorkspace={onNewWorkspace}
+        onRefresh={vi.fn()}
+        onAdvancedConnection={vi.fn()}
+        onUseCandidate={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('region', { name: 'Saved workspaces' })).toBeInTheDocument();
+    const create = screen.getByRole('button', { name: 'New device workspace' });
+    create.focus();
+    fireEvent.keyDown(create, { key: 'Enter' });
+    fireEvent.click(create);
+    expect(onNewWorkspace).toHaveBeenCalledOnce();
+  });
+
   it('names every major region and announces distinct readiness states', () => {
     renderStartCenter({
       phase: 'ready',

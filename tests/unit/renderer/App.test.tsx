@@ -50,11 +50,8 @@ const openControlProfilePanel = async (): Promise<void> => {
     fireEvent.click(direct);
     return;
   }
-  const advanced = await screen.findByTestId('advanced-devices');
-  if (!advanced.hasAttribute('open')) {
-    fireEvent.click(within(advanced).getByText('Advanced devices'));
-  }
-  fireEvent.click(within(advanced).getByRole('button', { name: 'Control Profile' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'New device workspace' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Full device workspace' }));
 };
 
 describe('App', () => {

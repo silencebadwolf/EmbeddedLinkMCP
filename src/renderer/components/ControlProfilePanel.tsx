@@ -27,6 +27,7 @@ import { classifyJLinkTargetName } from '../../shared/jlink-target-name.js';
 interface ControlProfilePanelProps {
   open: boolean;
   onOpenChange(open: boolean): void;
+  onOpenSerialConnection?(): void;
   onProfileOpened?(event: ControlProfileOpenedEvent): void;
   onRecordsChanged?(): void;
 }
@@ -36,6 +37,7 @@ const JLINK_DEVICE_SUGGESTION_LIMIT = 30;
 const SELECT_CLASS =
   'flex h-9 w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-1 text-sm text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500';
 type ObservationChannel = 'serial' | 'rtt';
+type WorkspaceSetupMode = 'choose' | 'full';
 
 export type ControlProfileObservationOpenResult =
   | { type: 'serial'; sessionId?: SessionId; state?: SessionState; error?: string }
@@ -60,6 +62,7 @@ export interface ControlProfileOpenedEvent {
 export function ControlProfilePanel({
   open,
   onOpenChange,
+  onOpenSerialConnection,
   onProfileOpened,
   onRecordsChanged,
 }: ControlProfilePanelProps): React.ReactElement {
@@ -84,6 +87,9 @@ export function ControlProfilePanel({
   const [binary, setBinary] = React.useState('build/app.bin');
   const [baseAddress, setBaseAddress] = React.useState('0x08000000');
   const [rttControlBlockAddress, setRttControlBlockAddress] = React.useState('');
+  const [setupMode, setSetupMode] = React.useState<WorkspaceSetupMode>(
+    onOpenSerialConnection === undefined ? 'full' : 'choose',
+  );
   const [saving, setSaving] = React.useState(false);
   const [savedRecords, setSavedRecords] = React.useState<
     ReadonlyArray<SavedControlProfileRecordPayload>
@@ -105,9 +111,12 @@ export function ControlProfilePanel({
   }, []);
 
   React.useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setSetupMode(onOpenSerialConnection === undefined ? 'full' : 'choose');
+      return;
+    }
     void loadSavedRecords();
-  }, [loadSavedRecords, open]);
+  }, [loadSavedRecords, onOpenSerialConnection, open]);
 
   const browseWorkspace = async (): Promise<void> => {
     const api = getLinkterm();
@@ -307,6 +316,8 @@ export function ControlProfilePanel({
   };
 
   const deleteSavedRecord = async (recordId: string): Promise<void> => {
+    if (!window.confirm(t('workspace.delete.confirm'))) return;
+
     const api = getLinkterm();
     if (!api) {
       setError(t('controlProfile.error.preloadUnavailable'));
@@ -346,6 +357,45 @@ export function ControlProfilePanel({
           <DialogDescription>{t('controlProfile.description')}</DialogDescription>
         </DialogHeader>
 
+        {setupMode === 'choose' && onOpenSerialConnection !== undefined ? (
+          <div
+            data-testid="workspace-setup-chooser"
+            className="grid gap-3 py-2 sm:grid-cols-2"
+          >
+            <Button
+              type="button"
+              variant="secondary"
+              aria-label={t('workspace.setup.serialOnly')}
+              className="h-auto min-h-24 justify-start whitespace-normal text-left"
+              onClick={() => {
+                onOpenChange(false);
+                onOpenSerialConnection();
+              }}
+            >
+              <span>
+                <span className="block font-medium">{t('workspace.setup.serialOnly')}</span>
+                <span className="mt-1 block text-xs font-normal text-gray-400">
+                  {t('workspace.setup.serialOnlyHint')}
+                </span>
+              </span>
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              aria-label={t('workspace.setup.full')}
+              className="h-auto min-h-24 justify-start whitespace-normal text-left"
+              onClick={() => setSetupMode('full')}
+            >
+              <span>
+                <span className="block font-medium">{t('workspace.setup.full')}</span>
+                <span className="mt-1 block text-xs font-normal text-gray-400">
+                  {t('workspace.setup.fullHint')}
+                </span>
+              </span>
+            </Button>
+          </div>
+        ) : (
+          <>
         <div className="grid max-h-[65vh] gap-4 overflow-y-auto py-1 sm:grid-cols-2">
           {savedRecords.length > 0 ? (
             <section className="space-y-2 rounded-md border border-gray-800 bg-gray-900/60 p-3 sm:col-span-2">
@@ -384,7 +434,7 @@ export function ControlProfilePanel({
                         type="button"
                         variant="ghost"
                         onClick={() => void deleteSavedRecord(record.id)}
-                        disabled={deletingRecordId === record.id || openingRecordId === record.id}
+                        disabled={deletingRecordId !== null || openingRecordId === record.id}
                       >
                         {deletingRecordId === record.id
                           ? t('controlProfile.record.deleting')
@@ -566,12 +616,12 @@ export function ControlProfilePanel({
         </div>
 
         {error ? (
-          <p className="rounded border border-red-900 bg-red-950 px-3 py-2 text-sm text-red-100">
+          <p role="alert" className="rounded border border-red-900 bg-red-950 px-3 py-2 text-sm text-red-100">
             {error}
           </p>
         ) : null}
         {message ? (
-          <p className="rounded border border-emerald-900 bg-emerald-950 px-3 py-2 text-sm text-emerald-100">
+          <p role="status" className="rounded border border-emerald-900 bg-emerald-950 px-3 py-2 text-sm text-emerald-100">
             {message}
           </p>
         ) : null}
@@ -584,6 +634,8 @@ export function ControlProfilePanel({
             {saving ? t('controlProfile.saving') : t('controlProfile.save')}
           </Button>
         </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

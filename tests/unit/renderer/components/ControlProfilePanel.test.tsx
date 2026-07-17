@@ -24,6 +24,7 @@ describe('ControlProfilePanel', () => {
   let mock: MockPreloadAPI;
 
   beforeEach(() => {
+    vi.unstubAllGlobals();
     onOpenChange.mockClear();
     resetStore();
     mock = installMockPreload();
@@ -31,6 +32,38 @@ describe('ControlProfilePanel', () => {
       success: true,
       data: [{ path: 'COM7', friendlyName: 'USB Serial' }],
     });
+  });
+
+  it('offers serial-only and full device workspace setup scopes', () => {
+    const onOpenSerialConnection = vi.fn();
+
+    render(
+      <ControlProfilePanel
+        open
+        onOpenChange={onOpenChange}
+        onOpenSerialConnection={onOpenSerialConnection}
+      />,
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Serial-only connection' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Full device workspace' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Workspace root')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Serial-only connection' }));
+    expect(onOpenSerialConnection).toHaveBeenCalledOnce();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('reveals the existing full workspace form only after the full scope is selected', () => {
+    render(
+      <ControlProfilePanel open onOpenChange={onOpenChange} onOpenSerialConnection={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Full device workspace' }));
+    expect(screen.getByLabelText('Workspace root')).toBeInTheDocument();
+    expect(screen.getByLabelText('Firmware path')).toBeInTheDocument();
   });
 
   it('saves selected serial and flash/J-Link facts into workspace control profile', async () => {
@@ -439,6 +472,7 @@ describe('ControlProfilePanel', () => {
   });
 
   it('deletes a saved control profile record from the list', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
     const record = {
       id: 'ctrl_saved',
       label: 'repo - STM32H743II',
@@ -476,9 +510,77 @@ describe('ControlProfilePanel', () => {
     );
     expect(mock.spies.controlProfile.openRecord).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByText('repo - STM32H743II')).not.toBeInTheDocument());
+    expect(screen.getByRole('status')).toHaveTextContent('Deleted: repo - STM32H743II');
+  });
+
+  it('keeps a saved control profile record when deletion confirmation is cancelled', async () => {
+    const record = {
+      id: 'ctrl_keep',
+      label: 'repo - Keep profile',
+      root: 'C:/repo',
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' as const },
+        jlink: { enabled: false },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    const confirmDelete = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirmDelete);
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
+
+    expect(await screen.findByText('repo - Keep profile')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete profile' }));
+
+    expect(confirmDelete).toHaveBeenCalledOnce();
+    expect(mock.spies.controlProfile.deleteRecord).not.toHaveBeenCalled();
+    expect(screen.getByText('repo - Keep profile')).toBeInTheDocument();
+  });
+
+  it('prevents deleting a second saved record while one deletion is pending', async () => {
+    const makeRecord = (id: string, label: string) => ({
+      id,
+      label,
+      root: `C:/repo/${id}`,
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' as const },
+        jlink: { enabled: false },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    });
+    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({
+      success: true,
+      data: [makeRecord('ctrl_a', 'Profile A'), makeRecord('ctrl_b', 'Profile B')],
+    });
+    let finishDelete!: (value: { success: true; data: { deleted: true } }) => void;
+    mock.spies.controlProfile.deleteRecord.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        finishDelete = resolve;
+      }),
+    );
+    vi.stubGlobal('confirm', vi.fn(() => true));
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
+
+    expect(await screen.findByText('Profile A')).toBeInTheDocument();
+    const deleteButtons = screen.getAllByRole('button', { name: 'Delete profile' });
+    fireEvent.click(deleteButtons[0]);
+    await waitFor(() => expect(mock.spies.controlProfile.deleteRecord).toHaveBeenCalledOnce());
+
+    expect(deleteButtons[1]).toBeDisabled();
+    finishDelete({ success: true, data: { deleted: true } });
+    await waitFor(() => expect(screen.queryByText('Profile A')).toBeNull());
   });
 
   it('keeps a saved control profile record visible when deletion fails', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
     const record = {
       id: 'ctrl_saved',
       label: 'repo - STM32H743II',
@@ -504,7 +606,7 @@ describe('ControlProfilePanel', () => {
     expect(await screen.findByText('repo - STM32H743II')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Delete profile' }));
 
-    expect(await screen.findByText('cannot delete record')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('cannot delete record');
     expect(screen.getByText('repo - STM32H743II')).toBeInTheDocument();
   });
 

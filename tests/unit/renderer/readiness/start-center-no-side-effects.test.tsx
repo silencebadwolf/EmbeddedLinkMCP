@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { useAppStore } from '@/renderer/store/app-store.js';
 import { installMockPreload, type MockPreloadAPI } from '../../../fixtures/mock-preload-api.js';
 
@@ -70,15 +70,15 @@ describe('StartCenter no hardware side effects', () => {
     expectNoHardwareOrMutationSideEffects(mock);
   });
 
-  it('refreshes readiness through the readiness bridge only', async () => {
+  it('does not expose readiness refresh or hydrate advanced devices from the workspace home', async () => {
     const { App } = await import('@/renderer/App.js');
     render(<App />);
 
-    fireEvent.click(await screen.findByText('Advanced devices'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Refresh readiness' }));
-
-    await waitFor(() => expect(mock.spies.readiness.refresh).toHaveBeenCalledOnce());
-    expect(mock.spies.readiness.subscribe).toHaveBeenCalled();
+    expect(await screen.findByRole('heading', { name: 'Start Center' })).toBeInTheDocument();
+    expect(screen.queryByText('Advanced devices')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Refresh readiness' })).toBeNull();
+    expect(mock.spies.readiness.refresh).not.toHaveBeenCalled();
+    expect(mock.spies.readiness.subscribe).not.toHaveBeenCalled();
     expectNoHardwareOrMutationSideEffects(mock);
   });
 });

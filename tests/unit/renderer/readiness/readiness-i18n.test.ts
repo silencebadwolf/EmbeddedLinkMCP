@@ -218,6 +218,13 @@ function readinessKeys(table: Record<string, string>): string[] {
 }
 
 describe('readiness i18n coverage', () => {
+  it('describes the workspace-first home without removed manual or advanced entry points', () => {
+    expect(en['readiness.start.description']).not.toMatch(/manual|advanced/i);
+    expect(zh['readiness.start.description']).not.toMatch(/手动|高级/);
+    expect(en['tabs.empty.subtitle']).not.toMatch(/serial terminal/i);
+    expect(zh['tabs.empty.subtitle']).not.toMatch(/串口终端/);
+  });
+
   it('keeps every readiness key explicitly covered by the bilingual checklist', () => {
     expect(readinessKeys(en)).toEqual([...REQUIRED_READINESS_TRANSLATION_KEYS].sort());
     expect(readinessKeys(zh)).toEqual([...REQUIRED_READINESS_TRANSLATION_KEYS].sort());
