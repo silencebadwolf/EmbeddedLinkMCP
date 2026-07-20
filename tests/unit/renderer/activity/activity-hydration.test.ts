@@ -103,8 +103,8 @@ describe('activity hydration controller', () => {
 
     expect(fixture.calls.slice(0, 2)).toEqual(['onEvent', 'subscribe']);
     expect(selectActivityItems(controller.getState(), {}).map((item) => item.operationId)).toEqual([
-      'operation_snapshot',
       'operation_after_cut',
+      'operation_snapshot',
     ]);
   });
 
@@ -360,8 +360,8 @@ describe('activity hydration controller', () => {
 
     expect(controller.getState().cursor).toEqual({ runtimeId: 'runtime_1', sequence: 6 });
     expect(selectActivityItems(controller.getState(), {}).map((item) => item.operationId)).toEqual([
-      'operation_snapshot',
       'operation_live_newer',
+      'operation_snapshot',
     ]);
   });
 

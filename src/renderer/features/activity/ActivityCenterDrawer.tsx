@@ -281,7 +281,7 @@ function ActivityOperationCard({
         </span>
       </div>
       {target === undefined ? null : (
-        <p className="mt-1 text-xs text-gray-400">{target.label ?? target.id}</p>
+        <p className="mt-1 text-xs text-gray-400">{targetLabel}</p>
       )}
       {item.errorCode === undefined ? null : (
         <p className="mt-2 text-xs text-red-200">{item.errorCode}</p>
@@ -311,6 +311,12 @@ function ActivityOperationCard({
             <dt className="text-gray-500">{t('activity.details.risk')}</dt>
             <dd>{item.risk}</dd>
           </div>
+          {target === undefined ? null : (
+            <div className="flex justify-between gap-3">
+              <dt className="text-gray-500">{t('activity.details.targetId')}</dt>
+              <dd className="break-all font-mono text-right">{target.id}</dd>
+            </div>
+          )}
         </dl>
         {item.calls.length === 0 ? null : (
           <div className="mt-2">
@@ -434,7 +440,23 @@ function formatAuditStatus(
 
 function getTargetLabel(item: ActivityItemSummary): string {
   const target = item.targets[0];
-  return target?.label ?? target?.id ?? item.operationId;
+  return target === undefined ? item.operationId : getTargetDisplayLabel(item, target);
+}
+
+function getTargetDisplayLabel(
+  item: ActivityItemSummary,
+  target: ActivityItemSummary['targets'][number],
+): string {
+  if (target.label !== undefined && target.label.length > 0) return target.label;
+  if (target.kind === 'session') return formatLocalActivityTime(item.startedAt);
+  return target.id;
+}
+
+function formatLocalActivityTime(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return timestamp;
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 async function copyActivitySummary(
@@ -451,7 +473,7 @@ async function copyActivitySummary(
 
 function buildActivitySummary(item: ActivityItemSummary): string {
   const targetLabels = item.targets
-    .map((target) => target.label ?? target.id)
+    .map((target) => getTargetDisplayLabel(item, target))
     .filter((label) => label.length > 0)
     .join(', ');
   const summary = [item.action, item.phase, item.risk, targetLabels]

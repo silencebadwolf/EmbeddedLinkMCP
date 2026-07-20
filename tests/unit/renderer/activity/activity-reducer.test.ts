@@ -62,11 +62,52 @@ describe('activity center reducer', () => {
     expect(selectDefaultActivityGroups(state)).toMatchObject([
       { kind: 'active', operationIds: ['operation_open_serial'] },
       { kind: 'attention', operationIds: ['operation_flash'] },
-      { kind: 'read-only-burst', operationIds: ['operation_status_1', 'operation_status_2'] },
+      { kind: 'read-only-burst', operationIds: ['operation_status_2', 'operation_status_1'] },
     ]);
     expect(selectActivityItems(state, { risk: 'read-only' }).map((item) => item.operationId)).toEqual(
-      ['operation_status_1', 'operation_status_2'],
+      ['operation_status_2', 'operation_status_1'],
     );
+  });
+
+  it('returns the newest operations first for history, filters, and folded groups', () => {
+    const state = ingestActivitySnapshot(
+      createInitialActivityCenterState(),
+      activitySnapshot([
+        operationEvent({
+          sequence: 1,
+          operationId: 'operation_oldest_read',
+          phase: 'succeeded',
+          action: 'get_app_status',
+          risk: 'read-only',
+        }),
+        operationEvent({
+          sequence: 2,
+          operationId: 'operation_middle_write',
+          phase: 'succeeded',
+          action: 'send',
+          risk: 'state-affecting',
+        }),
+        operationEvent({
+          sequence: 3,
+          operationId: 'operation_newest_read',
+          phase: 'succeeded',
+          action: 'get_session_output',
+          risk: 'read-only',
+        }),
+      ]),
+    );
+
+    expect(selectActivityItems(state, {}).map((item) => item.operationId)).toEqual([
+      'operation_newest_read',
+      'operation_middle_write',
+      'operation_oldest_read',
+    ]);
+    expect(selectActivityItems(state, { risk: 'read-only' }).map((item) => item.operationId))
+      .toEqual(['operation_newest_read', 'operation_oldest_read']);
+    expect(selectDefaultActivityGroups(state)).toContainEqual({
+      kind: 'read-only-burst',
+      operationIds: ['operation_newest_read', 'operation_oldest_read'],
+    });
   });
 
   it('records a sequence-gap diagnostic and does not append the out-of-order event', () => {
@@ -219,7 +260,7 @@ describe('activity center reducer', () => {
     expect(selectActivityItems(state, { actorKind: 'human' }).map((item) => item.operationId))
       .toEqual(['operation_human_serial']);
     expect(selectActivityItems(state, { action: 'open_session' }).map((item) => item.operationId))
-      .toEqual(['operation_human_serial', 'operation_ai_serial']);
+      .toEqual(['operation_ai_serial', 'operation_human_serial']);
     expect(selectActivityItems(state, { targetKind: 'workspace' }).map((item) => item.operationId))
       .toEqual(['operation_workspace_scan']);
     expect(selectActivityItems(state, { targetId: 'sess_ai' }).map((item) => item.operationId))

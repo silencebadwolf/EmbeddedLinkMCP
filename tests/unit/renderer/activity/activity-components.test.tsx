@@ -11,7 +11,13 @@ import { AiStatusCapsule } from '@/renderer/features/activity/AiStatusCapsule.js
 import { ActivityCenterDrawer } from '@/renderer/features/activity/ActivityCenterDrawer.js';
 import { useAppStore } from '@/renderer/store/app-store.js';
 import { createMockPreloadAPI } from '../../../fixtures/mock-preload-api.js';
-import { activitySnapshot, callEvent, operationEvent, workflowEvent } from './activity-fixtures.js';
+import {
+  activitySnapshot,
+  activityTimestamp,
+  callEvent,
+  operationEvent,
+  workflowEvent,
+} from './activity-fixtures.js';
 
 type AuthorizationLabelInput = {
   readonly operationId: string;
@@ -98,6 +104,12 @@ function stateWithActivity(): ActivityCenterState {
   );
 }
 
+function expectedLocalActivityTime(timestamp: string): string {
+  const date = new Date(timestamp);
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 beforeEach(() => {
   useAppStore.setState({ locale: 'en' });
   delete (globalThis as { window?: { linkterm?: unknown } }).window?.linkterm;
@@ -179,6 +191,48 @@ describe('AiStatusCapsule', () => {
 });
 
 describe('ActivityCenterDrawer', () => {
+  it('uses local time instead of an opaque session id in cards and copied summaries', () => {
+    const sessionId = 'sess_049c8cfd-8099-47e5-aafe-e5160f15b384';
+    const copySummary = vi.fn();
+    const state = ingestActivitySnapshot(
+      createInitialActivityCenterState(),
+      activitySnapshot([
+        operationEvent({
+          sequence: 1,
+          operationId: 'operation_send_wait',
+          phase: 'failed',
+          action: 'send_and_wait',
+          risk: 'state-affecting',
+          targetKind: 'session',
+          targetId: sessionId,
+        }),
+      ]),
+    );
+
+    render(
+      <ActivityCenterDrawer
+        open
+        state={state}
+        onCopySummary={copySummary}
+        onClose={() => undefined}
+      />,
+    );
+
+    const drawer = screen.getByRole('dialog', { name: 'Activity Center' });
+    const expectedTime = expectedLocalActivityTime(activityTimestamp);
+    expect(within(drawer).getByText(expectedTime)).toBeInTheDocument();
+
+    fireEvent.click(within(drawer).getByRole('button', { name: `Copy summary for ${expectedTime}` }));
+    expect(copySummary).toHaveBeenCalledWith(
+      `send_and_wait · failed · state-affecting · ${expectedTime}`,
+    );
+    expect(copySummary.mock.calls[0]?.[0]).not.toContain(sessionId);
+
+    fireEvent.click(within(drawer).getByText('Details'));
+    expect(within(drawer).getByText('Target ID')).toBeInTheDocument();
+    expect(within(drawer).getByText(sessionId)).toBeInTheDocument();
+  });
+
   it('renders the active/attention default view and folds read-only bursts', () => {
     render(<ActivityCenterDrawer open state={stateWithActivity()} onClose={() => undefined} />);
 
@@ -266,6 +320,9 @@ describe('ActivityCenterDrawer', () => {
     const drawer = screen.getByRole('dialog', { name: 'Activity Center' });
     fireEvent.click(within(drawer).getByRole('button', { name: 'History' }));
 
+    const operationCards = within(drawer).getAllByRole('article');
+    expect(operationCards[0]).toHaveTextContent('run_control_workflow');
+    expect(operationCards[1]).toHaveTextContent('open_session');
     expect(within(drawer).getAllByText('get_app_status')).toHaveLength(2);
     expect(within(drawer).queryByText('Recent read-only checks · 2')).not.toBeInTheDocument();
   });

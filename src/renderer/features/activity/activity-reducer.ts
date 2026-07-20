@@ -340,7 +340,7 @@ export function selectActivityItems(
               target.label?.toLowerCase().includes(text),
           ),
       )
-      .sort((left, right) => left.firstSequence - right.firstSequence),
+      .sort((left, right) => right.firstSequence - left.firstSequence),
   );
 }
 
