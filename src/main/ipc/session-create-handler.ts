@@ -19,6 +19,10 @@
 
 import { electron } from '../electron-runtime.js';
 import type { SessionManager } from '../../core/session/session-manager.js';
+import {
+  SerialSessionConflictError,
+  SerialSessionCoordinator,
+} from '../../core/session/serial-session-coordinator.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type { SessionId, SessionState } from '../../shared/types.js';
 import type {
@@ -50,7 +54,10 @@ type SessionCreateResult = PreloadResult<{ sessionId: SessionId; state: SessionS
  * @param sessionManager 与 MCP server 共享的 SessionManager 实例
  * @returns 反注册函数：移除 ipcMain handler（用于测试 teardown 与退出）
  */
-export function registerSessionCreate(sessionManager: SessionManager): () => void {
+export function registerSessionCreate(
+  sessionManager: SessionManager,
+  serialSessionCoordinator: SerialSessionCoordinator = new SerialSessionCoordinator(sessionManager),
+): () => void {
   ipcMain.handle(
     IPC_CHANNELS.SESSION_CREATE,
     async (_event, raw: SessionCreateRequest): Promise<SessionCreateResult> => {
@@ -76,13 +83,33 @@ export function registerSessionCreate(sessionManager: SessionManager): () => voi
       const config = input.config as unknown as SessionCreateRequestConfig;
 
       try {
-        const data = await createAndOpenSession(sessionManager, config);
+        const data = await createAndOpenSession(
+          sessionManager,
+          config,
+          undefined,
+          serialSessionCoordinator,
+        );
 
         return {
           success: true,
           data,
         };
       } catch (err) {
+        if (err instanceof SerialSessionConflictError) {
+          return {
+            success: false,
+            error: {
+              code: err.code,
+              message: err.message,
+              details: {
+                port: err.port,
+                existingSessionId: err.existingSessionId,
+                existing: err.existing,
+                requested: err.requested,
+              },
+            },
+          };
+        }
         // 仅当 manager 入注册阶段抛错时落入此分支（重复 id / factory 校验失败 / buildSession 异常）
         const message = err instanceof Error ? err.message : String(err);
         return {

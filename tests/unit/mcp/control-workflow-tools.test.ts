@@ -5,6 +5,7 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SessionBase } from '@/core/session/session-base.js';
 import { SessionManager } from '@/core/session/session-manager.js';
+import { SerialSessionCoordinator } from '@/core/session/serial-session-coordinator.js';
 import { ControlProfileManager } from '@/core/workspace/index.js';
 import { JLinkNotImplementedError, JLinkOperationError } from '@/jlink/errors.js';
 import type { FlashDownloadOptions, IJLinkBackend } from '@/jlink/types.js';
@@ -34,6 +35,7 @@ interface Harness {
   root: string;
   transport: MockTransport;
   openSerialCalls: SerialSessionConfig[];
+  serialSessionCoordinator: SerialSessionCoordinator;
 }
 
 interface SetupOptions {
@@ -48,6 +50,7 @@ interface SetupOptions {
 async function setup(options: SetupOptions = {}): Promise<Harness> {
   const root = await mkdtemp(path.join(tmpdir(), 'lt-control-workflow-mcp-'));
   const manager = new SessionManager();
+  const serialSessionCoordinator = new SerialSessionCoordinator(manager);
   const serialDiscovery = new SerialDiscovery({ listFn: async () => [] });
   const controlProfileManager = new ControlProfileManager();
   const fake = new FakeJLinkBackend();
@@ -57,6 +60,7 @@ async function setup(options: SetupOptions = {}): Promise<Harness> {
   const { server: serverTransport, client: clientTransport } = createInMemoryMcpTransportPair();
   const mcp = createMcpServer({
     sessionManager: manager,
+    serialSessionCoordinator,
     serialDiscovery,
     controlProfileManager,
     jlinkBackend: options.jlinkBackend ?? fake,
@@ -95,6 +99,7 @@ async function setup(options: SetupOptions = {}): Promise<Harness> {
     root,
     transport,
     openSerialCalls,
+    serialSessionCoordinator,
   };
 }
 
@@ -2208,14 +2213,20 @@ describe('MCP control workflow tool', () => {
 
   it('reuses an already open matching serial session instead of opening the port twice', async () => {
     await initProfile(h);
-    const existing = await h.manager.createAndOpen(
-      (id) => new TestSerialSession({ id, transport: h.transport }),
-      {
-        connectionType: 'serial',
-        label: 'Existing COM7',
-        createdBy: 'human',
-        serial: { port: 'COM7', baudRate: 921600, mode: 'terminal' },
-      } as unknown as Parameters<SessionManager['createAndOpen']>[1],
+    const existing = await h.serialSessionCoordinator.openOrReuse(
+      { type: 'serial', port: 'COM7', baudRate: 921600, mode: 'terminal' },
+      async () => {
+        const session = await h.manager.createAndOpen(
+          (id) => new TestSerialSession({ id, transport: h.transport }),
+          {
+            connectionType: 'serial',
+            label: 'Existing COM7',
+            createdBy: 'human',
+            serial: { port: 'COM7', baudRate: 921600, mode: 'terminal' },
+          } as unknown as Parameters<SessionManager['createAndOpen']>[1],
+        );
+        return { sessionId: session.id, state: session.state };
+      },
     );
 
     const pending = callTool(h.client, 'run_control_workflow', {
@@ -2237,10 +2248,56 @@ describe('MCP control workflow tool', () => {
       }
     ).data;
     expect(data.steps.find((step) => step.id === 'open_serial')?.evidence).toMatchObject({
-      sessionId: existing.id,
+      sessionId: existing.sessionId,
       reused: true,
     });
     expect(h.openSerialCalls).toHaveLength(0);
+  });
+
+  it('rejects an active same-port session with different complete serial parameters', async () => {
+    await initProfile(h);
+    await h.serialSessionCoordinator.openOrReuse(
+      {
+        type: 'serial',
+        port: 'COM7',
+        baudRate: 921600,
+        mode: 'terminal',
+        dataBits: 7,
+      },
+      async () => {
+        const session = await h.manager.createAndOpen(
+          (id) => new TestSerialSession({ id, transport: h.transport }),
+          {
+            connectionType: 'serial',
+            label: 'Existing COM7 7-bit',
+            createdBy: 'human',
+            serial: { port: 'COM7', baudRate: 921600, mode: 'terminal' },
+          },
+        );
+        return { sessionId: session.id, state: session.state };
+      },
+    );
+
+    const pending = callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      observe: { markers: ['msh'], timeoutMs: 1000 },
+      confirm: true,
+    });
+    const timer = setInterval(() => h.transport.pushIncoming(Buffer.from('msh />')), 20);
+    const out = await pending.finally(() => clearInterval(timer));
+    const data = (
+      out.evidence as {
+        data: { failedStep?: string; blockingReasons?: Array<{ code: string }> };
+      }
+    ).data;
+
+    expect(data.failedStep).toBe('open_serial');
+    expect(data.blockingReasons).toContainEqual(
+      expect.objectContaining({ code: 'SERIAL_SESSION_CONFLICT' }),
+    );
+    expect(h.openSerialCalls).toHaveLength(0);
+    expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
   });
 
   it('allows an absolute firmware path saved in the control profile', async () => {

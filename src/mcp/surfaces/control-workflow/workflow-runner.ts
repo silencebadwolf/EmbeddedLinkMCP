@@ -5,6 +5,7 @@ import { open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { VerifiedDeploymentEvidence } from '../../../core/compensation/index.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
+import { SerialSessionConflictError } from '../../../core/session/serial-session-coordinator.js';
 import {
   defaultHostPathResolver,
   type ControlProfileManager,
@@ -28,7 +29,7 @@ import type {
 import type { JLinkDeviceCatalog } from '../../../jlink/device-catalog.js';
 import { resolveJLinkTarget, type JLinkTargetResolution } from '../../../jlink/target-resolver.js';
 import { JLinkNotImplementedError, JLinkOperationError } from '../../../jlink/errors.js';
-import type { SerialSessionConfig, SessionSummary } from '../../../shared/types.js';
+import type { SerialSessionConfig } from '../../../shared/types.js';
 import { ERROR_CODES } from '../../../shared/error-codes.js';
 import { MAX_BINARY_BYTES } from '../../limits.js';
 import { ToolError, type ToolErrorCode } from '../../registry.js';
@@ -211,7 +212,7 @@ export async function runControlWorkflow(
 
     if (needsSerial(input, profile)) {
       throwIfAborted(ctx.signal);
-      const serialReady = await openSerialStep(ctx, deps.openSerial, deps.sessionManager);
+      const serialReady = await openSerialStep(ctx, deps.openSerial);
       if (!serialReady) return await finalizeWorkflow(ctx, deps.jlinkBackend);
     }
 
@@ -383,13 +384,11 @@ async function preflight(
  *
  * @param ctx 工作流上下文
  * @param openSerial 串口打开函数
- * @param sessionManager 共享 SessionManager，用于复用已打开的同配置串口会话
  * @returns true 表示串口已就绪；false 表示已记录结构化阻塞原因
  */
 async function openSerialStep(
   ctx: WorkflowContext,
   openSerial: ControlProfileOpenSerial,
-  sessionManager: SessionManager,
 ): Promise<boolean> {
   const started = Date.now();
   try {
@@ -397,20 +396,6 @@ async function openSerialStep(
       throw new ToolError(ERROR_CODES.INVALID_ARGUMENT, 'serial profile is incomplete');
     }
     const serial = ctx.profile.serial;
-    const existing = findReusableSerialSession(sessionManager, serial);
-    if (existing !== undefined) {
-      ctx.serialSessionId = existing.sessionId;
-      ctx.summary.serialOpened = true;
-      pushStep(
-        ctx,
-        'open_serial',
-        'passed',
-        { sessionId: existing.sessionId, state: existing.state, reused: true },
-        started,
-      );
-      return true;
-    }
-
     const result = await openSerial({
       type: 'serial',
       port: serial.port,
@@ -424,16 +409,24 @@ async function openSerialStep(
       ctx,
       'open_serial',
       'passed',
-      { sessionId: result.sessionId, state: result.state },
+      {
+        sessionId: result.sessionId,
+        state: result.state,
+        ...(result.reused !== undefined ? { reused: result.reused } : {}),
+      },
       started,
     );
     return true;
   } catch (err) {
     if (serialProfileComplete(ctx.profile)) {
       const serial = ctx.profile.serial;
+      const errorCode =
+        err instanceof SerialSessionConflictError
+          ? ERROR_CODES.SERIAL_SESSION_CONFLICT
+          : ERROR_CODES.INVALID_STATE;
       addBlockingReason(ctx, {
         kind: 'serial_open_failed',
-        code: ERROR_CODES.INVALID_STATE,
+        code: errorCode,
         message: safeErrorMessage(err),
         details: { port: serial.port, baudRate: serial.baudRate, mode: serial.mode },
       });
@@ -443,7 +436,7 @@ async function openSerialStep(
         message: `串口 ${serial.port} 无法打开；请关闭占用该端口的终端/烧录工具，或在 control-profile 中改成当前可用串口后重试。`,
       });
       pushStep(ctx, 'open_serial', 'failed', { blockingReasons: ctx.blockingReasons }, started, {
-        code: ERROR_CODES.INVALID_STATE,
+        code: errorCode,
         message: 'Serial port is not available for control workflow',
         details: { port: serial.port, baudRate: serial.baudRate, mode: serial.mode },
       });
@@ -1718,29 +1711,6 @@ function getGdbServerAvailability(
   const candidate = jlinkBackend as Partial<GdbServerAvailabilityProvider>;
   if (typeof candidate.checkGdbServerAvailability !== 'function') return undefined;
   return candidate.checkGdbServerAvailability(target);
-}
-
-/**
- * 查找已打开且端口、波特率、模式完全匹配的串口会话，避免重复占用同一 COM 口。
- *
- * @param sessionManager 共享 SessionManager
- * @param serial profile 中的串口配置
- * @returns 可复用会话摘要；找不到时返回 undefined
- */
-function findReusableSerialSession(
-  sessionManager: SessionManager,
-  serial: { port: string; baudRate: number; mode: 'normal' | 'terminal' },
-): SessionSummary | undefined {
-  return sessionManager
-    .listSummaries()
-    .find(
-      (session) =>
-        session.connectionType === 'serial' &&
-        session.state === 'open' &&
-        session.serial?.port === serial.port &&
-        session.serial.baudRate === serial.baudRate &&
-        session.serial.mode === serial.mode,
-    );
 }
 
 /**

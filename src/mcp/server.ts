@@ -61,11 +61,14 @@ import { baseDiagnostics, type RuntimeDiagnosticsProvider } from './runtime-diag
 import type { OperationRecorderProvider } from '../core/activity/operation-recorder.js';
 import type { VerifiedDeploymentEvidence } from '../core/compensation/index.js';
 import type { OperationAdmissionCoordinator } from '../core/operation-admission/operation-admission-coordinator.js';
+import { SerialSessionCoordinator } from '../core/session/serial-session-coordinator.js';
 
 /** {@link createMcpServer} 的依赖容器。 */
 export interface CreateMcpServerOptions {
   sessionManager: SessionManager;
   serialDiscovery: SerialDiscovery;
+  /** Main-owned serial open/reuse coordinator shared with renderer IPC and sibling MCP servers. */
+  serialSessionCoordinator?: SerialSessionCoordinator;
   /**
    * 工作区配置管理器（Phase 8）。注入时 server 会注册 3 个 workspace 工具；
    * 缺省时跳过注册（向后兼容旧测试）。
@@ -180,9 +183,18 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
     runtimeRestartScheduler: options.runtimeRestartScheduler,
   });
 
+  const serialSessionCoordinator =
+    options.serialSessionCoordinator ?? new SerialSessionCoordinator(options.sessionManager);
+  const controlProfileOpenSerial =
+    options.controlProfileOpenSerial === undefined
+      ? undefined
+      : (config: Parameters<ControlProfileOpenSerial>[0]) =>
+          serialSessionCoordinator.openOrReuse(config, () => options.controlProfileOpenSerial!(config));
+
   registerTerminalTools(server, {
     sessionManager: options.sessionManager,
     serialDiscovery: options.serialDiscovery,
+    serialSessionCoordinator,
   });
 
   // Phase 9+: 始终注册 debug 工具；未注入 backend 时挂 NullJLinkBackend，
@@ -223,7 +235,8 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
       jlinkBackend,
       jlinkDeviceCatalog: options.jlinkDeviceCatalog,
       hostPathResolver: options.hostPathResolver,
-      controlProfileOpenSerial: options.controlProfileOpenSerial,
+      controlProfileOpenSerial,
+      serialSessionCoordinator,
     });
     registerControlWorkflowTools(server, {
       controlProfileManager: options.controlProfileManager,
@@ -231,7 +244,8 @@ export function createMcpServer(options: CreateMcpServerOptions): LinkTermMcpSer
       jlinkBackend,
       jlinkDeviceCatalog: options.jlinkDeviceCatalog,
       hostPathResolver: options.hostPathResolver,
-      controlProfileOpenSerial: options.controlProfileOpenSerial,
+      controlProfileOpenSerial,
+      serialSessionCoordinator,
       controlWorkflowJobManager: options.controlWorkflowJobManager,
       onVerifiedDeployment: options.onVerifiedDeployment,
     });

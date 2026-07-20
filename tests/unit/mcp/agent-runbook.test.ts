@@ -176,6 +176,14 @@ describe('agent runbook builder', () => {
         expectedEvidenceKind: 'debug_output',
       }),
     );
+    const observeSerial = runbook.workflows.find((workflow) => workflow.id === 'observe_serial');
+    expect(observeSerial?.recommendedTools.slice(0, 3)).toEqual([
+      'list_sessions',
+      'discover_serial_ports',
+      'open_session',
+    ]);
+    expect(observeSerial?.description).toContain('reuse');
+    expect(observeSerial?.description).toContain('Main');
     expect(runbook.highImpactTools).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: 'flash_download', requiresConfirmation: false }),

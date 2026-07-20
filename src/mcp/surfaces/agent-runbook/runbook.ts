@@ -101,8 +101,9 @@ export const RUNBOOK_WORKFLOWS: readonly RunbookWorkflow[] = [
     id: 'observe_serial',
     title: 'Observe an existing or configured serial terminal',
     description:
-      'Use LinkTerm serial/session tools to open or reuse a terminal session, clear stale output, send commands, and read fresh transcript evidence.',
+      'List Main-owned sessions first and reuse a compatible active terminal when present; Main coordination remains authoritative if open_session is still called. Then clear stale output, send commands, and read fresh transcript evidence.',
     recommendedTools: [
+      'list_sessions',
       'discover_serial_ports',
       'open_session',
       'read_from_session',

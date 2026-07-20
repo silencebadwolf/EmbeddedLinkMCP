@@ -130,6 +130,56 @@ describe('registerSessionCreate', () => {
     expect(sm.summaryOf(result.data.sessionId)).toMatchObject({ state: 'open' });
   });
 
+  it('reuses the same active serial session on repeated create requests', async () => {
+    const sm = new SessionManager();
+    const realCreate = sm.create.bind(sm);
+    const create = vi.spyOn(sm, 'create').mockImplementation((_factory, metadata) =>
+      realCreate((id) => new CharacterizationSession(id, new MockTransport()), metadata),
+    );
+    registerSessionCreate(sm);
+    const handler = handlers.get(IPC_CHANNELS.SESSION_CREATE)!;
+
+    const first = (await handler({}, validSerialRequest)) as {
+      success: true;
+      data: { sessionId: SessionId; state: string };
+    };
+    const second = (await handler({}, validSerialRequest)) as {
+      success: true;
+      data: { sessionId: SessionId; state: string };
+    };
+
+    expect(second.data.sessionId).toBe(first.data.sessionId);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(sm.listSummaries()).toHaveLength(1);
+  });
+
+  it('returns SERIAL_SESSION_CONFLICT without creating an errored tab for different parameters', async () => {
+    const sm = new SessionManager();
+    const realCreate = sm.create.bind(sm);
+    const create = vi.spyOn(sm, 'create').mockImplementation((_factory, metadata) =>
+      realCreate((id) => new CharacterizationSession(id, new MockTransport()), metadata),
+    );
+    registerSessionCreate(sm);
+    const handler = handlers.get(IPC_CHANNELS.SESSION_CREATE)!;
+    const first = (await handler({}, validSerialRequest)) as {
+      success: true;
+      data: { sessionId: SessionId };
+    };
+
+    const conflict = await handler({}, {
+      config: { ...validSerialRequest.config, baudRate: 9_600 },
+    });
+
+    expect(conflict).toMatchObject({
+      success: false,
+      error: { code: 'SERIAL_SESSION_CONFLICT' },
+    });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(sm.listSummaries()).toEqual([
+      expect.objectContaining({ sessionId: first.data.sessionId, state: 'open' }),
+    ]);
+  });
+
   it('returns success with a retained errored session after transport open fails', async () => {
     const sm = new SessionManager();
     const realCreate = sm.create.bind(sm);

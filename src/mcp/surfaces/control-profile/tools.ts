@@ -27,6 +27,10 @@ import {
   connectControlProfileChip,
 } from '../../../core/workspace/control-profile-chip.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
+import {
+  SerialSessionConflictError,
+  SerialSessionCoordinator,
+} from '../../../core/session/serial-session-coordinator.js';
 import type { IJLinkBackend } from '../../../jlink/types.js';
 import type { JLinkDeviceCatalog, JLinkDeviceInfo } from '../../../jlink/device-catalog.js';
 import type { SerialSessionConfig, SessionState } from '../../../shared/types.js';
@@ -60,6 +64,7 @@ import {
 export interface ControlProfileSerialActivation {
   sessionId: string;
   state: SessionState;
+  reused?: boolean;
 }
 
 /** 串口激活函数；测试可注入 fake，生产默认走 SessionManager + buildSession。 */
@@ -76,6 +81,7 @@ export interface ControlProfileToolsDeps {
   jlinkDeviceCatalog?: JLinkDeviceCatalog;
   hostPathResolver?: HostPathResolver;
   controlProfileOpenSerial?: ControlProfileOpenSerial;
+  serialSessionCoordinator?: SerialSessionCoordinator;
 }
 
 const FIRMWARE_DIAGNOSTIC_READ_BYTES = 1024 * 1024;
@@ -97,7 +103,9 @@ export function registerControlProfileTools(
   server: McpServer,
   deps: ControlProfileToolsDeps,
 ): void {
-  const openSerial = deps.controlProfileOpenSerial ?? defaultOpenSerial(deps.sessionManager);
+  const openSerial =
+    deps.controlProfileOpenSerial ??
+    defaultOpenSerial(deps.sessionManager, deps.serialSessionCoordinator);
   const hostPathResolver = deps.hostPathResolver ?? defaultHostPathResolver;
 
   registerTool(server, {
@@ -350,16 +358,21 @@ export function registerControlProfileTools(
  * @param sessionManager 主进程共享 SessionManager
  * @returns 可打开串口 session 的函数
  */
-export function defaultOpenSerial(sessionManager: SessionManager): ControlProfileOpenSerial {
+export function defaultOpenSerial(
+  sessionManager: SessionManager,
+  serialSessionCoordinator: SerialSessionCoordinator = new SerialSessionCoordinator(sessionManager),
+): ControlProfileOpenSerial {
   return async (config: SerialSessionConfig): Promise<ControlProfileSerialActivation> => {
     const createConfig = config as SessionCreateRequestConfig;
-    const session = await sessionManager.createAndOpen((id) => buildSession(id, createConfig), {
-      connectionType: 'serial',
-      label: config.label,
-      createdBy: 'ai',
-      serial: { port: config.port, baudRate: config.baudRate, mode: config.mode },
+    return serialSessionCoordinator.openOrReuse(config, async () => {
+      const session = await sessionManager.createAndOpen((id) => buildSession(id, createConfig), {
+        connectionType: 'serial',
+        label: config.label,
+        createdBy: 'ai',
+        serial: { port: config.port, baudRate: config.baudRate, mode: config.mode },
+      });
+      return { sessionId: session.id, state: session.state };
     });
-    return { sessionId: session.id, state: session.state };
   };
 }
 
@@ -589,6 +602,14 @@ async function loadProfileIfPresent(
 function translateControlProfileError(err: unknown): never {
   if (err instanceof ToolError) {
     throw err;
+  }
+  if (err instanceof SerialSessionConflictError) {
+    throw new ToolError(ERROR_CODES.SERIAL_SESSION_CONFLICT, err.message, {
+      port: err.port,
+      existingSessionId: err.existingSessionId,
+      existing: err.existing,
+      requested: err.requested,
+    });
   }
   if (err instanceof ControlProfileAlreadyInitializedError) {
     throw new ToolError(ERROR_CODES.CONTROL_PROFILE_ALREADY_INITIALIZED, err.message, {

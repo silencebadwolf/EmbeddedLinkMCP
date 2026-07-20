@@ -41,6 +41,7 @@ import type { RunControlWorkflowInput } from '../../mcp/surfaces/control-workflo
 import { runControlWorkflow } from '../../mcp/surfaces/control-workflow/workflow-runner.js';
 import { ToolError } from '../../mcp/registry.js';
 import type { OperationAdmissionCoordinator } from '../../core/operation-admission/operation-admission-coordinator.js';
+import type { SerialSessionCoordinator } from '../../core/session/serial-session-coordinator.js';
 import { ERROR_CODES } from '../../shared/error-codes.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type {
@@ -65,6 +66,7 @@ export interface RegisterControlProfileIpcOptions {
   operationAdmissionCoordinator?: OperationAdmissionCoordinator;
   compensationCandidateService?: CompensationCandidateService;
   onVerifiedDeployment?: (evidence: VerifiedDeploymentEvidence) => void;
+  serialSessionCoordinator?: SerialSessionCoordinator;
 }
 
 export interface RunDownloadPayload {
@@ -468,7 +470,7 @@ function buildRunDownloadDeps(
     sessionManager: options.sessionManager,
     jlinkBackend: options.jlinkBackend,
     jlinkDeviceCatalog: options.jlinkDeviceCatalog,
-    openSerial: defaultOpenSerial(options.sessionManager),
+    openSerial: defaultOpenSerial(options.sessionManager, options.serialSessionCoordinator),
   };
 }
 

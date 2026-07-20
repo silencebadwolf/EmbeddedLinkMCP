@@ -2,6 +2,10 @@ import { electron } from '../electron-runtime.js';
 import type { ControlProfileManager, HostPathResolver } from '../../core/workspace/index.js';
 import type { SessionManager } from '../../core/session/session-manager.js';
 import {
+  SerialSessionConflictError,
+  SerialSessionCoordinator,
+} from '../../core/session/serial-session-coordinator.js';
+import {
   ConnectionProfileManager,
   ConnectionProfileNotFoundError,
   CredentialDecryptFailedError,
@@ -38,6 +42,7 @@ export function registerConnectionProfilesIpc(
   controlProfileManager?: ControlProfileManager,
   jlinkDeviceCatalog?: JLinkDeviceCatalog,
   hostPathResolver?: HostPathResolver,
+  serialSessionCoordinator: SerialSessionCoordinator = new SerialSessionCoordinator(sessionManager),
 ): () => void {
   ipcMain.handle(IPC_CHANNELS.CONNECTIONS_LIST, async (): Promise<PreloadResult<ReadonlyArray<SavedConnectionSummary>>> => {
     try {
@@ -60,6 +65,7 @@ export function registerConnectionProfilesIpc(
           controlProfileManager,
           jlinkDeviceCatalog,
           hostPathResolver,
+          serialSessionCoordinator,
         });
         return { success: true, data: { profile, ...session } };
       } catch (err) {
@@ -83,6 +89,7 @@ export function registerConnectionProfilesIpc(
           controlProfileManager,
           jlinkDeviceCatalog,
           hostPathResolver,
+          serialSessionCoordinator,
         });
         return { success: true, data: { profile, ...session } };
       } catch (err) {
@@ -157,10 +164,16 @@ async function openSavedConnectionConfig(
     controlProfileManager?: ControlProfileManager;
     jlinkDeviceCatalog?: JLinkDeviceCatalog;
     hostPathResolver?: HostPathResolver;
+    serialSessionCoordinator: SerialSessionCoordinator;
   },
 ): Promise<{ sessionId: SessionId; state: SessionState; rttLog?: { probeId: string; channelIndex: number } }> {
   if (config.type !== 'rtt-log') {
-    return createAndOpenSession(deps.sessionManager, config as SessionCreateRequestConfig, deps.label);
+    return createAndOpenSession(
+      deps.sessionManager,
+      config as SessionCreateRequestConfig,
+      deps.label,
+      deps.serialSessionCoordinator,
+    );
   }
   if (deps.jlinkBackend === undefined) {
     throw new Error('RTT saved profiles require a J-Link backend');
@@ -195,6 +208,21 @@ function parseProfileId(raw: unknown): string {
 }
 
 function toIpcError<T>(err: unknown): PreloadResult<T> {
+  if (err instanceof SerialSessionConflictError) {
+    return {
+      success: false,
+      error: {
+        code: err.code,
+        message: err.message,
+        details: {
+          port: err.port,
+          existingSessionId: err.existingSessionId,
+          existing: err.existing,
+          requested: err.requested,
+        },
+      },
+    };
+  }
   if (err instanceof CredentialStorageUnavailableError) {
     return { success: false, error: { code: err.code, message: err.message } };
   }

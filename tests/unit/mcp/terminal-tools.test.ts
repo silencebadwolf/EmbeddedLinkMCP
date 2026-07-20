@@ -695,6 +695,49 @@ describe('MCP terminal tools', () => {
     expect(destroyed).not.toHaveBeenCalled();
     expect(sessionEvents).not.toHaveBeenCalled();
   });
+
+  it('reuses the same active serial session on repeated open_session calls', async () => {
+    const realCreateAndOpen = harness.manager.createAndOpen.bind(harness.manager);
+    const createAndOpen = vi
+      .spyOn(harness.manager, 'createAndOpen')
+      .mockImplementation((_factory, metadata) =>
+        realCreateAndOpen((id) => new TestSession(id, new MockTransport()), metadata),
+      );
+    const args = {
+      config: { type: 'serial', port: 'COM7', baudRate: 115200, mode: 'terminal' },
+    };
+
+    const first = await callTool(harness.client, 'open_session', args);
+    const second = await callTool(harness.client, 'open_session', args);
+
+    expect(second.sessionId).toBe(first.sessionId);
+    expect((second.evidence as { data: { reused?: boolean } }).data.reused).toBe(true);
+    expect(createAndOpen).toHaveBeenCalledTimes(1);
+    expect(harness.manager.listSummaries()).toHaveLength(1);
+  });
+
+  it('returns SERIAL_SESSION_CONFLICT without creating a second candidate', async () => {
+    const realCreateAndOpen = harness.manager.createAndOpen.bind(harness.manager);
+    const createAndOpen = vi
+      .spyOn(harness.manager, 'createAndOpen')
+      .mockImplementation((_factory, metadata) =>
+        realCreateAndOpen((id) => new TestSession(id, new MockTransport()), metadata),
+      );
+    await callTool(harness.client, 'open_session', {
+      config: { type: 'serial', port: 'COM7', baudRate: 115200, mode: 'terminal' },
+    });
+
+    const conflict = await callTool(harness.client, 'open_session', {
+      config: { type: 'serial', port: 'com7', baudRate: 9600, mode: 'terminal' },
+    });
+
+    expect(conflict).toMatchObject({
+      success: false,
+      error: { code: 'SERIAL_SESSION_CONFLICT' },
+    });
+    expect(createAndOpen).toHaveBeenCalledTimes(1);
+    expect(harness.manager.listSummaries()).toHaveLength(1);
+  });
 });
 
 /** 为 send_and_wait 测试用：让 write 入队链路有时间让 audit 事件落地。 */

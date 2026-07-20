@@ -34,6 +34,7 @@ import {
   type VerifiedDeploymentEvidence,
 } from '../../core/compensation/index.js';
 import { SessionManager } from '../../core/session/session-manager.js';
+import { SerialSessionCoordinator } from '../../core/session/serial-session-coordinator.js';
 import {
   ControlProfileManager,
   ControlProfileRecordManager,
@@ -173,6 +174,7 @@ export async function registerIpcHandlers(
 ): Promise<MainProcessContext> {
   const serialDiscovery = new SerialDiscovery();
   const sessionManager = new SessionManager();
+  const serialSessionCoordinator = new SerialSessionCoordinator(sessionManager);
   const workspaceConfigManager = new WorkspaceConfigManager({
     evidenceFn: async () => ({
       serialPorts: await serialDiscovery.listPorts(),
@@ -282,6 +284,7 @@ export async function registerIpcHandlers(
   });
   const mcpServer = createMcpServer({
     sessionManager,
+    serialSessionCoordinator,
     serialDiscovery,
     workspaceConfigManager,
     workspaceEvidenceFn: async () => ({
@@ -303,6 +306,7 @@ export async function registerIpcHandlers(
 
   const mcpHttpServer = await startMcpHttpRuntimeServer({
     sessionManager,
+    serialSessionCoordinator,
     serialDiscovery,
     workspaceConfigManager,
     workspaceEvidenceFn: async () => ({
@@ -327,7 +331,7 @@ export async function registerIpcHandlers(
 
   const unregisterSerial = registerSerialIpc(serialDiscovery);
   const unregisterSession = registerSessionIpc(sessionManager);
-  const unregisterSessionCreate = registerSessionCreate(sessionManager);
+  const unregisterSessionCreate = registerSessionCreate(sessionManager, serialSessionCoordinator);
   const unregisterRttLogSession = registerRttLogSessionIpc(
     sessionManager,
     jlinkBackend,
@@ -340,6 +344,8 @@ export async function registerIpcHandlers(
     jlinkBackend,
     controlProfileManager,
     jlinkDeviceCatalog,
+    undefined,
+    serialSessionCoordinator,
   );
   const unregisterAgentIntegrations = registerAgentIntegrationsIpc(agentIntegrationManager);
   const unregisterControlProfile = registerControlProfileIpc(
@@ -352,6 +358,7 @@ export async function registerIpcHandlers(
       controlWorkflowJobManager,
       compensationCandidateService,
       onVerifiedDeployment,
+      serialSessionCoordinator,
     },
   );
   const unregisterJLinkDeviceCatalog = registerJLinkDeviceCatalogIpc(jlinkDeviceCatalog);

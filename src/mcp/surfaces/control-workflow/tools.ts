@@ -3,6 +3,7 @@
 import { ZodError } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
+import type { SerialSessionCoordinator } from '../../../core/session/serial-session-coordinator.js';
 import {
   ControlProfileManager,
   ControlProfileNotFoundError,
@@ -42,6 +43,7 @@ export interface ControlWorkflowToolsDeps {
   jlinkDeviceCatalog?: JLinkDeviceCatalog;
   hostPathResolver?: HostPathResolver;
   controlProfileOpenSerial?: ControlProfileOpenSerial;
+  serialSessionCoordinator?: SerialSessionCoordinator;
   controlWorkflowJobManager?: ControlWorkflowJobManager;
   onVerifiedDeployment?: (evidence: VerifiedDeploymentEvidence) => void;
 }
@@ -56,7 +58,9 @@ export function registerControlWorkflowTools(
   server: McpServer,
   deps: ControlWorkflowToolsDeps,
 ): void {
-  const openSerial = deps.controlProfileOpenSerial ?? defaultOpenSerial(deps.sessionManager);
+  const openSerial =
+    deps.controlProfileOpenSerial ??
+    defaultOpenSerial(deps.sessionManager, deps.serialSessionCoordinator);
   const jobManager = deps.controlWorkflowJobManager ?? new ControlWorkflowJobManager();
 
   registerTool(server, {

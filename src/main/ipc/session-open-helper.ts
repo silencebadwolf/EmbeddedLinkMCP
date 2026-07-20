@@ -1,4 +1,5 @@
 import type { SessionManager } from '../../core/session/session-manager.js';
+import type { SerialSessionCoordinator } from '../../core/session/serial-session-coordinator.js';
 import { buildSession } from '../../core/session/factory.js';
 import type { SessionId, SessionState } from '../../shared/types.js';
 import type { SessionCreateRequestConfig } from '../../shared/preload-api.js';
@@ -14,6 +15,21 @@ import type { SessionCreateRequestConfig } from '../../shared/preload-api.js';
  * @returns Created session id and final state.
  */
 export async function createAndOpenSession(
+  sessionManager: SessionManager,
+  config: SessionCreateRequestConfig,
+  labelOverride?: string,
+  serialSessionCoordinator?: SerialSessionCoordinator,
+): Promise<{ sessionId: SessionId; state: SessionState }> {
+  if (config.type === 'serial' && serialSessionCoordinator !== undefined) {
+    const result = await serialSessionCoordinator.openOrReuse(config, () =>
+      createAndOpenNewSession(sessionManager, config, labelOverride),
+    );
+    return { sessionId: result.sessionId, state: result.state };
+  }
+  return createAndOpenNewSession(sessionManager, config, labelOverride);
+}
+
+async function createAndOpenNewSession(
   sessionManager: SessionManager,
   config: SessionCreateRequestConfig,
   labelOverride?: string,

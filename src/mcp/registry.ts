@@ -38,6 +38,7 @@ import type { OperationAdmissionCoordinator } from '../core/operation-admission/
 export type ToolErrorCode =
   | 'NOT_FOUND'
   | 'SESSION_NOT_FOUND'
+  | 'SERIAL_SESSION_CONFLICT'
   | 'NOT_OPEN'
   | 'NOT_WRITABLE'
   | 'NOT_IMPLEMENTED'

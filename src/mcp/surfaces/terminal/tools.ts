@@ -12,6 +12,10 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { SessionManager } from '../../../core/session/session-manager.js';
+import {
+  SerialSessionConflictError,
+  SerialSessionCoordinator,
+} from '../../../core/session/serial-session-coordinator.js';
 import type { ISession } from '../../../core/session/types.js';
 import {
   SessionNotOpenError,
@@ -62,6 +66,7 @@ import {
 export interface TerminalToolsDeps {
   sessionManager: SessionManager;
   serialDiscovery: SerialDiscovery;
+  serialSessionCoordinator?: SerialSessionCoordinator;
 }
 
 /**
@@ -72,6 +77,8 @@ export interface TerminalToolsDeps {
  */
 export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps): void {
   const { sessionManager, serialDiscovery } = deps;
+  const serialSessionCoordinator =
+    deps.serialSessionCoordinator ?? new SerialSessionCoordinator(sessionManager);
 
   registerTool(server, {
     name: 'list_sessions',
@@ -99,20 +106,44 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
     inputSchema: openSessionInputSchema,
     handler: async (input: OpenSessionInput): Promise<ToolHandlerResult> => {
       let session: ISession;
+      let reused = false;
       try {
         // 使用 createAndOpen：open 失败时 session 不入 manager、不广播 created/destroyed —— 避免幽灵 session
         // input.config 的形态由 zod 强校验，等价于 SessionCreateRequestConfig；
         // 显式 cast 把匿名联合类型贴到 shared 命名类型，让 buildSession 跨入口签名一致。
         const config = input.config as unknown as SessionCreateRequestConfig;
-        session = await sessionManager.createAndOpen((id) => buildSession(id, config), {
-          connectionType: config.type,
-          label: config.label,
-          createdBy: 'ai',
-          ...(config.type === 'serial'
-            ? { serial: { port: config.port, baudRate: config.baudRate, mode: config.mode } }
-            : {}),
-        });
+        if (config.type === 'serial') {
+          const result = await serialSessionCoordinator.openOrReuse(config, async () => {
+            const opened = await sessionManager.createAndOpen((id) => buildSession(id, config), {
+              connectionType: 'serial',
+              label: config.label,
+              createdBy: 'ai',
+              serial: { port: config.port, baudRate: config.baudRate, mode: config.mode },
+            });
+            return { sessionId: opened.id, state: opened.state };
+          });
+          const resolved = sessionManager.get(result.sessionId);
+          if (resolved === undefined) {
+            throw new Error(`Coordinated session disappeared: ${result.sessionId}`);
+          }
+          session = resolved;
+          reused = result.reused;
+        } else {
+          session = await sessionManager.createAndOpen((id) => buildSession(id, config), {
+            connectionType: config.type,
+            label: config.label,
+            createdBy: 'ai',
+          });
+        }
       } catch (err) {
+        if (err instanceof SerialSessionConflictError) {
+          throw new ToolError(ERROR_CODES.SERIAL_SESSION_CONFLICT, err.message, {
+            port: err.port,
+            existingSessionId: err.existingSessionId,
+            existing: err.existing,
+            requested: err.requested,
+          });
+        }
         const message = err instanceof Error ? err.message : String(err);
         throw new ToolError(
           ERROR_CODES.INTERNAL,
@@ -124,7 +155,7 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
         state: session.state,
         evidence: {
           kind: 'terminal_output',
-          data: { sessionId: session.id, type: input.config.type },
+          data: { sessionId: session.id, type: input.config.type, reused },
           cursor: latestCursor(session),
         },
       });

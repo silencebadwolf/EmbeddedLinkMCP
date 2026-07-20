@@ -18,6 +18,8 @@ export const ERROR_CODES = {
   INVALID_ARGUMENT: 'INVALID_ARGUMENT',
   /** 目标 session 不存在（已 destroy 或从未创建）。 */
   SESSION_NOT_FOUND: 'SESSION_NOT_FOUND',
+  /** 同一物理串口已由不同的有效配置占用。 */
+  SERIAL_SESSION_CONFLICT: 'SERIAL_SESSION_CONFLICT',
   /** 目标 session 不在 open 状态，无法写入。 */
   NOT_OPEN: 'NOT_OPEN',
   /** 目标 session 为只读观察流，无法写入。 */

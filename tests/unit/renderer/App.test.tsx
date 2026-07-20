@@ -367,6 +367,56 @@ describe('App', () => {
     );
   });
 
+  it('binds a saved full workspace to an AI-opened session id without adding another tab', async () => {
+    const record = {
+      id: 'ctrl_ai_shared',
+      label: 'repo - Shared COM7',
+      root: 'C:/repo',
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' as const },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    mock.spies.session.list.mockResolvedValue({
+      success: true,
+      data: {
+        sessions: [
+          {
+            sessionId: 'sess_ai_shared',
+            state: 'open',
+            connectionType: 'serial',
+            label: 'AI COM7',
+            createdBy: 'ai',
+            serial: { port: 'COM7', baudRate: 115200, mode: 'terminal' },
+          },
+        ],
+      },
+    });
+    mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
+    mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
+      success: true,
+      data: { path: 'C:/repo/.linkterm/control-profile.json', record },
+    });
+    mock.spies.session.create.mockResolvedValueOnce({
+      success: true,
+      data: { sessionId: 'sess_ai_shared', state: 'open' },
+    });
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+    await waitFor(() => expect(useAppStore.getState().activeSessionId).toBe('sess_ai_shared'));
+
+    fireEvent.click(await screen.findByTestId('control-profile-sidebar-item-ctrl_ai_shared'));
+
+    await waitFor(() => expect(mock.spies.session.create).toHaveBeenCalledOnce());
+    expect(useAppStore.getState().sessions.size).toBe(1);
+    expect(useAppStore.getState().activeSessionId).toBe('sess_ai_shared');
+    expect(screen.getAllByTestId('terminal-sess_ai_shared')).toHaveLength(1);
+  });
+
   it('keeps the control-profile sidebar out of the no-session Start Center', async () => {
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);
