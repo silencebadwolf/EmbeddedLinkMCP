@@ -2,6 +2,7 @@ import {
   WriteQueueFullError,
   type IWriteQueue,
   type WriteAuditCallback,
+  type WriteStartCallback,
   type WriteQueueItem,
   type WriteQueueOptions,
 } from './types.js';
@@ -31,6 +32,7 @@ interface PendingTask {
  */
 export class WriteQueue implements IWriteQueue {
   readonly #writer: (data: Uint8Array) => Promise<void>;
+  readonly #onStart: WriteStartCallback | undefined;
   readonly #audit: WriteAuditCallback | undefined;
   readonly #maxDepth: number;
 
@@ -48,6 +50,7 @@ export class WriteQueue implements IWriteQueue {
 
   constructor(options: WriteQueueOptions) {
     this.#writer = options.writer;
+    this.#onStart = options.onStart;
     this.#audit = options.audit;
     const depth = options.maxDepth ?? 1024;
     if (!Number.isInteger(depth) || depth <= 0) {
@@ -137,11 +140,12 @@ export class WriteQueue implements IWriteQueue {
   }
 
   /**
-   * 执行单个任务：调用 writer，回调 audit，settle 调用方 Promise，再调度下一条。
+   * 执行单个任务：先回调 onStart，再调用 writer，回调 audit，settle 调用方 Promise，再调度下一条。
    * 异常不会传播到 #schedule 调用点。
    */
   async #run(task: PendingTask): Promise<void> {
     try {
+      this.#onStart?.(task.item);
       await this.#writer(task.item.data);
       this.#audit?.(task.item, { ok: true, bytesWritten: task.item.data.byteLength });
       task.resolve();

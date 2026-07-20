@@ -51,6 +51,22 @@ describe('WriteQueue', () => {
     expect(result).toEqual({ ok: true, bytesWritten: 2 });
   });
 
+  it('notifies onStart before writer can synchronously emit a device echo', async () => {
+    const order: string[] = [];
+    const queue = new WriteQueue({
+      onStart: (item) => {
+        order.push(`start:${new TextDecoder().decode(item.data)}`);
+      },
+      writer: async (data) => {
+        order.push(`writer:${new TextDecoder().decode(data)}`);
+      },
+    });
+
+    await queue.enqueue({ origin: 'ai', data: utf8('mstart\r\n') });
+
+    expect(order).toEqual(['start:mstart\r\n', 'writer:mstart\r\n']);
+  });
+
   it('continues processing subsequent items after one fails', async () => {
     const writes: string[] = [];
     let callIndex = 0;

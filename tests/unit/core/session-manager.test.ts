@@ -71,6 +71,58 @@ describe('SessionBase', () => {
     expect(dataEvents[0]!.origin).toBe('human');
   });
 
+  it('records outgoing input before a transport synchronously emits its echo', async () => {
+    const { session, transport } = makeSession();
+    await session.open();
+    const originalWrite = transport.write.bind(transport);
+    transport.write = async (data: Uint8Array): Promise<void> => {
+      transport.pushIncoming(utf8('device echo\r\n'));
+      await originalWrite(data);
+    };
+
+    await session.write(utf8('mstart\r\n'), { origin: 'ai' });
+
+    const dataEvents = session.read(0).events.filter((event) => event.type === 'data');
+    expect(dataEvents.map((event) => event.origin)).toEqual(['ai', 'device']);
+    expect(dataEvents.map((event) => new TextDecoder().decode(event.data))).toEqual([
+      'mstart\r\n',
+      'device echo\r\n',
+    ]);
+  });
+
+  it('keeps a failed attempt visible, records a writer error, and drains the next write', async () => {
+    const { session, transport } = makeSession();
+    await session.open();
+    const originalWrite = transport.write.bind(transport);
+    let writeCount = 0;
+    transport.write = async (data: Uint8Array): Promise<void> => {
+      writeCount += 1;
+      if (writeCount === 1) throw new Error('first write failed');
+      await originalWrite(data);
+    };
+
+    const first = session.write(utf8('failed\r\n'), { origin: 'ai' });
+    const second = session.write(utf8('next\r\n'), { origin: 'human' });
+    await expect(first).rejects.toThrow('first write failed');
+    await expect(second).resolves.toBeUndefined();
+
+    const events = session.read(0).events;
+    expect(
+      events
+        .filter((event) => event.type === 'data' && (event.origin === 'ai' || event.origin === 'human'))
+        .map((event) => new TextDecoder().decode(event.data)),
+    ).toEqual(['failed\r\n', 'next\r\n']);
+    expect(
+      events
+        .filter((event) => event.type === 'error')
+        .map((event) => event.meta),
+    ).toContainEqual(expect.objectContaining({
+      source: 'writer',
+      fatal: false,
+      message: 'first write failed',
+    }));
+  });
+
   it('write() rejects when session not open', async () => {
     const { session } = makeSession();
     await expect(session.write(utf8('x'), { origin: 'human' })).rejects.toThrow(/not open/);

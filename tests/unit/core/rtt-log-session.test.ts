@@ -181,7 +181,7 @@ describe('RttLogSession', () => {
     ).toEqual(['help\r']);
   });
 
-  it('records a visible writer error and no human audit when RTT down-channel write is rejected', async () => {
+  it('keeps the attempted human input visible and records a writer error when RTT write is rejected', async () => {
     const backend = new ScriptedRttBackend([Buffer.alloc(0)]);
     backend.writeError = new JLinkInvalidStateError(
       'RTT down-channel 0 is not available; connected RTT channels are read-only',
@@ -207,8 +207,9 @@ describe('RttLogSession', () => {
 
     expect(
       session.read(0).events
-        .filter((event) => event.type === 'data' && event.origin === 'human'),
-    ).toEqual([]);
+        .filter((event) => event.type === 'data' && event.origin === 'human')
+        .map((event) => Buffer.from(event.data ?? []).toString('utf8')),
+    ).toEqual(['help\r\n']);
     expect(
       session.read(0).events
         .filter((event) => event.type === 'error')

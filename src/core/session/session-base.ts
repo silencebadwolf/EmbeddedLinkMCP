@@ -10,7 +10,7 @@ import type {
   TranscriptEventInput,
 } from '../transcript/types.js';
 import { WriteQueue } from '../write-queue/write-queue.js';
-import type { WriteAuditCallback } from '../write-queue/types.js';
+import type { WriteAuditCallback, WriteQueueItem } from '../write-queue/types.js';
 import type {
   ISession,
   SessionErrorMeta,
@@ -37,7 +37,8 @@ export interface SessionBaseOptions {
  * - 把 transport 'data' 事件转写为 EventType.data，origin='device'
  * - 把 transport 'error' 转写为 EventType.error，并将 session 状态转为 'errored'，同时释放底层资源
  * - 把 transport 'close' 转写为状态 'closed'（若非由 close() 主动触发），同时关闭 WriteQueue
- * - 写入成功后通过 WriteQueue audit 回调把出站字节追加到 transcript（这是 §4.5 审计不变量的核心）
+ * - 写入开始前通过 WriteQueue onStart 回调把出站字节追加到 transcript，避免 transport 同步回显抢先显示
+ * - 写入失败后通过 WriteQueue audit 回调追加明确错误事件
  * - 公开 EventEmitter 接口，让 SessionManager / IPC / MCP 订阅 transcript 事件流
  *
  * 子类（Phase 2+）通常只需在构造函数中创建对应的 ITransport 并 super() 即可。
@@ -59,6 +60,7 @@ export abstract class SessionBase extends EventEmitter implements ISession {
       new TranscriptBuffer({ sessionId: options.id, capacity: options.transcriptCapacity });
     this.#writeQueue = new WriteQueue({
       writer: (data) => this.#transport.write(data),
+      onStart: this.#onWriteStart,
       audit: this.#onWriteAudit,
     });
 
@@ -137,9 +139,8 @@ export abstract class SessionBase extends EventEmitter implements ISession {
   /**
    * 写入数据。必须在 state==='open' 时调用，否则抛 {@link SessionNotOpenError}。
    *
-   * 实际字节通过 WriteQueue 串行送达 transport；写入成功后由 audit 回调
-   * 把字节追加到 transcript（origin = options.origin），从而保证 AI 与 human 的
-   * 输入在 transcript 中按队列顺序可见 —— 这是 §4.5 审计不变量的核心。
+   * 实际字节通过 WriteQueue 串行送达 transport；任务开始执行前先把字节追加到 transcript，
+   * 从而保证设备同步回显也排在 AI/human 输入之后。若 transport 写入失败，随后追加 system error。
    *
    * @param data 待写入字节
    * @param options origin 必填（human/ai/system）；correlationId 可选，AI 调用应填以便外部关联；
@@ -178,16 +179,18 @@ export abstract class SessionBase extends EventEmitter implements ISession {
     return this.#appendAndEmit({ type: 'clear', origin });
   }
 
-  #onWriteAudit: WriteAuditCallback = (item, result) => {
-    if (result.ok) {
-      this.#appendAndEmit({
-        type: 'data',
-        origin: item.origin,
-        evidenceKind: 'raw_bytes',
-        data: item.data,
-        meta: item.correlationId ? { correlationId: item.correlationId } : undefined,
-      });
-    } else {
+  #onWriteStart = (item: WriteQueueItem): void => {
+    this.#appendAndEmit({
+      type: 'data',
+      origin: item.origin,
+      evidenceKind: 'raw_bytes',
+      data: item.data,
+      meta: item.correlationId ? { correlationId: item.correlationId } : undefined,
+    });
+  };
+
+  #onWriteAudit: WriteAuditCallback = (_item, result) => {
+    if (!result.ok) {
       this.#recordError({ message: result.error.message, source: 'writer', fatal: false });
     }
   };

@@ -13,7 +13,7 @@ import type { ISession, SessionErrorMeta, SessionStateMeta, SessionWriteOptions 
 import { SessionNotOpenError } from './types.js';
 import { analyzeRttDataChunk } from './rtt-log-diagnostics.js';
 import { WriteQueue } from '../write-queue/write-queue.js';
-import type { WriteAuditCallback } from '../write-queue/types.js';
+import type { WriteAuditCallback, WriteQueueItem } from '../write-queue/types.js';
 
 /** RTT 日志会话配置。 */
 export interface RttLogSessionOptions {
@@ -89,6 +89,7 @@ export class RttLogSession extends EventEmitter implements ISession {
           Buffer.from(data),
         );
       },
+      onStart: this.#onWriteStart,
       audit: this.#onWriteAudit,
     });
   }
@@ -122,7 +123,7 @@ export class RttLogSession extends EventEmitter implements ISession {
     this.#closing = false;
   }
 
-  /** 写入 RTT down-channel；成功后记录 human/ai transcript audit。 */
+  /** 写入 RTT down-channel；任务开始时记录 human/ai transcript，失败时追加错误。 */
   async write(data: Uint8Array, options: SessionWriteOptions): Promise<void> {
     if (this.#state !== 'open') {
       throw new SessionNotOpenError(this.id, this.#state);
@@ -200,16 +201,18 @@ export class RttLogSession extends EventEmitter implements ISession {
     return this.#appendAndEmit({ type: 'error', origin: 'system', meta });
   }
 
-  #onWriteAudit: WriteAuditCallback = (item, result) => {
-    if (result.ok) {
-      this.#appendAndEmit({
-        type: 'data',
-        origin: item.origin,
-        evidenceKind: 'raw_bytes',
-        data: item.data,
-        meta: item.correlationId ? { correlationId: item.correlationId } : undefined,
-      });
-    } else {
+  #onWriteStart = (item: WriteQueueItem): void => {
+    this.#appendAndEmit({
+      type: 'data',
+      origin: item.origin,
+      evidenceKind: 'raw_bytes',
+      data: item.data,
+      meta: item.correlationId ? { correlationId: item.correlationId } : undefined,
+    });
+  };
+
+  #onWriteAudit: WriteAuditCallback = (_item, result) => {
+    if (!result.ok) {
       this.#recordError({ message: result.error.message, source: 'writer', fatal: false });
     }
   };

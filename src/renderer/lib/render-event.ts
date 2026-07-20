@@ -291,10 +291,6 @@ function resetAnsiAtLineBreaks(text: string): string {
   );
 }
 
-function moveEmbeddedShellPromptToLineStart(text: string): string {
-  return text.replace(/([^\r\n])(msh\s*>)/gu, `$1${ANSI_RESET}\r\n$2`);
-}
-
 /**
  * 把单条 transcript 事件渲染到 Terminal。
  *
@@ -334,7 +330,7 @@ export function renderEventToXterm(
       const decoder = getDecoder(state, sessionId, event.origin);
       const decodedText = decoder.decode(visibleBytes, { stream: true });
       const text = shouldResetAnsiAtEmbeddedLineBreaks(event.origin, options.connectionType)
-        ? resetAnsiAtLineBreaks(moveEmbeddedShellPromptToLineStart(decodedText))
+        ? resetAnsiAtLineBreaks(decodedText)
         : decodedText;
       if (text.length === 0) return NO_VISIBLE_DEVICE_ACK;
       const ls = getLineState(state, sessionId);

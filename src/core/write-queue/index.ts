@@ -4,6 +4,7 @@ export {
   type IWriteQueue,
   type WriteAuditCallback,
   type WriteAuditResult,
+  type WriteStartCallback,
   type WriteQueueItem,
   type WriteQueueOptions,
   type WritePriority,

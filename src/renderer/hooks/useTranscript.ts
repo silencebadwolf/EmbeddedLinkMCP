@@ -103,15 +103,19 @@ export function useTranscript(
       return false;
     };
 
-    const renderTranscriptEvent = (event: SerializedTranscriptEvent): void => {
-      if (hasRenderedSequence(event)) return;
-      const result = renderEventToXterm(terminal, event, renderState, sessionId, { connectionType });
+    const handleRenderResult = (result: ReturnType<typeof renderEventToXterm>): void => {
       void result.completion.then((ack) => {
         if (cancelled) return;
         if (ack.visibleDeviceSequence !== undefined) {
           onVisibleDeviceSequence?.({ sessionId, sequence: ack.visibleDeviceSequence });
         }
       });
+    };
+
+    const renderTranscriptEvent = (event: SerializedTranscriptEvent): void => {
+      if (hasRenderedSequence(event)) return;
+      const result = renderEventToXterm(terminal, event, renderState, sessionId, { connectionType });
+      handleRenderResult(result);
       tickOriginActivity(event.origin);
       // state 事件：同步 UI store 上的 state 字段
       if (event.type === 'state') {
@@ -143,12 +147,7 @@ export function useTranscript(
         for (const event of subResult.data.events) {
           if (hasRenderedSequence(event)) continue;
           const result = renderEventToXterm(terminal, event, renderState, sessionId, { connectionType });
-          void result.completion.then((ack) => {
-            if (cancelled) return;
-            if (ack.visibleDeviceSequence !== undefined) {
-              onVisibleDeviceSequence?.({ sessionId, sequence: ack.visibleDeviceSequence });
-            }
-          });
+          handleRenderResult(result);
           // 历史回放不触发呼吸灯（lastOriginAt 不更新），避免视觉突兀
         }
         // 历史出站事件只用于重建屏幕，不应成为未来 live device 数据的 echo 匹配队列。

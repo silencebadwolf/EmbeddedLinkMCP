@@ -107,6 +107,30 @@ describe('useTranscript', () => {
     expect(term.writes.join('')).toBe('hi');
   });
 
+  it('renders an ordinary prompt-like device suffix without an idle delay', async () => {
+    useAppStore.getState().addSession({
+      id: 'sess_1',
+      label: 'serial',
+      connectionType: 'serial',
+      state: 'open',
+    });
+    const term = fakeTerm();
+    renderHook(() => useTranscript('sess_1', term));
+    await waitFor(() => expect(mock.spies.session.subscribe).toHaveBeenCalled());
+
+    mock.emitTranscript({
+      sessionId: 'sess_1',
+      event: {
+        type: 'data',
+        origin: 'device',
+        sequence: 1,
+        timestamp: 0,
+        dataBase64: btoa('alarm'),
+      },
+    });
+    expect(term.writes.join('')).toBe('alarm');
+  });
+
   it('publishes visible-device sequence only after xterm completion acknowledgement', async () => {
     const term = fakeTerm();
     const visible: number[] = [];

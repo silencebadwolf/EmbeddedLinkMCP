@@ -309,7 +309,7 @@ describe('renderEventToXterm', () => {
     expect(out).toBe('\x1b[32mremote\nprompt');
   });
 
-  it('moves embedded shell prompt to a new line when device output omits the final line break', () => {
+  it('preserves an embedded shell prompt when device output omits the final line break', () => {
     const term = makeWriteStub();
     const state = createRenderState();
     renderEventToXterm(
@@ -326,7 +326,124 @@ describe('renderEventToXterm', () => {
       { connectionType: 'serial' },
     );
     const out = term.calls().join('');
-    expect(out).toBe('\x1b[32mlna=DISABLED softwarert_status\x1b[0m\r\nmsh >');
+    expect(out).toBe('\x1b[32mlna=DISABLED softwarert_statusmsh >');
+  });
+
+  it('renders split shell prompt chunks without buffering or rewriting', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    const chunks = ['ui=SKIP\0m', 'sh', ' >'];
+    chunks.forEach((chunk, index) => {
+      renderEventToXterm(
+        { write: term.write },
+        {
+          type: 'data',
+          origin: 'device',
+          sequence: index + 1,
+          timestamp: 0,
+          dataBase64: b64(chunk),
+        },
+        state,
+        SID,
+        { connectionType: 'serial' },
+      );
+    });
+
+    expect(term.calls()).toEqual(chunks);
+    expect(term.calls().join('')).toBe('ui=SKIP\0msh >');
+  });
+
+  it('preserves device logs emitted directly after a prompt chunk', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'device', sequence: 1, timestamp: 0, dataBase64: b64('msh >') },
+      state,
+      SID,
+      { connectionType: 'serial' },
+    );
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'device', sequence: 2, timestamp: 0, dataBase64: b64('[I/fna] ready') },
+      state,
+      SID,
+      { connectionType: 'serial' },
+    );
+
+    expect(term.calls().join('')).toBe('msh >[I/fna] ready');
+  });
+
+  it('preserves duplicate device prompts separated by a line break', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'device', sequence: 1, timestamp: 0, dataBase64: b64('\r\nmsh >\r\nmsh >') },
+      state,
+      SID,
+      { connectionType: 'serial' },
+    );
+
+    expect(term.calls().join('')).toBe('\x1b[0m\r\nmsh >\x1b[0m\r\nmsh >');
+  });
+
+  it('preserves a duplicate prompt that arrives in a later device chunk', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    const options = { connectionType: 'serial' as const };
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'device', sequence: 1, timestamp: 0, dataBase64: b64('msh >\r\n') },
+      state,
+      SID,
+      options,
+    );
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'device', sequence: 2, timestamp: 0, dataBase64: b64('msh >') },
+      state,
+      SID,
+      options,
+    );
+
+    expect(term.calls().join('')).toBe('msh >\x1b[0m\r\nmsh >');
+  });
+
+  it('renders an ordinary device suffix without prompt-prefix buffering', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'device', sequence: 1, timestamp: 0, dataBase64: b64('alarm') },
+      state,
+      SID,
+      { connectionType: 'serial' },
+    );
+    expect(term.calls().join('')).toBe('alarm');
+  });
+
+  it('renders an ordinary suffix before a following control event', () => {
+    const term = makeWriteStub();
+    const state = createRenderState();
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'data', origin: 'device', sequence: 1, timestamp: 0, dataBase64: b64('alarm') },
+      state,
+      SID,
+      { connectionType: 'serial' },
+    );
+    renderEventToXterm(
+      { write: term.write },
+      { type: 'error', origin: 'system', sequence: 2, timestamp: 0, meta: { message: 'offline' } },
+      state,
+      SID,
+      { connectionType: 'serial' },
+    );
+
+    const out = term.calls().join('');
+    expect(out.indexOf('alarm')).toBeGreaterThanOrEqual(0);
+    expect(out.indexOf('alarm')).toBeLessThan(out.indexOf('[error] offline'));
   });
 
   it('keeps SSH prompt-like text unchanged when it arrives mid-line', () => {

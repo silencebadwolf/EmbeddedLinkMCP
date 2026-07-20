@@ -56,7 +56,10 @@ export interface IWriteQueue {
   close(): Promise<void>;
 }
 
-/** 单次写入完成后的审计回调。供 SessionBase 把成功写入记入 transcript。 */
+/** 写入任务真正开始执行前的回调。用于先登记出站事件，再调用 transport writer。 */
+export type WriteStartCallback = (item: WriteQueueItem) => void;
+
+/** 单次写入完成后的审计回调。供 SessionBase 记录成功或失败结果。 */
 export type WriteAuditCallback = (item: WriteQueueItem, result: WriteAuditResult) => void;
 
 export type WriteAuditResult =
@@ -66,7 +69,9 @@ export type WriteAuditResult =
 export interface WriteQueueOptions {
   /** 真正执行字节写入的回调。通常是 transport.write.bind(transport)。 */
   writer: (data: Uint8Array) => Promise<void>;
-  /** 每次写入完成（成功或失败）后被调用，用于追加 transcript。可选。 */
+  /** 写入任务开始前被调用；此时尚未调用 writer，可用于追加出站 transcript。可选。 */
+  onStart?: WriteStartCallback;
+  /** 每次写入完成（成功或失败）后被调用，用于记录结果或追加错误。可选。 */
   audit?: WriteAuditCallback;
   /**
    * 队列待处理项上限（含正在执行）；超出时 enqueue 立即 reject。
