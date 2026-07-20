@@ -46,6 +46,7 @@ import type {
   ControlProfileChipProbePayload,
   ControlProfileNamespace,
   ControlProfileWorkflowStepPayload,
+  NonSensitivePrefill,
   SavedConnectionSummary,
   SavedControlProfileRecordPayload,
 } from '../shared/preload-api.js';
@@ -104,6 +105,8 @@ export function App(): React.ReactElement {
   const activityReturnFocusRef = React.useRef<HTMLElement | null>(null);
   const [agentPanelOpen, setAgentPanelOpen] = React.useState(false);
   const [controlPanelOpen, setControlPanelOpen] = React.useState(false);
+  const [controlProfileRepairRecord, setControlProfileRepairRecord] =
+    React.useState<SavedControlProfileRecordPayload | null>(null);
   const [openedControlProfile, setOpenedControlProfile] =
     React.useState<ControlProfileOpenedEvent | null>(null);
   const [controlProfileDownload, setControlProfileDownload] =
@@ -124,6 +127,11 @@ export function App(): React.ReactElement {
   >([]);
   const [savedConnectionsLoading, setSavedConnectionsLoading] = React.useState(true);
   const [savedConnectionsError, setSavedConnectionsError] = React.useState<string | null>(null);
+  const [openingWorkspaceId, setOpeningWorkspaceId] = React.useState<string | null>(null);
+  const [workspaceOpenError, setWorkspaceOpenError] = React.useState<{
+    readonly workspaceId: string;
+    readonly message: string;
+  } | null>(null);
   const [deletingWorkspaceId, setDeletingWorkspaceId] = React.useState<string | null>(null);
   const [workspaceDeleteError, setWorkspaceDeleteError] = React.useState<string | null>(null);
   const [openingControlProfileId, setOpeningControlProfileId] = React.useState<string | null>(null);
@@ -585,11 +593,11 @@ export function App(): React.ReactElement {
   }, [loadSavedConnections]);
 
   const openSavedConnection = React.useCallback(
-    async (profile: SavedConnectionSummary): Promise<void> => {
+    async (profile: SavedConnectionSummary): Promise<string | null> => {
       const api = getLinkterm();
-      if (!api) return;
+      if (!api) return preloadUnavailableMessage;
       const result = await api.connections.open({ profileId: profile.id });
-      if (!result.success) return;
+      if (!result.success) return result.error.message;
       const opened = result.data;
       addSession({
         id: opened.sessionId,
@@ -599,8 +607,9 @@ export function App(): React.ReactElement {
         ...(opened.rttLog ? { rttLog: opened.rttLog } : {}),
       });
       setActive(opened.sessionId);
+      return null;
     },
-    [addSession, setActive],
+    [addSession, preloadUnavailableMessage, setActive],
   );
 
   React.useEffect(() => {
@@ -626,19 +635,19 @@ export function App(): React.ReactElement {
   }, [openedControlProfile?.record.id]);
 
   const openControlProfileRecord = React.useCallback(
-    async (recordId: string): Promise<void> => {
+    async (recordId: string): Promise<string | null> => {
       const existing = openedControlProfilesByRecordId.get(recordId);
       const existingSessionId = getControlProfileSessionId(existing ?? null);
       if (existing !== undefined && existingSessionId !== null && sessions.has(existingSessionId)) {
         setOpenedControlProfile(existing);
         setActive(existingSessionId);
-        return;
+        return null;
       }
 
       const api = getLinkterm();
       if (!api) {
         setControlProfileRecordsError(preloadUnavailableMessage);
-        return;
+        return preloadUnavailableMessage;
       }
       setOpeningControlProfileId(recordId);
       setControlProfileRecordsError(null);
@@ -646,12 +655,13 @@ export function App(): React.ReactElement {
         const result = await api.controlProfile.openRecord({ recordId });
         if (!result.success) {
           setControlProfileRecordsError(result.error.message);
-          return;
+          return result.error.message;
         }
         const record = result.data.record;
         setControlProfileRecords((records) => upsertControlProfileRecord(records, record));
         const observation = await openObservationForRecord(api, record, addSession, setActive);
         rememberOpenedControlProfile({ path: result.data.path, record, observation });
+        return null;
       } finally {
         setOpeningControlProfileId(null);
       }
@@ -667,17 +677,81 @@ export function App(): React.ReactElement {
   );
 
   const openWorkspace = React.useCallback(
-    (workspace: WorkspaceSummary): void => {
-      if (workspace.source === 'control-profile' && workspace.controlProfileRecordId !== undefined) {
-        void openControlProfileRecord(workspace.controlProfileRecordId);
+    async (workspace: WorkspaceSummary): Promise<void> => {
+      setOpeningWorkspaceId(workspace.id);
+      setWorkspaceOpenError(null);
+      try {
+        let error: string | null = null;
+        if (
+          workspace.source === 'control-profile' &&
+          workspace.controlProfileRecordId !== undefined
+        ) {
+          error = await openControlProfileRecord(workspace.controlProfileRecordId);
+          if (error !== null) setControlProfileRecordsError(null);
+        } else if (workspace.connectionProfileId !== undefined) {
+          const profile = savedConnections.find(
+            (item) => item.id === workspace.connectionProfileId,
+          );
+          error =
+            profile === undefined
+              ? t('workspace.open.unavailable')
+              : await openSavedConnection(profile);
+        } else {
+          error = t('workspace.open.unavailable');
+        }
+        if (error !== null) setWorkspaceOpenError({ workspaceId: workspace.id, message: error });
+      } catch (error) {
+        setWorkspaceOpenError({
+          workspaceId: workspace.id,
+          message: error instanceof Error ? error.message : t('workspace.open.unavailable'),
+        });
+      } finally {
+        setOpeningWorkspaceId(null);
+      }
+    },
+    [openControlProfileRecord, openSavedConnection, savedConnections, t],
+  );
+
+  const repairWorkspace = React.useCallback((workspace: WorkspaceSummary): void => {
+    setWorkspaceOpenError(null);
+    if (workspace.source === 'control-profile') {
+      const record = controlProfileRecords.find(
+        (item) => item.id === workspace.controlProfileRecordId,
+      );
+      if (record === undefined) {
+        setWorkspaceOpenError({
+          workspaceId: workspace.id,
+          message: t('workspace.open.unavailable'),
+        });
         return;
       }
-      if (workspace.connectionProfileId === undefined) return;
-      const profile = savedConnections.find((item) => item.id === workspace.connectionProfileId);
-      if (profile !== undefined) void openSavedConnection(profile);
-    },
-    [openControlProfileRecord, openSavedConnection, savedConnections],
-  );
+      setControlProfileRepairRecord(record);
+      setControlPanelOpen(true);
+      return;
+    }
+
+    const profile = savedConnections.find((item) => item.id === workspace.connectionProfileId);
+    if (profile === undefined || profile.config.type !== 'serial') {
+      setWorkspaceOpenError({
+        workspaceId: workspace.id,
+        message: t('workspace.open.unavailable'),
+      });
+      return;
+    }
+    setConnectionDialogPrefill(serialConnectionRepairPrefill(profile));
+    openDialog();
+  }, [
+    controlProfileRecords,
+    openDialog,
+    savedConnections,
+    setConnectionDialogPrefill,
+    t,
+  ]);
+
+  const handleControlPanelOpenChange = React.useCallback((open: boolean): void => {
+    setControlPanelOpen(open);
+    if (!open) setControlProfileRepairRecord(null);
+  }, []);
 
   const deleteWorkspace = React.useCallback(
     async (workspace: WorkspaceSummary): Promise<void> => {
@@ -1025,6 +1099,9 @@ export function App(): React.ReactElement {
               savedWorkspacesLoading={controlProfileRecordsLoading || savedConnectionsLoading}
               workspaceLoadError={controlProfileRecordsError ?? savedConnectionsError}
               onOpenWorkspace={openWorkspace}
+              openingWorkspaceId={openingWorkspaceId}
+              workspaceOpenError={workspaceOpenError}
+              onRepairWorkspace={repairWorkspace}
               onDeleteWorkspace={(workspace) => void deleteWorkspace(workspace)}
               deletingWorkspaceId={deletingWorkspaceId}
               workspaceDeleteError={workspaceDeleteError}
@@ -1108,7 +1185,8 @@ export function App(): React.ReactElement {
       <ConnectionDialog />
       <ControlProfilePanel
         open={controlPanelOpen}
-        onOpenChange={setControlPanelOpen}
+        onOpenChange={handleControlPanelOpenChange}
+        repairRecord={controlProfileRepairRecord}
         onOpenSerialConnection={openSerialTerminal}
         onProfileOpened={rememberOpenedControlProfile}
         onRecordsChanged={() => void loadControlProfileRecords()}
@@ -1122,6 +1200,25 @@ export function App(): React.ReactElement {
       />
     </div>
   );
+}
+
+function serialConnectionRepairPrefill(profile: SavedConnectionSummary): NonSensitivePrefill {
+  const config = profile.config;
+  if (config.type !== 'serial') return { type: 'serial', label: profile.label };
+  return {
+    type: 'serial',
+    label: profile.label,
+    serialPort: config.port,
+    baudRate: String(config.baudRate),
+    serialMode: config.mode,
+    ...(config.dataBits === undefined
+      ? {}
+      : { dataBits: String(config.dataBits) as '5' | '6' | '7' | '8' }),
+    ...(config.stopBits === undefined
+      ? {}
+      : { stopBits: String(config.stopBits) as '1' | '1.5' | '2' }),
+    ...(config.parity === undefined ? {} : { parity: config.parity }),
+  };
 }
 
 interface JLinkRttReviewState {

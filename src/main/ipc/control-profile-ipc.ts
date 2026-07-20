@@ -143,20 +143,12 @@ export function registerControlProfileIpc(
         if (!recordManager) throw new Error('Control profile records are unavailable');
         const recordId = parseRecordIdPayload(raw);
         const record = await recordManager.get(recordId);
-        const saved = await manager.init(record.root, profileFileToBody(record.profile), {
-          force: true,
-        });
-        const savedRecord = await recordManager.save({
-          root: record.root,
-          source: record.source,
-          profile: saved,
-          label: record.label,
-        });
+        const profile = await manager.load(record.root);
         return {
           success: true,
           data: {
             path: controlProfilePath(record.root),
-            record: savedRecord as SavedControlProfileRecordPayload,
+            record: { ...record, profile } as SavedControlProfileRecordPayload,
           },
         };
       } catch (err) {

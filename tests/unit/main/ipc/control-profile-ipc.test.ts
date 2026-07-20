@@ -200,7 +200,7 @@ describe('registerControlProfileIpc', () => {
     });
   });
 
-  it('records manual saves and opens saved control profile records', async () => {
+  it('records manual saves and opens saved records from the workspace file without rewriting it', async () => {
     const savedProfile = {
       schemaVersion: 'linkterm-control/1.0.0' as const,
       serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' as const },
@@ -217,6 +217,11 @@ describe('registerControlProfileIpc', () => {
       jlink: savedProfile.jlink,
       flash: savedProfile.flash,
     };
+    const workspaceProfile = {
+      ...savedProfile,
+      serial: { ...savedProfile.serial, port: 'COM10' },
+      flash: { ...savedProfile.flash, binary: 'build/current.elf' },
+    };
     const record = {
       id: 'ctrl_1',
       label: 'repo - STM32H743II',
@@ -226,10 +231,9 @@ describe('registerControlProfileIpc', () => {
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
     };
-    const manager = {
-      init: vi.fn(async () => savedProfile),
-      load: vi.fn(async () => savedProfile),
-    } as unknown as ControlProfileManager;
+    const init = vi.fn(async () => savedProfile);
+    const load = vi.fn(async () => workspaceProfile);
+    const manager = { init, load } as unknown as ControlProfileManager;
     const recordManager = {
       save: vi.fn(async () => record),
       list: vi.fn(async () => [record]),
@@ -257,15 +261,20 @@ describe('registerControlProfileIpc', () => {
     const list = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_LIST)!;
     await expect(list({}, undefined)).resolves.toEqual({ success: true, data: [record] });
 
+    init.mockClear();
+    load.mockClear();
+    recordManager.save.mockClear();
     const open = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_OPEN)!;
     await expect(open({}, { recordId: 'ctrl_1' })).resolves.toEqual({
       success: true,
       data: {
         path: expect.stringMatching(/control-profile\.json$/u),
-        record,
+        record: { ...record, profile: workspaceProfile },
       },
     });
-    expect(manager.init).toHaveBeenLastCalledWith('C:/repo', profileBody, { force: true });
+    expect(load).toHaveBeenCalledWith('C:/repo');
+    expect(init).not.toHaveBeenCalled();
+    expect(recordManager.save).not.toHaveBeenCalled();
   });
 
   it('starts a background download job and exposes live status over IPC', async () => {

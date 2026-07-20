@@ -27,6 +27,7 @@ import { classifyJLinkTargetName } from '../../shared/jlink-target-name.js';
 interface ControlProfilePanelProps {
   open: boolean;
   onOpenChange(open: boolean): void;
+  repairRecord?: SavedControlProfileRecordPayload | null;
   onOpenSerialConnection?(): void;
   onProfileOpened?(event: ControlProfileOpenedEvent): void;
   onRecordsChanged?(): void;
@@ -62,6 +63,7 @@ export interface ControlProfileOpenedEvent {
 export function ControlProfilePanel({
   open,
   onOpenChange,
+  repairRecord = null,
   onOpenSerialConnection,
   onProfileOpened,
   onRecordsChanged,
@@ -286,6 +288,14 @@ export function ControlProfilePanel({
     if (profile.flash?.baseAddress) setBaseAddress(profile.flash.baseAddress);
     setRttControlBlockAddress(profile.rtt?.controlBlockAddress ?? '');
   };
+
+  React.useEffect(() => {
+    if (!open || repairRecord === null) return;
+    setSetupMode('full');
+    setError(null);
+    setMessage(null);
+    applyProfileToForm(repairRecord.root, repairRecord.profile);
+  }, [open, repairRecord]);
 
   const openSavedRecord = async (recordId: string): Promise<void> => {
     const api = getLinkterm();

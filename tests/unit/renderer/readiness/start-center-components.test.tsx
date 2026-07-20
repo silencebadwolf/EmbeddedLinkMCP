@@ -178,6 +178,47 @@ describe('StartCenter readiness components', () => {
     expect(screen.getByRole('button', { name: 'Delete workspace' })).toBeDisabled();
   });
 
+  it('prevents another workspace open or delete while an open request is pending', () => {
+    const first: WorkspaceSummary = {
+      id: 'workspace_first',
+      label: 'First workspace',
+      kind: 'full',
+      source: 'control-profile',
+      details: [],
+      updatedAt: '2026-07-16T00:00:00.000Z',
+      controlProfileRecordId: 'workspace_first',
+    };
+    const second: WorkspaceSummary = {
+      id: 'workspace_second',
+      label: 'Second workspace',
+      kind: 'serial-only',
+      source: 'connection-profile',
+      details: ['COM8 · 115200'],
+      updatedAt: '2026-07-16T01:00:00.000Z',
+      connectionProfileId: 'workspace_second',
+    };
+
+    render(
+      <StartCenter
+        state={createInitialRuntimeReadinessState()}
+        savedWorkspaces={[first, second]}
+        onOpenWorkspace={vi.fn()}
+        openingWorkspaceId={first.id}
+        onDeleteWorkspace={vi.fn()}
+        onNewWorkspace={vi.fn()}
+        onAdvancedConnection={vi.fn()}
+        onUseCandidate={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Opening workspace…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Open workspace' })).toBeDisabled();
+    for (const button of screen.getAllByRole('button', { name: 'Delete workspace' })) {
+      expect(button).toBeDisabled();
+    }
+  });
+
   it('shows a loading state instead of a false empty state while saved workspaces load', () => {
     render(
       <StartCenter

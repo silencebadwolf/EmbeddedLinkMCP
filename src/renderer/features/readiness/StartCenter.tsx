@@ -20,6 +20,9 @@ export interface StartCenterProps {
   readonly savedWorkspacesLoading?: boolean;
   readonly workspaceLoadError?: string | null;
   readonly onOpenWorkspace?: (workspace: WorkspaceSummary) => void;
+  readonly openingWorkspaceId?: string | null;
+  readonly workspaceOpenError?: { readonly workspaceId: string; readonly message: string } | null;
+  readonly onRepairWorkspace?: (workspace: WorkspaceSummary) => void;
   readonly onDeleteWorkspace?: (workspace: WorkspaceSummary) => void;
   readonly deletingWorkspaceId?: string | null;
   readonly workspaceDeleteError?: string | null;
@@ -48,6 +51,9 @@ export function StartCenter({
   savedWorkspacesLoading = false,
   workspaceLoadError = null,
   onOpenWorkspace,
+  openingWorkspaceId = null,
+  workspaceOpenError = null,
+  onRepairWorkspace,
   onDeleteWorkspace,
   deletingWorkspaceId = null,
   workspaceDeleteError = null,
@@ -105,6 +111,9 @@ export function StartCenter({
             loading={savedWorkspacesLoading}
             loadError={workspaceLoadError}
             onOpen={onOpenWorkspace}
+            openingWorkspaceId={openingWorkspaceId}
+            openError={workspaceOpenError}
+            onRepair={onRepairWorkspace}
             onDelete={onDeleteWorkspace}
             deletingWorkspaceId={deletingWorkspaceId}
             deleteError={workspaceDeleteError}
@@ -232,6 +241,9 @@ function SavedWorkspaceList({
   loading,
   loadError,
   onOpen,
+  openingWorkspaceId,
+  openError,
+  onRepair,
   onDelete,
   deletingWorkspaceId,
   deleteError,
@@ -240,6 +252,9 @@ function SavedWorkspaceList({
   readonly loading: boolean;
   readonly loadError: string | null;
   readonly onOpen?: (workspace: WorkspaceSummary) => void;
+  readonly openingWorkspaceId: string | null;
+  readonly openError: { readonly workspaceId: string; readonly message: string } | null;
+  readonly onRepair?: (workspace: WorkspaceSummary) => void;
   readonly onDelete?: (workspace: WorkspaceSummary) => void;
   readonly deletingWorkspaceId: string | null;
   readonly deleteError: string | null;
@@ -269,37 +284,65 @@ function SavedWorkspaceList({
           {workspaces.map((workspace) => (
             <li
               key={workspace.id}
-              className="flex flex-wrap items-center justify-between gap-2 rounded border border-gray-800 bg-gray-900 px-3 py-2"
+              className="rounded border border-gray-800 bg-gray-900 px-3 py-2"
             >
-              <div className="min-w-0">
-                <p className="truncate text-sm text-gray-100">{workspace.label}</p>
-                <p className="truncate text-xs text-gray-500">
-                  {workspace.kind === 'full'
-                    ? t('workspace.kind.full')
-                    : t('workspace.kind.serialOnly')}
-                  {workspace.details.length > 0 ? ` · ${workspace.details.join(' · ')}` : ''}
-                </p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-gray-100">{workspace.label}</p>
+                  <p className="truncate text-xs text-gray-500">
+                    {workspace.kind === 'full'
+                      ? t('workspace.kind.full')
+                      : t('workspace.kind.serialOnly')}
+                    {workspace.details.length > 0 ? ` · ${workspace.details.join(' · ')}` : ''}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded border border-blue-500/60 px-3 py-1.5 text-xs text-blue-200 hover:bg-blue-950/40 disabled:opacity-50"
+                    disabled={
+                      onOpen === undefined ||
+                      deletingWorkspaceId === workspace.id ||
+                      openingWorkspaceId !== null
+                    }
+                    onClick={() => onOpen?.(workspace)}
+                  >
+                    {openingWorkspaceId === workspace.id
+                      ? t('workspace.action.opening')
+                      : t('workspace.action.open')}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded border border-red-500/50 px-3 py-1.5 text-xs text-red-200 hover:bg-red-950/40 disabled:opacity-50"
+                    disabled={
+                      onDelete === undefined ||
+                      deletingWorkspaceId !== null ||
+                      openingWorkspaceId !== null
+                    }
+                    onClick={() => onDelete?.(workspace)}
+                  >
+                    {deletingWorkspaceId === workspace.id
+                      ? t('workspace.action.deleting')
+                      : t('workspace.action.delete')}
+                  </button>
+                </div>
               </div>
-              <div className="flex shrink-0 flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="rounded border border-blue-500/60 px-3 py-1.5 text-xs text-blue-200 hover:bg-blue-950/40 disabled:opacity-50"
-                  disabled={onOpen === undefined || deletingWorkspaceId === workspace.id}
-                  onClick={() => onOpen?.(workspace)}
-                >
-                  {t('workspace.action.open')}
-                </button>
-                <button
-                  type="button"
-                  className="rounded border border-red-500/50 px-3 py-1.5 text-xs text-red-200 hover:bg-red-950/40 disabled:opacity-50"
-                  disabled={onDelete === undefined || deletingWorkspaceId !== null}
-                  onClick={() => onDelete?.(workspace)}
-                >
-                  {deletingWorkspaceId === workspace.id
-                    ? t('workspace.action.deleting')
-                    : t('workspace.action.delete')}
-                </button>
-              </div>
+              {openError?.workspaceId === workspace.id ? (
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-red-900/70 pt-2">
+                  <p role="alert" className="min-w-0 flex-1 break-words text-xs text-red-200">
+                    {openError.message}
+                  </p>
+                  {onRepair !== undefined ? (
+                    <button
+                      type="button"
+                      className="rounded border border-amber-500/60 px-3 py-1.5 text-xs text-amber-100 hover:bg-amber-950/40"
+                      onClick={() => onRepair(workspace)}
+                    >
+                      {t('workspace.action.repair')}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </li>
           ))}
         </ul>

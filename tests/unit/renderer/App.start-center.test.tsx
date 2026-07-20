@@ -198,6 +198,119 @@ describe('App Start Center integration', () => {
     });
   });
 
+  it('keeps a failed serial-only workspace visible with an actionable repair route', async () => {
+    mock.spies.connections.list.mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          id: 'conn_missing_com6',
+          label: 'Disconnected FNA board',
+          type: 'serial',
+          config: { type: 'serial', port: 'COM6', baudRate: 115200, mode: 'terminal' },
+          hasCredential: false,
+          createdAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString(),
+        },
+      ],
+    });
+    mock.spies.connections.open.mockResolvedValueOnce({
+      success: false,
+      error: { code: 'SERIAL_PORT_NOT_FOUND', message: 'COM6 is no longer available' },
+    });
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    const saved = await screen.findByRole('region', { name: 'Saved workspaces' });
+    fireEvent.click(within(saved).getByRole('button', { name: 'Open workspace' }));
+
+    expect(await within(saved).findByRole('alert')).toHaveTextContent(
+      'COM6 is no longer available',
+    );
+    expect(within(saved).getByText('Disconnected FNA board')).toBeInTheDocument();
+    expect(useAppStore.getState().sessions).toHaveLength(0);
+
+    fireEvent.click(within(saved).getByRole('button', { name: 'Repair configuration' }));
+    expect(useAppStore.getState().dialogOpen).toBe(true);
+    expect(useAppStore.getState().connectionDialogPrefill).toEqual({
+      type: 'serial',
+      label: 'Disconnected FNA board',
+      serialPort: 'COM6',
+      baudRate: '115200',
+      serialMode: 'terminal',
+    });
+  });
+
+  it('keeps a missing full workspace visible and does not create an observation session', async () => {
+    const record = {
+      id: 'ctrl_missing_root',
+      label: 'Moved FNA workspace',
+      root: 'C:/old-location',
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM10', baudRate: 115200, mode: 'terminal' as const },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    mock.spies.controlProfile.listRecords.mockResolvedValueOnce({ success: true, data: [record] });
+    mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
+      success: false,
+      error: {
+        code: 'CONTROL_PROFILE_NOT_FOUND',
+        message: 'Control profile not found at C:/old-location',
+      },
+    });
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    const saved = await screen.findByRole('region', { name: 'Saved workspaces' });
+    fireEvent.click(within(saved).getByRole('button', { name: 'Open workspace' }));
+
+    expect(await within(saved).findByRole('alert')).toHaveTextContent(
+      'Control profile not found at C:/old-location',
+    );
+    expect(within(saved).getByText('Moved FNA workspace')).toBeInTheDocument();
+    expect(within(saved).getByRole('button', { name: 'Repair configuration' })).toBeEnabled();
+    expect(useAppStore.getState().sessions).toHaveLength(0);
+    expect(mock.spies.session.create).not.toHaveBeenCalled();
+    expect(mock.spies.rttLog.open).not.toHaveBeenCalled();
+
+    fireEvent.click(within(saved).getByRole('button', { name: 'Repair configuration' }));
+    expect(await screen.findByLabelText('Workspace root')).toHaveValue('C:/old-location');
+    expect(screen.getByLabelText('Baud rate')).toHaveValue('115200');
+  });
+
+  it('reports an unexpected saved-workspace IPC rejection on the affected card', async () => {
+    mock.spies.connections.list.mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          id: 'conn_ipc_failure',
+          label: 'FNA IPC failure',
+          type: 'serial',
+          config: { type: 'serial', port: 'COM10', baudRate: 115200, mode: 'terminal' },
+          hasCredential: false,
+          createdAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString(),
+        },
+      ],
+    });
+    mock.spies.connections.open.mockRejectedValueOnce(new Error('Connection IPC unavailable'));
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    const saved = await screen.findByRole('region', { name: 'Saved workspaces' });
+    fireEvent.click(within(saved).getByRole('button', { name: 'Open workspace' }));
+
+    expect(await within(saved).findByRole('alert')).toHaveTextContent('Connection IPC unavailable');
+    expect(within(saved).getByText('FNA IPC failure')).toBeInTheDocument();
+    expect(useAppStore.getState().sessions).toHaveLength(0);
+  });
+
   it('deletes a saved serial-only workspace without closing an open session', async () => {
     const profile = {
       id: 'conn_com6',
