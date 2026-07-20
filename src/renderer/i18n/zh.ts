@@ -371,6 +371,8 @@ export const zh: TranslationTable = {
   'controlProfile.download.idle': '就绪',
   'controlProfile.download.downloading': '下载中...',
   'controlProfile.download.complete': '下载完成',
+  'controlProfile.download.verifiedComplete': '下载并校验通过',
+  'controlProfile.download.unverifiedComplete': '下载命令已完成 · 未校验',
   'controlProfile.download.failed': '下载失败',
   'controlProfile.download.flashed': '已烧录',
   'controlProfile.download.verified': '已校验',

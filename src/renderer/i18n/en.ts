@@ -380,6 +380,8 @@ export const en = {
   'controlProfile.download.idle': 'Ready',
   'controlProfile.download.downloading': 'Downloading...',
   'controlProfile.download.complete': 'Download complete',
+  'controlProfile.download.verifiedComplete': 'Download verified',
+  'controlProfile.download.unverifiedComplete': 'Download command completed · not verified',
   'controlProfile.download.failed': 'Download failed',
   'controlProfile.download.flashed': 'flashed',
   'controlProfile.download.verified': 'verified',

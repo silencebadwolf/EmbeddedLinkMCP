@@ -1509,6 +1509,31 @@ describe('MCP control workflow tool', () => {
     });
   });
 
+  it('does not report probeConnected or continue to flash when target access fails', async () => {
+    await initProfile(h);
+    const connectProbe = vi.spyOn(h.fake, 'probeConnect').mockRejectedValue(
+      new JLinkOperationError(
+        'J-Link probeConnect completed without positive target-access evidence',
+        { operation: 'probeConnect' },
+      ),
+    );
+
+    const out = await callTool(h.client, 'run_control_workflow', {
+      root: h.root,
+      mode: 'flash-observe',
+      confirm: true,
+    });
+
+    expect(out.success).toBe(false);
+    expect(out.error).toMatchObject({
+      code: 'JLINK_OPERATION_FAILED',
+      message: expect.stringContaining('without positive target-access evidence'),
+    });
+    expect(JSON.stringify(out)).not.toContain('"probeConnected":true');
+    expect(connectProbe).toHaveBeenCalledOnce();
+    expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
+  });
+
   it('persists normalized STM32 order-code targets before new workflow profiles run', async () => {
     await writeFile(path.join(h.root, 'rtthread.bin'), Buffer.from([0x01, 0x02, 0x03, 0x04]));
     await callTool(h.client, 'init_control_profile', {

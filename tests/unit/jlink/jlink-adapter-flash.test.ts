@@ -78,6 +78,7 @@ interface FlashWriteCall {
 }
 
 class FakeCommander implements JLinkCommanderClient {
+  readonly connectTargetCalls: CommanderProbeContext[] = [];
   readonly downloadCalls: CommanderCall[] = [];
   readonly verifyCalls: CommanderCall[] = [];
   readonly resetCalls: ResetCall[] = [];
@@ -104,6 +105,10 @@ class FakeCommander implements JLinkCommanderClient {
     verified: false,
   };
   verifyResult: { ok: boolean; mismatchAt?: number } = { ok: true };
+
+  async connectTarget(probe: CommanderProbeContext, _signal?: AbortSignal): Promise<void> {
+    this.connectTargetCalls.push(probe);
+  }
 
   async download(
     probe: CommanderProbeContext,
@@ -434,7 +439,7 @@ describe('JLinkAdapter flash operations', () => {
     await expect(first).resolves.toEqual({ bytesWritten: 1, verified: false });
   });
 
-  it('reuses a busy default probe when an STM32 order code normalizes to the same SEGGER target', async () => {
+  it('does not claim a busy normalized probe is reconnected without fresh target evidence', async () => {
     let release!: () => void;
     const commander = new FakeCommander();
     commander.downloadResult = new Promise((resolve) => {
@@ -444,10 +449,9 @@ describe('JLinkAdapter flash operations', () => {
     const probe = await connect(adapter, { target: 'STM32H743II', interface: 'swd' });
 
     const first = adapter.flashDownload(probe.probeId, Buffer.from([1]), { address: 0x08000000 });
-    await expect(adapter.probeConnect({ target: 'STM32H743IIT6', interface: 'swd' })).resolves.toMatchObject({
-      probeId: probe.probeId,
-      target: 'STM32H743II',
-    });
+    await expect(
+      adapter.probeConnect({ target: 'STM32H743IIT6', interface: 'swd' }),
+    ).rejects.toBeInstanceOf(ProbeBusyError);
 
     release();
     await expect(first).resolves.toEqual({ bytesWritten: 1, verified: false });
@@ -943,6 +947,24 @@ describe('Snapshot and crash diagnosis', () => {
 });
 
 describe('GDB server lifecycle', () => {
+  it('does not run Commander revalidation while a managed debug session owns the probe', async () => {
+    const commander = new FakeCommander();
+    const gdbServer = new FakeGdbServer();
+    const adapter = new JLinkAdapter({ commander, gdbServer });
+    const probe = await adapter.probeConnect({ target: 'AT32F435RGT7' });
+    await adapter.gdbServerStart(probe.probeId, { port: 2331 });
+
+    await expect(adapter.probeStatus(probe.probeId)).rejects.toBeInstanceOf(ProbeBusyError);
+    await expect(adapter.probeConnect({ target: 'AT32F435RGT7' })).rejects.toBeInstanceOf(
+      ProbeBusyError,
+    );
+    expect(commander.connectTargetCalls).toHaveLength(1);
+
+    await adapter.gdbServerStop(probe.probeId);
+    await expect(adapter.probeStatus(probe.probeId)).resolves.toMatchObject({ connected: true });
+    expect(commander.connectTargetCalls).toHaveLength(2);
+  });
+
   it('starts and stops a GDB server through the injected client', async () => {
     const commander = new FakeCommander();
     const gdbServer = new FakeGdbServer();

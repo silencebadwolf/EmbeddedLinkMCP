@@ -101,6 +101,9 @@ export interface JLinkCommanderClient {
   /** Enumerate physically attached J-Link probes without opening a target connection. */
   detectProbes?(): Promise<ProbeInfo[]>;
 
+  /** Obtain fresh, positive evidence that Commander can access the configured target. */
+  connectTarget?(probe: CommanderProbeContext, signal?: AbortSignal): Promise<void>;
+
   /** Reboot the J-Link probe itself without opening a target connection. */
   rebootProbe?(
     opts?: JLinkRebootOptions,
@@ -781,6 +784,17 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     });
   }
 
+  /** Connect to the configured target and fail closed unless Commander reports positive access evidence. */
+  async connectTarget(probe: CommanderProbeContext, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw new JLinkAbortedError();
+    const commanderPath = this.#requireCommanderPath();
+    await this.#withTempCommandFile(async (file) => {
+      const result = await this.#runCommander(commanderPath, probe, file, [], signal);
+      assertCommanderSuccess(result, probe, 'probeConnect');
+      assertPositiveTargetAccessEvidence(result, probe);
+    });
+  }
+
   /** Reboot the J-Link probe itself without requiring a target connection. */
   async rebootProbe(
     opts: JLinkRebootOptions = {},
@@ -818,7 +832,6 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     progress.emit({
       phase: 'preparing',
       message: 'Preparing J-Link flash download',
-      percent: 0,
       bytesTotal: binary.byteLength,
     });
     await this.#withTempFlashFiles(binary, async (files) => {
@@ -829,7 +842,6 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
       progress.emit({
         phase: 'erasing',
         message: 'J-Link Commander is erasing and programming flash sectors',
-        percent: 5,
         bytesTotal: binary.byteLength,
       });
       const result = await this.#runCommander(
@@ -1803,16 +1815,11 @@ function normalizeFlashProgressUpdate(
   const percent = update.percent === undefined
     ? undefined
     : Math.min(100, Math.max(0, Math.round(update.percent)));
-  const bytesWritten = update.bytesWritten ?? (
-    update.phase === 'programming' && percent !== undefined
-      ? Math.round((bytesTotal * percent) / 100)
-      : undefined
-  );
   return {
     phase: update.phase,
     message: update.message,
     ...(percent !== undefined ? { percent } : {}),
-    ...(bytesWritten !== undefined ? { bytesWritten } : {}),
+    ...(update.bytesWritten !== undefined ? { bytesWritten: update.bytesWritten } : {}),
     bytesTotal: update.bytesTotal ?? bytesTotal,
   };
 }
@@ -1958,6 +1965,26 @@ function assertCommanderSuccess(
   throw new JLinkOperationError(sanitizeOutput(`J-Link ${operation} failed: ${output}`, probe), {
     operation,
   });
+}
+
+function assertPositiveTargetAccessEvidence(
+  result: SeggerProcessResult,
+  probe: CommanderProbeContext,
+): void {
+  const output = `${result.stdout}\n${result.stderr}`;
+  const hasPositiveEvidence =
+    /\bfound\s+(?:sw|jtag)-dp\s+with\s+id\b/i.test(output) ||
+    /\bcortex-[\w.+-]+\s+identified\b/i.test(output) ||
+    /\btarget\s+connection\s+(?:successfully\s+)?established\b/i.test(output) ||
+    /\bsuccessfully\s+connected\s+to\s+target\b/i.test(output);
+  if (hasPositiveEvidence) return;
+  throw new JLinkOperationError(
+    sanitizeOutput(
+      `J-Link probeConnect completed without positive target-access evidence: ${output}`,
+      probe,
+    ),
+    { operation: 'probeConnect' },
+  );
 }
 
 function sanitizeOutput(output: string, probe: CommanderProbeContext): string {

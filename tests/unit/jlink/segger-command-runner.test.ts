@@ -390,6 +390,41 @@ describe('DefaultJLinkCommanderClient', () => {
     expect(await exists(runner.scriptPath)).toBe(false);
   });
 
+  it('requires positive target connection evidence before reporting target access', async () => {
+    const runner = new FakeProcessRunner();
+    const client = new DefaultJLinkCommanderClient({ commanderPath, runner, tempRoot: root });
+    const probe = {
+      target: 'STM32F407VG',
+      interface: 'swd' as const,
+      speedKHz: 4000,
+      serialNumber: '123456789',
+    };
+
+    runner.result = {
+      exitCode: 0,
+      signal: null,
+      stdout: 'SEGGER J-Link Commander finished normally\n',
+      stderr: '',
+    };
+    await expect(client.connectTarget(probe)).rejects.toThrow(/positive target-access evidence/i);
+
+    runner.result = {
+      exitCode: 0,
+      signal: null,
+      stdout: 'Connecting to target via SWD\nFound SW-DP with ID 0x2BA01477\nCortex-M4 identified.\n',
+      stderr: '',
+    };
+    await expect(client.connectTarget(probe)).resolves.toBeUndefined();
+
+    expect(runner.scripts).toHaveLength(2);
+    for (const script of runner.scripts) {
+      expect(script).toContain('device STM32F407VG');
+      expect(script).toContain('si SWD');
+      expect(script).toContain('speed 4000');
+      expect(script).not.toMatch(/\b(?:loadbin|verifybin|erase|reset|halt|r|h|g)\b/i);
+    }
+  });
+
   it('reboots a J-Link probe without generating target connection lines', async () => {
     const runner = new FakeProcessRunner();
     runner.result = {
@@ -597,11 +632,11 @@ describe('DefaultJLinkCommanderClient', () => {
 
     expect(progress).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ phase: 'preparing', bytesTotal: binary.byteLength }),
         expect.objectContaining({ phase: 'erasing', bytesTotal: binary.byteLength }),
         expect.objectContaining({
           phase: 'programming',
           percent: 40,
-          bytesWritten: 410,
           bytesTotal: binary.byteLength,
         }),
         expect.objectContaining({ phase: 'verifying', bytesTotal: binary.byteLength }),
@@ -613,6 +648,11 @@ describe('DefaultJLinkCommanderClient', () => {
           bytesTotal: binary.byteLength,
         }),
       ]),
+    );
+    expect(progress.find((update) => update.phase === 'preparing')).not.toHaveProperty('percent');
+    expect(progress.find((update) => update.phase === 'erasing')).not.toHaveProperty('percent');
+    expect(progress.find((update) => update.phase === 'programming')).not.toHaveProperty(
+      'bytesWritten',
     );
   });
 

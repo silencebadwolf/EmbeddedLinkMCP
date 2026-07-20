@@ -6,16 +6,22 @@ import { describe, expect, it } from 'vitest';
 import {
   JLinkAdapter,
   JLinkInvalidStateError,
+  JLinkNotImplementedError,
+  JLinkOperationError,
   ProbeNotFoundError,
 } from '@/jlink/index.js';
 import type { CommanderScriptResult, JLinkRebootOptions, ProbeInfo } from '@/jlink/index.js';
-import type { JLinkCommanderClient } from '@/jlink/segger-command-runner.js';
+import type { CommanderProbeContext, JLinkCommanderClient } from '@/jlink/segger-command-runner.js';
 
-function commanderWithPhysicalProbes(probes: ProbeInfo[]): JLinkCommanderClient {
+function commanderWithPhysicalProbes(
+  probes: ProbeInfo[],
+  connectTarget: (probe: CommanderProbeContext) => Promise<void> = async () => {},
+): JLinkCommanderClient {
   return {
     async detectProbes() {
       return probes;
     },
+    connectTarget,
   } as JLinkCommanderClient;
 }
 
@@ -24,6 +30,7 @@ function commanderWithProbeReboot(calls: JLinkRebootOptions[]): JLinkCommanderCl
     async detectProbes() {
       return [];
     },
+    async connectTarget() {},
     async rebootProbe(opts?: JLinkRebootOptions): Promise<CommanderScriptResult> {
       calls.push(opts ?? {});
       return { exitCode: 0, signal: null, stdout: 'rebooted', stderr: '' };
@@ -34,7 +41,7 @@ function commanderWithProbeReboot(calls: JLinkRebootOptions[]): JLinkCommanderCl
 describe('JLinkAdapter', () => {
   describe('probe lifecycle', () => {
     it('mints a UUID v4 probeId on probeConnect', async () => {
-      const a = new JLinkAdapter();
+      const a = new JLinkAdapter({ commander: commanderWithPhysicalProbes([]) });
       const info = await a.probeConnect({ target: 'STM32F4' });
       expect(info.connected).toBe(true);
       expect(info.target).toBe('STM32F4');
@@ -55,7 +62,7 @@ describe('JLinkAdapter', () => {
     });
 
     it('probeStatus returns connected after connect; ProbeNotFoundError after disconnect', async () => {
-      const a = new JLinkAdapter();
+      const a = new JLinkAdapter({ commander: commanderWithPhysicalProbes([]) });
       const info = await a.probeConnect({ target: 'STM32F4' });
       const status = await a.probeStatus(info.probeId);
       expect(status.connected).toBe(true);
@@ -89,7 +96,7 @@ describe('JLinkAdapter', () => {
       ]);
     });
 
-    it('probeDetect merges matching physical probes with connected handles', async () => {
+    it('probeDetect reports physical visibility without projecting connected handles', async () => {
       const a = new JLinkAdapter({
         commander: commanderWithPhysicalProbes([
           { probeId: 'physical-0', serialNumber: '601012352', connected: false },
@@ -101,17 +108,24 @@ describe('JLinkAdapter', () => {
       const probes = await a.probeDetect();
 
       expect(probes).toEqual([
-        { ...connected, serialNumber: '601012352' },
+        { probeId: 'physical-0', serialNumber: '601012352', connected: false },
         { probeId: 'physical-1', serialNumber: '601012353', connected: false },
       ]);
+      expect(probes).not.toContainEqual(connected);
     });
 
-    it('reuses an existing handle when connecting the same probe selection twice', async () => {
-      const a = new JLinkAdapter({ commander: commanderWithPhysicalProbes([]) });
+    it('revalidates target access before reusing an existing handle', async () => {
+      const targetAccessAttempts: CommanderProbeContext[] = [];
+      const a = new JLinkAdapter({
+        commander: commanderWithPhysicalProbes([], async (probe) => {
+          targetAccessAttempts.push(probe);
+        }),
+      });
       const a1 = await a.probeConnect({ target: 'STM32F4', interface: 'swd', speedKHz: 4000 });
       const a2 = await a.probeConnect({ target: 'STM32F4', interface: 'swd', speedKHz: 4000 });
       expect(a2.probeId).toBe(a1.probeId);
-      expect(await a.probeDetect()).toHaveLength(1);
+      expect(targetAccessAttempts).toHaveLength(2);
+      expect(await a.probeDetect()).toEqual([]);
     });
 
     it('retires a stale default probe handle when the target name changes', async () => {
@@ -122,7 +136,7 @@ describe('JLinkAdapter', () => {
       expect(current.probeId).toBe(stale.probeId);
       expect(current.target).toBe('STM32H743II');
       await expect(a.probeStatus(stale.probeId)).resolves.toEqual(current);
-      await expect(a.probeDetect()).resolves.toEqual([current]);
+      await expect(a.probeDetect()).resolves.toEqual([]);
     });
 
     it('keeps explicitly selected probes as distinct handles', async () => {
@@ -130,7 +144,53 @@ describe('JLinkAdapter', () => {
       const a1 = await a.probeConnect({ target: 'STM32F4', serialNumber: '11111111' });
       const a2 = await a.probeConnect({ target: 'STM32F4', serialNumber: '22222222' });
       expect(a1.probeId).not.toBe(a2.probeId);
-      expect(await a.probeDetect()).toHaveLength(2);
+      expect(await a.probeDetect()).toEqual([]);
+    });
+
+    it('fails closed without creating a connected handle when target access fails', async () => {
+      let targetAccessible = false;
+      const a = new JLinkAdapter({
+        commander: commanderWithPhysicalProbes([], async () => {
+          if (!targetAccessible) {
+            throw new JLinkOperationError('Target chip is inaccessible', { operation: 'probeConnect' });
+          }
+        }),
+      });
+
+      await expect(a.probeConnect({ target: 'STM32F4' })).rejects.toThrow('Target chip is inaccessible');
+      await expect(a.probeDetect()).resolves.toEqual([]);
+
+      targetAccessible = true;
+      await expect(a.probeConnect({ target: 'STM32F4' })).resolves.toMatchObject({
+        target: 'STM32F4',
+        connected: true,
+      });
+    });
+
+    it('retires an idle stale handle when probeStatus cannot revalidate target access', async () => {
+      let targetAccessible = true;
+      const a = new JLinkAdapter({
+        commander: commanderWithPhysicalProbes([], async () => {
+          if (!targetAccessible) {
+            throw new JLinkOperationError('Target chip was disconnected', { operation: 'probeConnect' });
+          }
+        }),
+      });
+      const connected = await a.probeConnect({ target: 'STM32F4' });
+
+      targetAccessible = false;
+      await expect(a.probeStatus(connected.probeId)).rejects.toThrow('Target chip was disconnected');
+      await expect(a.probeStatus(connected.probeId)).rejects.toBeInstanceOf(ProbeNotFoundError);
+    });
+
+    it('fails closed when an injected Commander cannot validate target access', async () => {
+      const a = new JLinkAdapter({
+        commander: { async detectProbes() { return []; } } as JLinkCommanderClient,
+      });
+
+      await expect(a.probeConnect({ target: 'STM32F4' })).rejects.toBeInstanceOf(
+        JLinkNotImplementedError,
+      );
     });
 
     it('jlinkReboot defaults to force and retires matching probe handles', async () => {

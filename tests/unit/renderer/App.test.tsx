@@ -462,7 +462,13 @@ describe('App', () => {
     expect(screen.getByTestId('control-profile-status')).toHaveTextContent('repo - Switch Serial');
   });
 
-  it('shows download progress as a simple status bar without step details', async () => {
+  it.each([
+    { verified: true, expectedCompletion: 'Download verified' },
+    { verified: false, expectedCompletion: 'Download command completed · not verified' },
+  ])('shows evidence-backed download progress ($expectedCompletion)', async ({
+    verified,
+    expectedCompletion,
+  }) => {
     const record = {
       id: 'ctrl_serial_download',
       label: 'repo - Download',
@@ -490,7 +496,6 @@ describe('App', () => {
         progress: {
           phase: 'erasing',
           message: 'Erasing sectors',
-          percent: 12,
           bytesTotal: 4096,
         },
       },
@@ -525,7 +530,7 @@ describe('App', () => {
         probeConnected: true,
         gdbServerStarted: false,
         flashed: true,
-        verified: true,
+        verified,
         reset: true,
         serialObserved: true,
         rttObserved: false,
@@ -600,6 +605,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
 
     const statusPanel = await screen.findByTestId('control-profile-status');
+    expect(screen.getByTestId('control-profile-progress')).toHaveStyle({ width: '0%' });
     fireEvent.click(within(statusPanel).getByRole('button', { name: 'Download' }));
 
     await waitFor(() =>
@@ -614,7 +620,8 @@ describe('App', () => {
     );
     expect(statusPanel).toHaveTextContent('Downloading...');
     expect(statusPanel).toHaveTextContent('Erasing sectors');
-    expect(statusPanel).toHaveTextContent('12%');
+    expect(statusPanel).not.toHaveTextContent(/\d+%/u);
+    expect(screen.getByTestId('control-profile-progress')).toHaveStyle({ width: '0%' });
     expect(screen.queryByTestId('control-profile-download-result')).not.toBeInTheDocument();
 
     resolveNextStatus({ success: true, data: succeededJob });
@@ -625,7 +632,7 @@ describe('App', () => {
         'succeeded',
       ),
     );
-    expect(statusPanel).toHaveTextContent('Download complete');
+    expect(statusPanel).toHaveTextContent(expectedCompletion);
     expect(screen.queryByTestId('control-profile-download-result')).not.toBeInTheDocument();
     expect(statusPanel).not.toHaveTextContent('flash_download');
     expect(statusPanel).not.toHaveTextContent('passed');
@@ -889,6 +896,60 @@ describe('App', () => {
     );
     expect(mock.spies.session.destroy).not.toHaveBeenCalled();
     expect(statusPanel).toHaveTextContent('Chip disconnected');
+  });
+
+  it('keeps the chip disconnected when the backend lacks positive target evidence', async () => {
+    const record = {
+      id: 'ctrl_chip_target_missing',
+      label: 'repo - Missing Target',
+      root: 'C:/repo',
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' as const },
+        jlink: {
+          enabled: true,
+          target: 'STM32H743II',
+          interface: 'swd' as const,
+          speedKHz: 4000,
+        },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    const connectChip = vi.fn(async () => ({
+      success: false as const,
+      error: {
+        code: 'JLINK_OPERATION_FAILED',
+        message: 'No positive target-access evidence; check target power and SWD wiring',
+      },
+    }));
+    Object.assign(mock.api.controlProfile as Record<string, unknown>, { connectChip });
+    mock.spies.controlProfile.listRecords.mockResolvedValue({ success: true, data: [record] });
+    mock.spies.controlProfile.openRecord.mockResolvedValueOnce({
+      success: true,
+      data: { path: 'C:/repo/.linkterm/control-profile.json', record },
+    });
+    mock.spies.session.create.mockResolvedValueOnce({
+      success: true,
+      data: { sessionId: 'sess_chip_target_missing', state: 'open' },
+    });
+
+    const { App } = await import('../../../src/renderer/App.js');
+    render(<App />);
+
+    await openControlProfilePanel();
+    expect(
+      within(await screen.findByRole('dialog')).getByText('repo - Missing Target'),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open profile' }));
+
+    const statusPanel = await screen.findByTestId('control-profile-status');
+    fireEvent.click(within(statusPanel).getByRole('button', { name: 'Connect chip' }));
+
+    await waitFor(() => expect(connectChip).toHaveBeenCalledWith({ root: 'C:/repo' }));
+    expect(statusPanel).toHaveTextContent('No positive target-access evidence');
+    expect(statusPanel).not.toHaveTextContent('Chip connected');
   });
 
   it('opens a saved RTT control profile and shows resolved RTT details', async () => {

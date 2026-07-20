@@ -1803,7 +1803,9 @@ function describeDownloadPhase(
     case 'running':
       return describeRunningDownload(download, t);
     case 'succeeded':
-      return t('controlProfile.download.complete');
+      return download.result.summary.verified
+        ? t('controlProfile.download.verifiedComplete')
+        : t('controlProfile.download.unverifiedComplete');
     case 'failed':
       return t('controlProfile.download.failed');
   }
@@ -1828,18 +1830,11 @@ function describeRunningDownload(
 }
 
 function getDownloadProgressPercent(download: ControlProfileDownloadState): number {
-  if (download.phase === 'idle') return 18;
   if (download.phase === 'succeeded') return 100;
 
   const progress = getCurrentFlashProgress(download);
   if (progress?.percent !== undefined) return clampPercent(progress.percent);
-  if (download.phase === 'failed') return 100;
-
-  const steps = download.job?.workflow?.steps ?? [];
-  if (steps.length === 0) return 8;
-  const completed = steps.filter((step) => step.status === 'passed' || step.status === 'skipped').length;
-  const runningBonus = steps.some((step) => step.status === 'running') ? 0.5 : 0;
-  return Math.min(95, Math.max(8, Math.round(((completed + runningBonus) / (steps.length + 1)) * 100)));
+  return 0;
 }
 
 function getCurrentFlashProgress(

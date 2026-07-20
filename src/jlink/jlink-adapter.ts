@@ -140,25 +140,10 @@ export class JLinkAdapter implements IJLinkBackend {
 
   // -- probe lifecycle --
 
-  /**
-   * 枚举 Commander 可见的物理 probe，并与当前 adapter 已连接的 handle 合并。
-   * 已连接 handle 优先保留其 UUID probeId；物理未连接 probe 只作为只读可见性证据返回。
-   */
+  /** 枚举 Commander 可见的物理 probe；内存 handle 不作为 target 已连接证据。 */
   async probeDetect(): Promise<ProbeInfo[]> {
-    const connected = Array.from(this.#probes.values()).map((handle) => this.#toProbeInfo(handle));
     const physical = await this.#commander.detectProbes?.();
-    if (physical === undefined || physical.length === 0) return connected;
-    const connectedSerials = new Set(
-      connected
-        .map((probe) => probe.serialNumber)
-        .filter((serialNumber): serialNumber is string => serialNumber !== undefined && serialNumber !== ''),
-    );
-    return [
-      ...connected,
-      ...physical.filter(
-        (probe) => probe.serialNumber === undefined || !connectedSerials.has(probe.serialNumber),
-      ),
-    ];
+    return (physical ?? []).map((probe) => ({ ...probe, connected: false }));
   }
 
   /**
@@ -174,7 +159,15 @@ export class JLinkAdapter implements IJLinkBackend {
       });
     }
     const normalizedOpts = this.#normalizeProbeConnectOptions(opts);
+    const connectTarget = this.#commander.connectTarget;
+    if (connectTarget === undefined) {
+      throw new JLinkNotImplementedError('probeConnect');
+    }
+    this.#assertProbeSelectionCanRevalidate(normalizedOpts);
     const existing = this.#findReusableProbe(normalizedOpts);
+    await this.#withProbeSelectionOperation(this.#probeOperationKey(normalizedOpts), async () => {
+      await connectTarget.call(this.#commander, normalizedOpts);
+    });
     if (existing !== undefined) {
       return this.#toProbeInfo(existing);
     }
@@ -212,10 +205,31 @@ export class JLinkAdapter implements IJLinkBackend {
     this.#probes.delete(probeId);
   }
 
-  /** 返回 handle 当前 ProbeInfo。 */
+  /** 重新验证 target access 后返回 ProbeInfo；失效的空闲 handle 会被淘汰。 */
   async probeStatus(probeId: string): Promise<ProbeInfo> {
     const handle = this.#requireProbe(probeId);
-    return this.#toProbeInfo(handle);
+    const connectTarget = this.#commander.connectTarget;
+    if (connectTarget === undefined) {
+      throw new JLinkNotImplementedError('probeStatus');
+    }
+    this.#assertProbeHandleCanRevalidate(handle);
+    try {
+      await this.#withProbeOperation(handle, async () => {
+        await connectTarget.call(this.#commander, this.#toCommanderContext(handle));
+      });
+      return this.#toProbeInfo(handle);
+    } catch (err) {
+      if (
+        !(err instanceof ProbeBusyError) &&
+        !handle.busy &&
+        !this.#isProbeSelectionBusy(handle.probeKey) &&
+        handle.gdbServer === undefined &&
+        handle.rttSession === undefined
+      ) {
+        this.#probes.delete(handle.probeId);
+      }
+      throw err;
+    }
   }
 
   /** Reboot J-Link probe 本体；不要求 target connect 成功。 */
@@ -659,6 +673,32 @@ export class JLinkAdapter implements IJLinkBackend {
         handle.speedKHz === opts.speedKHz &&
         handle.serialNumber === opts.serialNumber,
     );
+  }
+
+  /** Commander 复验不得与该物理 probe 上持续运行的 GDB/RTT 会话并发。 */
+  #assertProbeSelectionCanRevalidate(opts: ProbeConnectOptions): void {
+    const probeKey = this.#probeOperationKey(opts);
+    const activeSessionHandle = Array.from(this.#probes.values()).find(
+      (handle) =>
+        handle.probeKey === probeKey &&
+        (handle.gdbServer !== undefined || handle.rttSession !== undefined),
+    );
+    if (activeSessionHandle !== undefined) {
+      throw new ProbeBusyError(
+        activeSessionHandle.probeId,
+        'Probe target access cannot be revalidated while a GDB or RTT session is active',
+      );
+    }
+  }
+
+  /** 单个 handle 的实时状态复验不得抢占已有 GDB/RTT 会话。 */
+  #assertProbeHandleCanRevalidate(handle: ProbeHandle): void {
+    if (handle.gdbServer !== undefined || handle.rttSession !== undefined) {
+      throw new ProbeBusyError(
+        handle.probeId,
+        'Probe target access cannot be revalidated while a GDB or RTT session is active',
+      );
+    }
   }
 
   #retireStaleProbeHandlesForSelection(opts: ProbeConnectOptions): void {

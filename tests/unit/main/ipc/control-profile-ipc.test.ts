@@ -1028,4 +1028,41 @@ describe('registerControlProfileIpc', () => {
       '11111111-1111-4111-8111-111111111111',
     );
   });
+
+  it('returns a failed IPC result when target access has no positive hardware evidence', async () => {
+    const { JLinkOperationError } = await import('../../../../src/jlink/errors.js');
+    const manager = {
+      load: vi.fn(async () => ({
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: false },
+        jlink: {
+          enabled: true,
+          target: 'STM32H743II',
+          interface: 'swd' as const,
+          speedKHz: 4000,
+        },
+      })),
+    } as unknown as ControlProfileManager;
+    const jlinkBackend = {
+      probeConnect: vi.fn(async () => {
+        throw new JLinkOperationError(
+          'J-Link probeConnect completed without positive target-access evidence',
+          { operation: 'probeConnect' },
+        );
+      }),
+    };
+    registerControlProfileIpc(manager, undefined, { jlinkBackend } as never);
+
+    const connect = handlers.get(
+      (IPC_CHANNELS as Record<string, string>).CONTROL_PROFILE_CONNECT_CHIP,
+    )!;
+
+    await expect(connect({}, { root: 'C:/repo' })).resolves.toEqual({
+      success: false,
+      error: {
+        code: 'JLINK_OPERATION_FAILED',
+        message: 'J-Link probeConnect completed without positive target-access evidence',
+      },
+    });
+  });
 });
