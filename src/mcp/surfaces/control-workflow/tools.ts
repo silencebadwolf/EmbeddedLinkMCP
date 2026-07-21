@@ -73,6 +73,7 @@ export function registerControlWorkflowTools(
       'Firmware is read server-side, so AI clients must not chunk base64 manually. Operations execute immediately and remain visible in Activity Center and transcript records. ' +
       'Set observe.enabled=false for download-only calls that should flash/verify/reset without serial or RTT observation. ' +
       'For long operations, request execution.mode=background, then poll get_control_workflow_job_status and read_control_workflow_job; cancel with cancel_control_workflow_job if needed. ' +
+      'A host timeout is not proof that the hardware operation failed; recover the background job by id and do not retry flash, erase, reset, attach, or GDB startup solely because the client deadline expired. ' +
       'Known SEGGER/J-Link failures are returned with workflow failureCode and machine-readable nextActions. ' +
       'No external CLI fallback.',
     sensitivity: 'state-affecting',

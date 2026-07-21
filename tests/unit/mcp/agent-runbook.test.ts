@@ -106,7 +106,7 @@ describe('agent runbook builder', () => {
     expect(runbook.markdown).toContain('J-Link');
     expect(runbook.markdown).toContain('RTT');
     expect(runbook.markdown).toContain('UI');
-    expect(runbook.markdown).toContain('observe-only');
+    expect(runbook.markdown).toContain('Automatically executed high-impact operations');
     expect(runbook.markdown).not.toContain('CONFIRMATION_REQUIRED');
     expect(runbook.markdown).toContain('MUST NOT bypass LinkTerm');
     expect(runbook.markdown).toContain('JLink.exe');
@@ -115,6 +115,8 @@ describe('agent runbook builder', () => {
     expect(runbook.markdown).toContain('Call LinkTerm MCP tools sequentially');
     expect(runbook.markdown).toContain('lightweight health-check call');
     expect(runbook.markdown).toContain('get_app_status');
+    expect(runbook.markdown).toContain('one-shot serial-port and J-Link probe discovery');
+    expect(runbook.markdown).toContain('does not connect to or mutate hardware');
     expect(runbook.markdown).toContain('recommendedWorkflows');
     expect(runbook.markdown).toContain('profile_flash_observe');
     expect(runbook.markdown).toContain('write_to_session');
@@ -179,11 +181,20 @@ describe('agent runbook builder', () => {
     const observeSerial = runbook.workflows.find((workflow) => workflow.id === 'observe_serial');
     expect(observeSerial?.recommendedTools.slice(0, 3)).toEqual([
       'list_sessions',
-      'discover_serial_ports',
+      'get_app_status',
       'open_session',
     ]);
+    expect(observeSerial?.recommendedTools).not.toContain('discover_serial_ports');
     expect(observeSerial?.description).toContain('reuse');
     expect(observeSerial?.description).toContain('Main');
+    expect(observeSerial?.description).toContain(
+      'call discover_serial_ports only when no active session or known configuration exists',
+    );
+    expect(runbook.markdown).toContain('SERIAL_SESSION_CONFLICT');
+    expect(runbook.markdown).toContain('do not close a shared session');
+    expect(runbook.markdown).toContain('empty settle window does not prove');
+    expect(runbook.markdown).toContain('no approval, pause, resume-AI, or take-over');
+    expect(runbook.markdown).not.toContain('requires confirmation');
     expect(runbook.highImpactTools).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: 'flash_download', requiresConfirmation: false }),
@@ -286,6 +297,8 @@ describe('MCP agent runbook tool', () => {
     const instructions = h.client.getInstructions();
 
     expect(instructions).toContain('LinkTerm MCP Agent Runbook');
+    expect(instructions).toContain('call get_app_status first');
+    expect(instructions).toContain('read-only serial-port and J-Link probe discovery');
     expect(instructions).toContain('LinkTerm MCP tools are the required path');
     expect(instructions).toContain('Call LinkTerm MCP tools sequentially');
     expect(instructions).toContain('lightweight health-check call');
@@ -302,6 +315,15 @@ describe('MCP agent runbook tool', () => {
     expect(instructions).toContain('target_input_unanswered');
     expect(instructions).toContain('bytesWritten');
     expect(instructions).toContain('host-side acceptance only');
+    expect(instructions).toContain('create or reuse');
+    expect(instructions).toContain('evidence.data.reused=true');
+    expect(instructions).toContain('same WriteQueue and transcript');
+    expect(instructions).toContain('do not close a shared session');
+    expect(instructions).toContain('writes once');
+    expect(instructions).toContain('does not retry automatically');
+    expect(instructions).toContain('legacy confirm values are ignored');
+    expect(instructions).toContain('no approval, pause, resume-AI, or take-over');
+    expect(instructions).toContain('host timeout is not evidence of hardware failure');
     expect(instructions).toContain('read-only');
     expect(instructions).toContain('core tool-set diagnostics');
     expect(instructions).toContain('repair or restart the LinkTerm MCP runtime');

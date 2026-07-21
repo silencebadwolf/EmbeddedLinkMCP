@@ -111,7 +111,7 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
   registerTool(server, {
     name: 'get_agent_runbook',
     description:
-      'Return a runtime-generated AI operation runbook for LinkTerm, including immediate-execution workflows, sanitized runtime/profile facts, observation surfaces, and the current ownership boundary. This tool is read-only.',
+      'Return the detailed packaged LinkTerm MCP operating guide as Markdown and structured workflows, including immediate-execution workflows, sanitized runtime/profile facts, observation surfaces, and the current ownership boundary. This tool is read-only.',
     sensitivity: 'read-only',
     inputSchema: getAgentRunbookInputSchema,
     handler: async (input: GetAgentRunbookInput): Promise<ToolHandlerResult> => {
@@ -143,7 +143,7 @@ export function registerAgentRunbookTools(server: McpServer, deps: AgentRunbookT
   registerTool(server, {
     name: 'get_app_status',
     description:
-      'Return a read-only LinkTerm app status snapshot for AI startup: schema, sessions, serial ports, sanitized control profile summary, J-Link probe visibility, and UI availability. This tool never captures screenshots, flashes, resets, halts, starts GDB, or writes to sessions.',
+      'Return a LinkTerm startup/status snapshot with sessions, readiness, tool integrity, sanitized control-profile facts, and one-shot read-only discovery of serial ports and visible J-Link probes. This tool does not connect to or mutate hardware, capture screenshots, flash, erase, reset, halt, start GDB, or write to sessions.',
     sensitivity: 'read-only',
     inputSchema: getAppStatusInputSchema,
     handler: async (input: GetAppStatusInput): Promise<ToolHandlerResult> => {

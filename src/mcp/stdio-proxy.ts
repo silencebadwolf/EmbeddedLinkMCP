@@ -7,6 +7,8 @@ import {
   CallToolResultSchema,
   ListToolsRequestSchema,
   type CallToolResult,
+  type CallToolRequest,
+  type ListToolsRequest,
   type ListToolsResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { APP_NAME } from '../shared/constants.js';
@@ -20,6 +22,15 @@ export interface McpStdioProxy {
 }
 
 type ProxyStopFn = () => Promise<void>;
+
+/** Minimal owner-runtime client surface required by the stdio proxy server. */
+export interface McpProxyUpstream {
+  listTools(params?: ListToolsRequest['params']): Promise<ListToolsResult>;
+  callTool(
+    params: CallToolRequest['params'],
+    resultSchema?: typeof CallToolResultSchema,
+  ): Promise<unknown>;
+}
 
 /**
  * Forward one request to the owner HTTP runtime.
@@ -42,6 +53,43 @@ export async function forwardRuntimeRequest<T>(
 }
 
 /**
+ * Construct the transport-independent proxy server used by production stdio and protocol tests.
+ *
+ * @param upstream Connected owner-runtime MCP client.
+ * @param stopProxy Proxy shutdown hook for owner transport failures.
+ * @returns MCP server with packaged initialize guidance and forwarding handlers.
+ */
+export function createMcpProxyServer(
+  upstream: McpProxyUpstream,
+  stopProxy: ProxyStopFn,
+): Server {
+  const server = new Server(
+    {
+      name: 'linkterm-stdio-proxy',
+      version: LINKTERM_MCP_SCHEMA_VERSION,
+      title: APP_NAME,
+    },
+    {
+      capabilities: { tools: {} },
+      instructions: createAgentRunbookInstructions(LINKTERM_MCP_SCHEMA_VERSION),
+    },
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async (request): Promise<ListToolsResult> => {
+    return forwardRuntimeRequest(() => upstream.listTools(request.params), stopProxy);
+  });
+
+  server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
+    return forwardRuntimeRequest(async () => {
+      const result = await upstream.callTool(request.params, CallToolResultSchema);
+      return CallToolResultSchema.parse(result);
+    }, stopProxy);
+  });
+
+  return server;
+}
+
+/**
  * Start a stdio MCP server that forwards tool listing/calls to an existing HTTP runtime endpoint.
  *
  * @param metadata Runtime endpoint metadata discovered from the owner process.
@@ -59,42 +107,17 @@ export async function startMcpStdioProxy(metadata: McpRuntimeMetadata): Promise<
   });
   await client.connect(httpTransport);
 
-  const server = new Server(
-    {
-      name: 'linkterm-stdio-proxy',
-      version: LINKTERM_MCP_SCHEMA_VERSION,
-      title: APP_NAME,
-    },
-    {
-      capabilities: { tools: {} },
-      instructions: createAgentRunbookInstructions(LINKTERM_MCP_SCHEMA_VERSION),
-    },
-  );
-
   let stopping = false;
-  const stop = async (): Promise<void> => {
+  async function stop(): Promise<void> {
     if (stopping) return;
     stopping = true;
     await server.close().catch(() => undefined);
     await stdioTransport.close().catch(() => undefined);
     await httpTransport.close().catch(() => undefined);
     await client.close().catch(() => undefined);
-  };
+  }
 
-  server.setRequestHandler(ListToolsRequestSchema, async (request): Promise<ListToolsResult> => {
-    return forwardRuntimeRequest(
-      () => client.listTools(request.params),
-      stop,
-    );
-  });
-
-  server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
-    return forwardRuntimeRequest(async () => {
-      const result = await client.callTool(request.params, CallToolResultSchema);
-      return CallToolResultSchema.parse(result);
-    }, stop);
-  });
-
+  const server = createMcpProxyServer(client, stop);
   const stdioTransport = new StdioServerTransport();
   await server.connect(stdioTransport);
 

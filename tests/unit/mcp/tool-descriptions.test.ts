@@ -88,7 +88,43 @@ describe('high-impact MCP tool descriptions', () => {
     );
     expect(descriptions.get('run_control_workflow')).toContain('get_control_workflow_job_status');
     expect(descriptions.get('run_control_workflow')).toContain('read_control_workflow_job');
+    expect(descriptions.get('run_control_workflow')).toContain(
+      'host timeout is not proof that the hardware operation failed',
+    );
+    expect(descriptions.get('run_control_workflow')).toContain('do not retry');
     expect(descriptions.get('cancel_control_workflow_job')).toContain('AbortSignal');
     expect(descriptions.get('cleanup_control_workflow_jobs')).toContain('completed or expired');
+  });
+
+  it('describes shared create-or-reuse terminal operation without blind retries', async () => {
+    const tools = await h.client.listTools();
+    const descriptions = new Map(tools.tools.map((tool) => [tool.name, tool.description ?? '']));
+
+    expect(descriptions.get('list_sessions')).toContain('before opening serial');
+    expect(descriptions.get('open_session')).toContain('create or reuse');
+    expect(descriptions.get('open_session')).toContain('evidence.data.reused');
+    expect(descriptions.get('open_session')).toContain('SERIAL_SESSION_CONFLICT');
+    expect(descriptions.get('open_session')).toContain('do not retry blindly');
+    expect(descriptions.get('close_session')).toMatch(/human and AI/i);
+    expect(descriptions.get('close_session')).toContain('shared');
+    expect(descriptions.get('write_to_session')).toContain('host-side acceptance');
+    expect(descriptions.get('read_from_session')).toContain('cursor');
+    expect(descriptions.get('send_and_wait')).toMatch(/write bytes once/i);
+    expect(descriptions.get('send_and_wait')).toContain('does not retry automatically');
+    expect(descriptions.get('discover_serial_ports')).toContain(
+      'only when neither a compatible active session nor any known configuration',
+    );
+    expect(descriptions.get('get_session_status')).toContain('reused');
+  });
+
+  it('describes read-only status discovery and the detailed operating guide', async () => {
+    const tools = await h.client.listTools();
+    const descriptions = new Map(tools.tools.map((tool) => [tool.name, tool.description ?? '']));
+
+    expect(descriptions.get('get_app_status')).toContain('read-only discovery');
+    expect(descriptions.get('get_app_status')).toContain(
+      'does not connect to or mutate hardware',
+    );
+    expect(descriptions.get('get_agent_runbook')).toContain('operating guide');
   });
 });

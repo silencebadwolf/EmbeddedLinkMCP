@@ -82,7 +82,8 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
 
   registerTool(server, {
     name: 'list_sessions',
-    description: 'List all active sessions with states and non-sensitive UI metadata.',
+    description:
+      'List all Main-owned visible sessions with states and non-sensitive UI metadata. Inspect this before opening serial so a compatible sessionId can be reused.',
     sensitivity: 'read-only',
     inputSchema: listSessionsInputSchema,
     handler: (_input: ListSessionsInput): ToolHandlerResult => {
@@ -100,8 +101,7 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
   registerTool(server, {
     name: 'open_session',
     description:
-      'Create a new session (serial / ssh / local-shell) and open the underlying transport. ' +
-      'Returns the generated sessionId on success.',
+      'Open a serial, SSH, or local-shell session. Serial uses Main-owned create or reuse: a compatible active session may return its existing sessionId with evidence.data.reused=true; incompatible same-port configuration returns SERIAL_SESSION_CONFLICT, so inspect the active configuration and do not retry blindly.',
     sensitivity: 'state-affecting',
     inputSchema: openSessionInputSchema,
     handler: async (input: OpenSessionInput): Promise<ToolHandlerResult> => {
@@ -165,8 +165,7 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
   registerTool(server, {
     name: 'close_session',
     description:
-      'Close the underlying transport of a session, but keep its transcript readable. ' +
-      'The sessionId remains visible in list_sessions until the process exits.',
+      'Close the underlying transport but keep its transcript readable. Human and AI share the session, so closing a shared session affects both parties; close only when requested or explicitly owned for disposal. The sessionId remains visible in list_sessions until the process exits.',
     sensitivity: 'state-affecting',
     inputSchema: closeSessionInputSchema,
     handler: async (input: CloseSessionInput): Promise<ToolHandlerResult> => {
@@ -187,8 +186,7 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
   registerTool(server, {
     name: 'write_to_session',
     description:
-      'Write bytes to a session. Origin is hard-coded to "ai"; use correlationId to tag the write ' +
-      'in the transcript audit trail.',
+      'Write bytes once through the shared SessionManager/WriteQueue. Origin is hard-coded to "ai"; use correlationId to tag the transcript audit trail. bytesWritten is host-side acceptance, not proof that the device consumed or executed the command.',
     sensitivity: 'state-affecting',
     inputSchema: writeToSessionInputSchema,
     handler: async (input: WriteToSessionInput): Promise<ToolHandlerResult> => {
@@ -242,8 +240,8 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
   registerTool(server, {
     name: 'read_from_session',
     description:
-      'Read transcript events of a session since the given cursor (default 0 = earliest visible). ' +
-      'Returns events with origin/sequence/timestamp/meta and a new cursor for the next call. ' +
+      'Read cursor-based transcript events since the supplied cursor (default 0 = earliest visible). ' +
+      'Returns events with origin/sequence/timestamp/meta and a next cursor. ' +
       'truncated=true means earlier events were dropped from the ring buffer.',
     sensitivity: 'read-only',
     inputSchema: readFromSessionInputSchema,
@@ -272,9 +270,7 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
   registerTool(server, {
     name: 'send_and_wait',
     description:
-      'Write bytes to a session, wait a bounded settle interval, and return the device output observed ' +
-      'during that interval. Completion markers are optional result metadata, not a success gate; ' +
-      'settleMs is preferred and timeoutMs remains a compatibility alias.',
+      'Write bytes once through the shared queue, wait a bounded settle interval, and return device-origin output observed during that interval. Completion markers are optional result metadata rather than a success gate; silence proves neither crash nor completion, and the tool does not retry automatically. settleMs is preferred and timeoutMs remains a compatibility alias.',
     sensitivity: 'state-affecting',
     inputSchema: sendAndWaitInputSchema,
     handler: async (input: SendAndWaitInput): Promise<ToolHandlerResult> => {
@@ -394,7 +390,8 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
 
   registerTool(server, {
     name: 'discover_serial_ports',
-    description: 'Enumerate currently available serial ports (one-shot, no polling).',
+    description:
+      'Conditionally enumerate currently available serial ports once, only when neither a compatible active session nor any known configuration from the user/workspace/control profile exists; no polling.',
     sensitivity: 'read-only',
     inputSchema: discoverSerialPortsInputSchema,
     handler: async (_input: DiscoverSerialPortsInput): Promise<ToolHandlerResult> => {
@@ -411,7 +408,8 @@ export function registerTerminalTools(server: McpServer, deps: TerminalToolsDeps
 
   registerTool(server, {
     name: 'get_session_status',
-    description: 'Get the current state of a session and the latest transcript cursor.',
+    description:
+      'Read the current state and latest transcript cursor before deciding whether a session can be reused or must be reopened.',
     sensitivity: 'read-only',
     inputSchema: getSessionStatusInputSchema,
     handler: (input: GetSessionStatusInput): ToolHandlerResult => {

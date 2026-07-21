@@ -26,6 +26,12 @@ function makeTargets(root: string): AgentIntegrationTarget[] {
       configPath: path.join(root, 'Claude', 'claude_desktop_config.json'),
       configKind: 'mcp-servers',
     },
+    {
+      id: 'cursor',
+      label: 'Cursor',
+      configPath: path.join(root, '.cursor', 'mcp.json'),
+      configKind: 'mcp-servers',
+    },
   ];
 }
 
@@ -85,6 +91,13 @@ function makeWslLaunchConfig(root: string): LinkTermMcpLaunchConfig {
   };
 }
 
+function expectNoEmbeddedRuntimeGuide(serialized: string): void {
+  expect(serialized).not.toContain('LinkTerm MCP Agent Runbook');
+  expect(serialized).not.toMatch(/["']?(systemPrompt|system_prompt|instructions)["']?\s*[:=]/);
+  expect(serialized).not.toContain('get_agent_runbook');
+  expect(serialized).not.toContain('SERIAL_SESSION_CONFLICT');
+}
+
 describe('AgentIntegrationManager', () => {
   let root: string;
 
@@ -121,6 +134,14 @@ describe('AgentIntegrationManager', () => {
         configured: false,
         canInstall: true,
       }),
+      expect.objectContaining({
+        id: 'cursor',
+        label: 'Cursor',
+        configKind: 'mcp-servers',
+        status: 'not-found',
+        configured: false,
+        canInstall: true,
+      }),
     ]);
   });
 
@@ -146,6 +167,7 @@ describe('AgentIntegrationManager', () => {
     expect(parsed['chat.mcpServers']).toMatchObject({
       linkterm: makeLaunchConfig(root),
     });
+    expectNoEmbeddedRuntimeGuide(JSON.stringify(parsed['chat.mcpServers']));
 
     const backup = JSON.parse(await readFile(result.backupPath!, 'utf-8')) as Record<string, unknown>;
     expect(backup).toEqual({ editor: { fontSize: 16 } });
@@ -275,6 +297,7 @@ describe('AgentIntegrationManager', () => {
     expect(parsed.inputs).toEqual([{ id: 'keep' }]);
     expect(parsed.servers.existing).toEqual({ command: 'keep.exe' });
     expect(parsed.servers.linkterm).toEqual({ ...makeLaunchConfig(root), type: 'stdio' });
+    expectNoEmbeddedRuntimeGuide(JSON.stringify(parsed.servers.linkterm));
   });
 
   it('reports VS Code User mcp.json linkterm config without stdio type as needs-update', async () => {
@@ -333,6 +356,7 @@ describe('AgentIntegrationManager', () => {
     expect(written).toContain(`args = [ ${JSON.stringify(root)} ]`);
     expect(written).toContain('[mcp_servers.linkterm.env]');
     expect(written).toContain('LINKTERM_MCP_STDIO = "1"');
+    expectNoEmbeddedRuntimeGuide(written);
     expect(await readFile(result.backupPath!, 'utf-8')).toBe(original);
   });
 
@@ -360,6 +384,7 @@ describe('AgentIntegrationManager', () => {
     expect(written).toContain('url = "http://localhost:57371/mcp"');
     expect(written).toContain('bearer_token_env_var = "LINKTERM_MCP_TOKEN"');
     expect(written).not.toContain('command = ');
+    expectNoEmbeddedRuntimeGuide(written);
     expect(await manager.getStatus('codex')).toMatchObject({
       status: 'configured',
       configured: true,
@@ -847,6 +872,25 @@ describe('AgentIntegrationManager', () => {
     };
     expect(parsed.mcpServers.other).toEqual({ command: 'keep.exe' });
     expect(parsed.mcpServers.linkterm).toEqual(makeLaunchConfig(root));
+    expectNoEmbeddedRuntimeGuide(JSON.stringify(parsed.mcpServers.linkterm));
+  });
+
+  it('installs Cursor mcpServers.linkterm without embedding runtime guidance', async () => {
+    const targets = makeTargets(root);
+    const cursor = targets[2];
+    const manager = new AgentIntegrationManager({
+      targets,
+      launchConfig: makeLaunchConfig(root),
+    });
+
+    const result = await manager.install('cursor');
+
+    expect(result.status.status).toBe('configured');
+    const parsed = JSON.parse(await readFile(cursor.configPath, 'utf-8')) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(parsed.mcpServers.linkterm).toEqual(makeLaunchConfig(root));
+    expectNoEmbeddedRuntimeGuide(JSON.stringify(parsed.mcpServers.linkterm));
   });
 
   it('refuses to overwrite malformed JSON', async () => {
