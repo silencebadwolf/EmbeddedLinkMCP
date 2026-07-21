@@ -28,9 +28,9 @@ LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端 与 MCP 自动
 | Phase 9 — J-Link MCP 调试面（30 个工具 + NullBackend 兜底） | 已完成 |
 | Phase 10 — UI MCP 面（`ui_configure` + `ui_screenshot`）    | 已完成 |
 | Phase 11 — 双向许可证校验脚本                               | 已完成 |
-| Phase 12 — 集成覆盖 + 高敏感工具 confirm gate + 性能基线    | 已完成 |
+| Phase 12 — 集成覆盖 + 高影响操作观测 + 性能基线            | 已完成 |
 
-测试：1127 个 Vitest 用例 / 110 个测试文件。
+测试基线以 `docs/engineering/quality-gates.md` 和最新 `pnpm test` 输出为准。
 
 ---
 
@@ -80,11 +80,13 @@ PreparedOperation、授权、principal、lease 等 Main-only 对象。持久化�
 
 每个 MCP 工具都返回 `{ success, sessionId?, state?, evidence: { kind, data, cursor }, error?, correlationId, origin: 'ai', schemaVersion }`。
 
-#### 高敏感工具 confirm gate（Phase 12）
+#### 高影响工具的自动执行与观测
 
-下列 7 个 J-Link 工具要求入参显式声明 `confirm: true`，否则返回 `{ code: 'CONFIRMATION_REQUIRED' }` 且 backend 方法**不会被调用**：
+下列 7 个 J-Link 工具会在 schema、运行时、资源和准入检查通过后立即执行；Activity Center 与本机审计负责记录过程和结果：
 
 `flash_download`、`flash_write`、`flash_erase`、`cpu_reset`、`gdb_server_start`、`jlink_reboot`、`jlink_commander_script`
+
+旧客户端仍可传入 `confirm`，但该字段仅作为兼容元数据被接受和忽略，不构成授权或执行门禁。
 
 #### Backend 兜底策略
 
@@ -209,7 +211,7 @@ pnpm start              # 另起 Electron
 ```
 tests/
 ├── fixtures/        # mock-serialport / mock-ssh / mock-pty / fake-jlink-backend
-├── integration/     # ai-human-coop / send-and-wait / serial-* / perf-* / high-impact-confirmation
+├── integration/     # ai-human-coop / send-and-wait / serial-* / perf-* / high-impact execution
 └── unit/
     ├── core/        # session-manager / write-queue / transcript-buffer / terminal-rules / workspace
     ├── transports/  # serial / ssh / local-shell（transport 与 session 各自一份）
@@ -259,7 +261,7 @@ Coverage provider 不属于产品运行时。`third-party-manifest.json` 的独�
   - `src/shared/error-codes.ts` 的 `ERROR_CODES` 常量；
   - `src/mcp/registry.ts` 的 `ToolErrorCode` 联合类型。
     现有翻译层基于 `instanceof` 的错误链（见 `src/mcp/surfaces/debug/error-translate.ts`、`src/mcp/surfaces/workspace/tools.ts`），缺失任一半会让翻译静默退化。
-- **新增高敏感 J-Link 工具**：在 schema 加 `confirm: confirmField`，在 `runJLink(...)` 内的第一句 `if (input.confirm !== true) throw new ConfirmationRequiredError(toolName)`，并在 `description` 里追加「High-impact: requires confirm=true; otherwise CONFIRMATION_REQUIRED is returned.」。
+- **新增高影响 J-Link 工具**：保持严格 schema、Main-owned admission、`IJLinkBackend` 单一后端边界与 Activity/Audit 观测；如为旧客户端保留 `confirm`，必须明确标注其仅为被忽略的兼容元数据。
 - **不得让 MCP 工具或 IPC handler 直接触碰 transport** —— 一切写入必须经 `SessionManager.write`。这是硬安全边界。
 - **不要在 `src/core/` 引入 `electron`、`serialport`、`ssh2`、`node-pty`**；只能通过 `*-{port,client}-like.ts` 接口与默认工厂消费。
 - **不要把 SSH 凭据放进 `SshSessionConfig` 持久结构** —— `credentials` 是 `session:create` IPC 的独立顶层字段，`buildSession()` 在 `await` 之前就会清空它。

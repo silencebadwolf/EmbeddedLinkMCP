@@ -2,18 +2,18 @@
 
 ## Purpose
 
-Define backend-managed GDB server lifecycle requirements, including confirmation and process ownership boundaries.
+Define backend-managed GDB server lifecycle requirements, including automatic execution, evidence, and process ownership boundaries.
 ## Requirements
-### Requirement: GDB server lifecycle is backend-managed and confirmation-gated
-LinkTerm SHALL manage J-Link GDB server startup and shutdown through the J-Link backend and SHALL require confirmation for startup.
+### Requirement: GDB server lifecycle is backend-managed and automatically executed
+LinkTerm SHALL manage J-Link GDB server startup and shutdown through the J-Link backend and SHALL execute startup after normal validation and admission.
 
-#### Scenario: GDB server start lacks confirmation
-- **WHEN** `gdb_server_start` is called without `confirm=true`
-- **THEN** LinkTerm returns `CONFIRMATION_REQUIRED`
-- **AND** it does not start a GDB server process
+#### Scenario: GDB server start omits confirmation
+- **WHEN** `gdb_server_start` is called with valid host/port/probe context and no `confirm` field
+- **THEN** LinkTerm starts the server through backend-owned GDB server client logic
+- **AND** startup evidence contains the sanitized listening endpoint
 
-#### Scenario: GDB server start is confirmed
-- **WHEN** `gdb_server_start` is called with `confirm=true` and valid host/port/probe context
+#### Scenario: Legacy confirmation metadata is accepted
+- **WHEN** `gdb_server_start` is called with `confirm=false` or `confirm=true` and valid host/port/probe context
 - **THEN** LinkTerm starts the server through backend-owned GDB server client logic
 - **AND** startup evidence contains the sanitized listening endpoint
 - **AND** output tails are bounded and redacted

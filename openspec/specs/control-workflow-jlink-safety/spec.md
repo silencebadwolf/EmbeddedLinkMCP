@@ -13,7 +13,7 @@ LinkTerm SHALL direct AI clients to use `run_control_workflow` for supported fla
 - **AND** it does not recommend direct J-Link, GDB, serial CLI, flash CLI, or VS Code task fallback
 
 #### Scenario: Workflow is unsupported or blocked
-- **WHEN** `run_control_workflow` cannot proceed because required profile facts, backend capability, or confirmation is missing
+- **WHEN** `run_control_workflow` cannot proceed because required profile facts, backend capability, or another runtime precondition is missing
 - **THEN** LinkTerm returns structured blocking reasons or next actions
 - **AND** it does not instruct the AI client to bypass LinkTerm with external hardware tools
 

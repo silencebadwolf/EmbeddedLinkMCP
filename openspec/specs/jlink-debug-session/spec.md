@@ -9,14 +9,14 @@ Define LinkTerm-managed J-Link debug session behavior, including GDB server life
 LinkTerm SHALL start and stop SEGGER J-Link GDB server processes only through the J-Link backend layer under `src/jlink/`.
 
 #### Scenario: GDB server starts from a connected probe
-- **WHEN** `gdb_server_start` is called with a connected `probeId`, host, port, timeout, and `confirm=true`
+- **WHEN** `gdb_server_start` is called with a connected `probeId`, host, port, and timeout
 - **THEN** LinkTerm starts the SEGGER GDB server through the backend-owned process runner
 - **AND** returns structured debug evidence containing the host, port, probe id, and bounded process output status
 
-#### Scenario: Missing confirmation blocks start
-- **WHEN** `gdb_server_start` is called without `confirm=true`
-- **THEN** LinkTerm returns `CONFIRMATION_REQUIRED`
-- **AND** it does not spawn a GDB server process
+#### Scenario: Legacy confirmation metadata is ignored
+- **WHEN** `gdb_server_start` is called with valid input and `confirm` omitted or false
+- **THEN** LinkTerm starts the GDB server after normal admission
+- **AND** Activity/Audit evidence records the operation
 
 #### Scenario: GDB server start timeout is bounded
 - **WHEN** the SEGGER GDB server process does not become ready before the requested timeout
@@ -28,7 +28,7 @@ LinkTerm SHALL start and stop SEGGER J-Link GDB server processes only through th
 LinkTerm SHALL provide a high-level debug-session preparation path inside `run_control_workflow` for debug diagnosis without requiring agents to guess low-level tool order.
 
 #### Scenario: Debug diagnosis starts the GDB server
-- **WHEN** `run_control_workflow` is called with `mode="debug-diagnose"`, debug evidence requested, and required confirmation supplied
+- **WHEN** `run_control_workflow` is called with `mode="debug-diagnose"` and debug evidence requested
 - **THEN** LinkTerm loads the control profile, connects the configured probe, starts the GDB server, and records a `gdb_server_start` workflow step
 - **AND** subsequent register or memory diagnosis steps use the same probe handle
 

@@ -24,15 +24,14 @@ LinkTerm SHALL allow `run_control_workflow` to start a long-running control work
 - **THEN** the job uses the same Electron main-process `SessionManager`, `WriteQueue`, `TranscriptBuffer`, control profile manager, and `IJLinkBackend` instances as normal MCP tools
 - **AND** the job does not call J-Link, GDB, flash, serial, or VS Code task executables outside LinkTerm's backend abstractions
 
-### Requirement: Confirmation gate before job creation
-LinkTerm SHALL enforce high-impact confirmation before creating or starting a background workflow job.
+### Requirement: Automatic execution before job creation
+LinkTerm SHALL create or start a validated background workflow job without requiring caller confirmation.
 
-#### Scenario: Missing confirmation creates no job
-- **WHEN** an MCP client requests a background `run_control_workflow` mode that can flash firmware, reset the CPU, or start a GDB server without `confirm: true`
-- **THEN** LinkTerm returns `CONFIRMATION_REQUIRED`
-- **AND** no background job is created
-- **AND** no serial session is opened
-- **AND** no J-Link backend method is invoked
+#### Scenario: Legacy confirmation metadata does not gate job creation
+- **WHEN** an MCP client requests a valid background `run_control_workflow` mode with `confirm` omitted, `false`, or `true`
+- **THEN** LinkTerm creates the background job and executes it after normal admission checks
+- **AND** the `confirm` value is ignored for authorization
+- **AND** Activity and audit observations remain available for the resulting high-impact operations
 
 #### Scenario: Dry run does not require high-impact job side effects
 - **WHEN** an MCP client requests a background workflow with `dryRun: true`

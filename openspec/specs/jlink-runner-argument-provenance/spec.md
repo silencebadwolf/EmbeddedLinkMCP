@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define provenance requirements for J-Link runner arguments so hardware parameters come from profiles, requests, or confirmed user input.
+Define provenance requirements for J-Link runner arguments so hardware parameters come from profiles, requests, or explicit user-provided input.
 ## Requirements
 ### Requirement: J-Link runner arguments preserve safe provenance
 LinkTerm SHALL construct J-Link Commander and GDB server arguments from validated backend request fields and non-sensitive profile facts, preserving enough provenance for diagnostics without leaking sensitive data.

@@ -344,147 +344,47 @@ describe('MCP control workflow tool', () => {
     });
   });
 
-  it.skip('does not create a background job when high-impact confirmation is missing', async () => {
+  it.each([
+    ['sync debug omitted', 'debug-diagnose', undefined, undefined],
+    ['sync debug false', 'debug-diagnose', undefined, false],
+    ['sync flash omitted', 'flash-observe', undefined, undefined],
+    ['sync flash false', 'flash-observe', undefined, false],
+    ['sync flash+debug omitted', 'flash-observe-diagnose', undefined, undefined],
+    ['sync flash+debug false', 'flash-observe-diagnose', undefined, false],
+    ['background debug omitted', 'debug-diagnose', { mode: 'background' }, undefined],
+    ['background debug false', 'debug-diagnose', { mode: 'background' }, false],
+    ['background flash omitted', 'flash-observe', { mode: 'background' }, undefined],
+    ['background flash false', 'flash-observe', { mode: 'background' }, false],
+    [
+      'background flash+debug omitted',
+      'flash-observe-diagnose',
+      { mode: 'background' },
+      undefined,
+    ],
+    ['background flash+debug false', 'flash-observe-diagnose', { mode: 'background' }, false],
+  ] as const)('executes $label after validation', async (_label, mode, execution, confirm) => {
     await initProfile(h);
-
     const out = await callTool(h.client, 'run_control_workflow', {
       root: h.root,
-      mode: 'flash-observe-diagnose',
-      execution: { mode: 'background' },
-      confirm: false,
+      mode,
+      observe: { serial: false },
+      ...(execution === undefined ? {} : { execution }),
+      ...(confirm === undefined ? {} : { confirm }),
     });
 
-    expect(out.success).toBe(false);
-    expect((out.error as { code: string }).code).toBe('CONFIRMATION_REQUIRED');
-    expect(h.jobManager.listJobs()).toHaveLength(0);
-    expect(h.openSerialCalls).toHaveLength(0);
-    expect(h.fake.callsOf('probeConnect')).toHaveLength(0);
-    expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
-    expect(h.fake.callsOf('cpuReset')).toHaveLength(0);
+    expect(out.success).toBe(true);
+    if (execution !== undefined) {
+      expect(h.jobManager.listJobs()).toHaveLength(1);
+    } else {
+      if (mode.includes('flash')) {
+        expect(h.fake.callsOf('flashDownload')).toHaveLength(1);
+        expect(h.fake.callsOf('cpuReset')).toHaveLength(1);
+      }
+      if (mode.includes('diagnose')) {
+        expect(h.fake.callsOf('gdbServerStart')).toHaveLength(1);
+      }
+    }
   });
-
-  it.skip.each([
-    {
-      label: 'sync debug-diagnose omitted',
-      mode: 'debug-diagnose',
-      execution: undefined,
-      confirm: undefined,
-    },
-    {
-      label: 'sync debug-diagnose false',
-      mode: 'debug-diagnose',
-      execution: undefined,
-      confirm: false,
-    },
-    {
-      label: 'sync flash-observe omitted',
-      mode: 'flash-observe',
-      execution: undefined,
-      confirm: undefined,
-    },
-    {
-      label: 'sync flash-observe false',
-      mode: 'flash-observe',
-      execution: undefined,
-      confirm: false,
-    },
-    {
-      label: 'sync flash-observe-diagnose omitted',
-      mode: 'flash-observe-diagnose',
-      execution: undefined,
-      confirm: undefined,
-    },
-    {
-      label: 'sync flash-observe-diagnose false',
-      mode: 'flash-observe-diagnose',
-      execution: undefined,
-      confirm: false,
-    },
-    {
-      label: 'background debug-diagnose omitted',
-      mode: 'debug-diagnose',
-      execution: { mode: 'background' },
-      confirm: undefined,
-    },
-    {
-      label: 'background debug-diagnose false',
-      mode: 'debug-diagnose',
-      execution: { mode: 'background' },
-      confirm: false,
-    },
-    {
-      label: 'background flash-observe omitted',
-      mode: 'flash-observe',
-      execution: { mode: 'background' },
-      confirm: undefined,
-    },
-    {
-      label: 'background flash-observe false',
-      mode: 'flash-observe',
-      execution: { mode: 'background' },
-      confirm: false,
-    },
-    {
-      label: 'background flash-observe-diagnose omitted',
-      mode: 'flash-observe-diagnose',
-      execution: { mode: 'background' },
-      confirm: undefined,
-    },
-    {
-      label: 'background flash-observe-diagnose false',
-      mode: 'flash-observe-diagnose',
-      execution: { mode: 'background' },
-      confirm: false,
-    },
-  ] as const)(
-    'rejects $label before job, session, or backend effects',
-    async ({ mode, execution, confirm }) => {
-      await initProfile(h);
-      const args = {
-        root: h.root,
-        mode,
-        ...(execution === undefined ? {} : { execution }),
-        ...(confirm === undefined ? {} : { confirm }),
-      };
-
-      const out = await callTool(h.client, 'run_control_workflow', args);
-
-      expect(out.success).toBe(false);
-      expect((out.error as { code: string }).code).toBe('CONFIRMATION_REQUIRED');
-      expect(h.jobManager.listJobs()).toHaveLength(0);
-      expect(h.openSerialCalls).toHaveLength(0);
-      expect(h.fake.callsOf('probeConnect')).toHaveLength(0);
-      expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
-      expect(h.fake.callsOf('cpuReset')).toHaveLength(0);
-      expect(h.fake.callsOf('gdbServerStart')).toHaveLength(0);
-    },
-  );
-
-  it.skip.each([
-    { label: 'omitted', confirm: undefined },
-    { label: 'false', confirm: false },
-  ] as const)(
-    'does not let debug.haltOnFailure bypass the existing debug-diagnose gate when confirm is $label',
-    async ({ confirm }) => {
-      await initProfile(h);
-      const out = await callTool(h.client, 'run_control_workflow', {
-        root: h.root,
-        mode: 'debug-diagnose',
-        debug: { haltOnFailure: true },
-        execution: { mode: 'background' },
-        ...(confirm === undefined ? {} : { confirm }),
-      });
-
-      expect(out.success).toBe(false);
-      expect((out.error as { code: string }).code).toBe('CONFIRMATION_REQUIRED');
-      expect(h.jobManager.listJobs()).toHaveLength(0);
-      expect(h.openSerialCalls).toHaveLength(0);
-      expect(h.fake.callsOf('probeConnect')).toHaveLength(0);
-      expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
-      expect(h.fake.callsOf('cpuReset')).toHaveLength(0);
-      expect(h.fake.callsOf('gdbServerStart')).toHaveLength(0);
-    },
-  );
 
   it('returns planning evidence for a background-requested dry run without creating a job', async () => {
     await initProfile(h);
@@ -741,21 +641,6 @@ describe('MCP control workflow tool', () => {
     });
     expect(cleanup.success).toBe(false);
     expect((cleanup.error as { code: string }).code).toBe('VERSION_MISMATCH');
-  });
-
-  it.skip('requires confirm=true before debug-diagnose starts a managed GDB server', async () => {
-    await initProfile(h);
-
-    const out = await callTool(h.client, 'run_control_workflow', {
-      root: h.root,
-      mode: 'debug-diagnose',
-      confirm: false,
-    });
-
-    expect(out.success).toBe(false);
-    expect((out.error as { code: string }).code).toBe('CONFIRMATION_REQUIRED');
-    expect(h.fake.callsOf('probeConnect')).toHaveLength(0);
-    expect(h.fake.callsOf('gdbServerStart')).toHaveLength(0);
   });
 
   it('starts a managed GDB server before debug diagnosis', async () => {
@@ -1837,21 +1722,6 @@ describe('MCP control workflow tool', () => {
         argsPatch: expect.objectContaining({ jlink: expect.objectContaining({ speedKHz: 4000 }) }),
       }),
     );
-  });
-
-  it.skip('requires confirm=true before complete high-impact flash and reset workflow operations', async () => {
-    await initProfile(h);
-
-    const out = await callTool(h.client, 'run_control_workflow', {
-      root: h.root,
-      mode: 'flash-observe-diagnose',
-      confirm: false,
-    });
-
-    expect(out.success).toBe(false);
-    expect((out.error as { code: string }).code).toBe('CONFIRMATION_REQUIRED');
-    expect(h.fake.callsOf('flashDownload')).toHaveLength(0);
-    expect(h.fake.callsOf('cpuReset')).toHaveLength(0);
   });
 
   it.each([

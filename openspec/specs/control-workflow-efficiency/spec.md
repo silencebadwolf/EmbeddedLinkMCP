@@ -28,7 +28,7 @@ Define deterministic failure classification, safe J-Link speed selection, and ma
 - **THEN** `nextActions` includes an action with `kind: "retry"`
 - **AND** the action includes tool `run_control_workflow`
 - **AND** the action includes a machine-readable argument patch recommending safe J-Link speed or profile update
-- **AND** the action indicates whether confirmation is required
+- **AND** the action identifies high-impact execution and that it proceeds automatically after validation
 
 #### Scenario: Unimplemented capability is not retried blindly
 - **WHEN** a workflow step fails or is skipped because the backend capability is not implemented

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define LinkTerm's runtime-generated MCP operation runbook for AI clients. This capability lets packaged LinkTerm installations teach AI clients safe workflows, confirmation rules, and sanitized runtime/profile context without relying on source-repository documentation or external skills.
+Define LinkTerm's runtime-generated MCP operation runbook for AI clients. This capability lets packaged LinkTerm installations teach AI clients safe workflows, automatic execution, evidence rules, and sanitized runtime/profile context without relying on source-repository documentation or external skills.
 ## Requirements
 ### Requirement: Runtime-generated agent runbook tool
 
@@ -27,7 +27,7 @@ LinkTerm SHALL include a compact AI operation runbook in MCP initialize instruct
 - **WHEN** an MCP client completes initialization against LinkTerm MCP
 - **THEN** the server instructions include LinkTerm MCP Agent Runbook guidance
 - **AND** the instructions identify `get_agent_runbook` as the optional detailed/profile-aware guide
-- **AND** the instructions describe the LinkTerm ownership boundary, high-impact confirmation rule, preferred high-level workflow, and fresh evidence requirement
+- **AND** the instructions describe the LinkTerm ownership boundary, high-impact automatic-execution rule, preferred high-level workflow, and fresh evidence requirement
 - **AND** the instructions identify `write_to_session`, `send_and_wait`, and `read_from_session` as the supported terminal command send/read path
 
 #### Scenario: Stdio proxy preserves quick guidance
@@ -55,7 +55,7 @@ The `get_agent_runbook` result SHALL include both human-readable Markdown and ma
 #### Scenario: Structured workflow data is returned
 - **WHEN** `get_agent_runbook` succeeds
 - **THEN** the structured evidence includes workflow entries with stable identifiers
-- **AND** each workflow entry identifies recommended MCP tools, risk level, whether confirmation is required, and expected evidence kind
+- **AND** each workflow entry identifies recommended MCP tools, risk level, automatic-execution behavior, and expected evidence kind
 - **AND** the RTT observation workflow includes `diagnose_rtt_log_session` alongside `open_rtt_log_session` and `read_from_session`
 
 #### Scenario: Runbook explains firmware image ownership
@@ -65,23 +65,24 @@ The `get_agent_runbook` result SHALL include both human-readable Markdown and ma
 - **AND** the Markdown warns that ELF headers are not Cortex-M vector tables
 - **AND** the structured safety rules include the same firmware image guidance
 
-### Requirement: Safety and confirmation guidance
+### Requirement: Safety and automatic-execution guidance
 
-The runbook SHALL explicitly describe LinkTerm's ownership boundary and high-impact confirmation requirements.
+The runbook SHALL explicitly describe LinkTerm's ownership boundary, automatic execution, and evidence requirements.
 
 #### Scenario: Direct CLI fallback is prohibited
 - **WHEN** an AI reads the runbook
 - **THEN** the runbook states that AI clients MUST NOT bypass LinkTerm by directly invoking J-Link executables, GDB, ad-hoc serial CLI tools, or VS Code J-Link tasks
 
-#### Scenario: High-impact operations require confirmation
+#### Scenario: High-impact operations execute automatically
 - **WHEN** an AI reads the runbook
-- **THEN** the structured JSON identifies high-impact tools that require `confirm: true`
+- **THEN** the structured JSON identifies high-impact tools that execute after validation
 - **AND** the list includes `flash_download`, `flash_write`, `flash_erase`, `cpu_reset`, and `gdb_server_start`
-- **AND** the runbook describes that missing confirmation returns `CONFIRMATION_REQUIRED` without invoking the backend
+- **AND** the runbook describes Activity/Audit as observation surfaces
+- **AND** it does not present `confirm=true` or human approval as authorization
 
-#### Scenario: High-level workflow confirmation is described
+#### Scenario: High-level workflow execution is described
 - **WHEN** an AI reads the runbook
-- **THEN** the runbook identifies high-impact `run_control_workflow` modes that require confirmation
+- **THEN** the runbook identifies high-impact `run_control_workflow` modes that execute automatically after validation
 - **AND** the runbook directs clients to prefer supported high-level workflows over manually chaining low-level serial and J-Link tools
 
 #### Scenario: Profile-first flash recommendations preserve ELF firmware facts
@@ -153,17 +154,17 @@ When LinkTerm MCP detects that compiled runtime artifacts changed after the proc
 #### Scenario: Runtime restart tool can run while stale
 
 - **GIVEN** runtime diagnostics report `code.fresh=false`
-- **WHEN** `restart_mcp_runtime` is called with `confirm=true`
+- **WHEN** `restart_mcp_runtime` is called with valid input
 - **THEN** LinkTerm SHALL schedule a runtime restart
 - **AND** the tool SHALL return structured evidence before the process exits
 - **AND** the tool SHALL NOT touch probes, flash, reset, serial sessions, RTT, or GDB
 
-#### Scenario: Runtime restart requires confirmation
+#### Scenario: Runtime restart ignores legacy confirmation metadata
 
-- **GIVEN** `restart_mcp_runtime` is called without `confirm=true`
+- **GIVEN** `restart_mcp_runtime` is called with `confirm` omitted or false
 - **WHEN** LinkTerm handles the request
-- **THEN** LinkTerm SHALL return `CONFIRMATION_REQUIRED`
-- **AND** it SHALL NOT schedule a restart
+- **THEN** LinkTerm SHALL schedule a runtime restart after normal validation
+- **AND** it SHALL return structured evidence before the process exits
 
 ### Requirement: App status guides startup health checks
 LinkTerm SHALL document and expose `get_app_status` as the preferred lightweight startup health check before AI clients perform dependent terminal, profile, debug, flash, RTT, GDB, or UI workflows.
@@ -217,7 +218,7 @@ The LinkTerm MCP runbook SHALL guide AI clients to use background control workfl
 #### Scenario: Initialize instructions mention background mode briefly
 - **WHEN** an MCP client completes initialization against LinkTerm MCP
 - **THEN** the compact initialize instructions mention that long-running hardware workflows should use background job mode when available
-- **AND** the instructions continue to describe the high-impact confirmation rule and LinkTerm ownership boundary
+- **AND** the instructions continue to describe high-impact automatic execution and the LinkTerm ownership boundary
 
 ### Requirement: Runtime terminal command capability status
 

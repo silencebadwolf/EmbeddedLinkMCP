@@ -13,8 +13,8 @@ LinkTerm SHALL verify MCP/J-Link/debug boundary hardening with deterministic aut
 - **AND** tests use fake backends or fake process runners rather than real hardware
 
 #### Scenario: Integration tests run
-- **WHEN** implementation changes high-impact confirmation, startup status, or core tool registration
-- **THEN** integration tests verify confirm gates, no backend invocation without confirmation, and complete app status evidence
+- **WHEN** implementation changes high-impact execution policy, startup status, or core tool registration
+- **THEN** integration tests verify automatic execution after validation, legacy `confirm` compatibility, invalid-input blocking, and complete app status evidence
 
 #### Scenario: Final validation runs
 - **WHEN** all implementation tasks are complete

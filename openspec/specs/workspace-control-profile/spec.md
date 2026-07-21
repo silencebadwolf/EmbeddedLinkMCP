@@ -244,7 +244,7 @@ LinkTerm SHALL decode Intel HEX and ELF firmware before invoking raw binary flas
 
 - **GIVEN** a control profile references a valid Intel HEX firmware file
 - **AND** `flash.baseAddress` matches the lowest HEX data address
-- **WHEN** a confirmed flash workflow runs
+- **WHEN** a validated flash workflow runs
 - **THEN** LinkTerm decodes the Intel HEX data records into raw bytes
 - **AND** passes decoded bytes and the detected base address to the J-Link raw flash backend
 - **AND** does not pass ASCII HEX record text as the firmware image
@@ -253,7 +253,7 @@ LinkTerm SHALL decode Intel HEX and ELF firmware before invoking raw binary flas
 
 - **GIVEN** a control profile references a valid Intel HEX firmware file
 - **AND** `flash.baseAddress` differs from the lowest HEX data address
-- **WHEN** a confirmed flash workflow runs
+- **WHEN** a validated flash workflow runs
 - **THEN** LinkTerm rejects the workflow before connecting to the probe
 - **AND** reports that the configured base address does not match the HEX image address
 
@@ -261,7 +261,7 @@ LinkTerm SHALL decode Intel HEX and ELF firmware before invoking raw binary flas
 
 - **GIVEN** a control profile references a valid ELF firmware file
 - **AND** `flash.baseAddress` matches the lowest ELF load address
-- **WHEN** a confirmed flash workflow runs
+- **WHEN** a validated flash workflow runs
 - **THEN** LinkTerm decodes the ELF loadable program segments into raw bytes
 - **AND** passes decoded bytes and the detected load address to the J-Link raw flash backend
 - **AND** does not pass the ELF file header as the firmware image
@@ -270,7 +270,7 @@ LinkTerm SHALL decode Intel HEX and ELF firmware before invoking raw binary flas
 
 - **GIVEN** a control profile references a valid ELF firmware file
 - **AND** `flash.baseAddress` differs from the lowest ELF load address
-- **WHEN** a confirmed flash workflow runs
+- **WHEN** a validated flash workflow runs
 - **THEN** LinkTerm rejects the workflow before connecting to the probe
 - **AND** reports that the configured base address does not match the ELF image address
 
@@ -303,7 +303,7 @@ LinkTerm SHALL return structured `nextActions` for debug-session blockers discov
 - **AND** `nextActions` identifies the missing backend feature instead of causing repeated tool retries
 
 ### Requirement: Profile-backed J-Link parameter provenance
-LinkTerm SHALL derive J-Link target, interface, speed, flash binary, flash base address, verify behavior, RTT configuration, and serial terminal facts from the workspace control profile, the current MCP request, or explicit user-confirmed input.
+LinkTerm SHALL derive J-Link target, interface, speed, flash binary, flash base address, verify behavior, RTT configuration, and serial terminal facts from the workspace control profile, the current MCP request, or explicit user-provided input.
 
 #### Scenario: Profile provides J-Link facts
 - **WHEN** a control workflow or debug activation uses a workspace control profile with J-Link configuration
@@ -330,21 +330,22 @@ LinkTerm SHALL NOT use JLinkMCP reference-repository example values as runtime d
 
 #### Scenario: No interface or speed is configured
 - **WHEN** interface or speed is missing
-- **THEN** LinkTerm uses only LinkTerm-defined safe defaults or asks for confirmation according to the workflow policy
+- **THEN** LinkTerm uses only LinkTerm-defined safe defaults or returns a structured missing-configuration response
 - **AND** it does not silently apply reference-repository SWD or 4000 kHz values
 
-### Requirement: Profile-derived high-impact workflows preserve confirmation
-LinkTerm SHALL preserve high-impact confirmation even when all parameters come from a complete workspace control profile.
+### Requirement: Profile-derived high-impact workflows preserve validation and observation
+LinkTerm SHALL preserve schema, runtime, resource, admission, and evidence boundaries when all parameters come from a complete workspace control profile.
 
 #### Scenario: Complete profile is used for flash workflow
 - **WHEN** a profile contains target, interface, speed, firmware path, flash base address, and verify settings
-- **THEN** high-impact flash workflow modes still require confirmation
-- **AND** missing confirmation returns `CONFIRMATION_REQUIRED` before firmware loading, payload decoding, or backend execution
+- **THEN** high-impact flash workflow modes execute automatically after validation
+- **AND** legacy `confirm` metadata does not change authorization
+- **AND** Activity/Audit evidence records the operation
 
 #### Scenario: Complete profile is used for reset or GDB server start
 - **WHEN** a profile contains enough J-Link facts to reset the target or start a GDB server
-- **THEN** `cpu_reset` and `gdb_server_start` still require confirmation
-- **AND** missing confirmation prevents backend invocation
+- **THEN** `cpu_reset` and `gdb_server_start` execute automatically after validation
+- **AND** legacy `confirm` metadata does not change backend invocation
 
 ### Requirement: Saved control profile record deletion
 

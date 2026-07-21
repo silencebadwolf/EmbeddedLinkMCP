@@ -69,7 +69,7 @@ LinkTerm SHALL treat the JLinkMCP reference repository as design-only input unle
 #### Scenario: Implementation references JLinkMCP
 - **WHEN** an implementation task uses observations from JLinkMCP
 - **THEN** the resulting code MUST NOT copy source text, function bodies, file structure, temporary script content, or raw output handling from JLinkMCP
-- **AND** the implementation MUST preserve LinkTerm's backend boundary, structured evidence, and confirmation gates
+- **AND** the implementation MUST preserve LinkTerm's backend boundary, structured evidence, validation, and automatic-execution policy
 
 #### Scenario: Runtime dependency review runs
 - **WHEN** license validation is executed

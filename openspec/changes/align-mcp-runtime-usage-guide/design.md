@@ -7,11 +7,10 @@ LinkTerm has three runtime guidance surfaces and one configuration surface that 
 3. `tools/list` exposes per-tool descriptions used directly by MCP hosts for tool selection.
 4. Agent integration installation writes connection/launch/auth configuration; it is not a prompt store.
 
-Recent runtime changes are implemented and tested, but guidance drift remains. The detailed serial
-workflow was updated for reuse while compact initialize instructions and `open_session` still say or
-imply “create new.” Current code has automatic execution while several older main specs still describe
-confirmation gates. The active `observe-only-ai-execution` change and runtime tests establish the
-accepted override; this change aligns guidance without altering execution policy.
+Recent runtime changes are implemented and tested. The detailed serial workflow and packaged
+guidance now describe reuse, and the main specs have been synchronized with the accepted
+`observe-only-ai-execution` automatic-execution policy. This change aligns guidance without altering
+execution policy.
 
 ### Current execution facts
 
@@ -36,17 +35,14 @@ accepted override; this change aligns guidance without altering execution policy
 | Hardware truth comes from `IJLinkBackend` and structured evidence | debug/workflow surfaces and `enforce-jlink-hardware-truth` | Host acceptance/progress text alone is not hardware success |
 | Activity/Audit are observation surfaces | observe-only design and Activity renderer tests | No approve/deny/pause/take-over actions in guidance |
 
-### Specification conflict record
+### Specification synchronization record
 
-- `openspec/specs/mcp-agent-runbook/spec.md`, `debug-tool-description-safety/spec.md`,
-  `debug-confirmation-gates/spec.md`, `mcp-debug-boundary-hardening/spec.md`, and portions of
-  `control-workflow-background-jobs/spec.md`/`workspace-control-profile/spec.md` still contain older
-  confirmation language.
 - Current runtime code, tests, the accepted product decision, and
   `openspec/changes/observe-only-ai-execution/` establish automatic execution after validation.
-- This change modifies guidance-facing capabilities. It does not reimplement the broader policy or
-  silently archive unrelated active changes; the maintainer guide records the remaining active-delta
-  dependency.
+- Main specs, README, the development-plan current-policy note, and active control-workflow tests now
+  describe the same behavior; legacy `confirm` fields remain ignored compatibility metadata.
+- Historical archived changes and dated phase evidence retain their original wording as history and
+  are not authoritative for current runtime policy.
 
 ## Goals / Non-Goals
 
@@ -119,8 +115,8 @@ approval, or blind retry guidance.
   authoritative; prompt compliance is never a correctness requirement.
 - [Read-only discovery is mistaken for zero hardware interaction] → State exactly that enumeration may
   occur but no connect/mutation is performed.
-- [Existing unarchived specs remain confusing] → Link this change to the observe-only active delta and
-  list the conflict in the maintainer guide; do not silently rewrite unrelated product history.
+- [Historical artifacts can be mistaken for current policy] → Keep current main specs and README
+  explicit, label the development-plan override, and treat dated/archived artifacts as history.
 
 ## Migration Plan
 

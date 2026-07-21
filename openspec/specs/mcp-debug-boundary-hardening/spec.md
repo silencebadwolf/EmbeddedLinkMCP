@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the MCP debug surface boundary, including backend-only hardware access, structured errors, confirmation gates, and schema policy.
+Define the MCP debug surface boundary, including backend-only hardware access, structured errors, automatic execution, and schema policy.
 ## Requirements
 ### Requirement: Debug MCP surfaces call only the J-Link backend abstraction
 LinkTerm debug MCP tools SHALL route all probe, CPU, register, memory, breakpoint, flash, RTT, GDB, snapshot, and crash-diagnosis operations through `IJLinkBackend`.
@@ -35,25 +35,23 @@ LinkTerm debug MCP tools SHALL return structured LinkTerm tool results with stab
 - **AND** the result includes a stable error code from LinkTerm's error taxonomy
 - **AND** error details are sanitized before crossing the MCP boundary
 
-### Requirement: High-impact debug operations require confirmation before side effects
-LinkTerm SHALL require explicit confirmation for high-impact debug and flash operations before payload decoding or backend side effects.
+### Requirement: High-impact debug operations execute after validation
+LinkTerm SHALL execute high-impact debug and flash operations after schema, runtime, resource, and admission checks pass.
 
-#### Scenario: Flash download is not confirmed
-- **WHEN** `flash_download` is called without `confirm=true`
-- **THEN** LinkTerm returns `CONFIRMATION_REQUIRED`
-- **AND** it does not decode the binary payload
+#### Scenario: Flash download omits confirmation
+- **WHEN** `flash_download` is called with valid input and no `confirm` field
+- **THEN** LinkTerm decodes the bounded binary payload and calls the backend
+- **AND** Activity/Audit evidence records the operation
+
+#### Scenario: Invalid flash write remains blocked
+- **WHEN** `flash_write` is called with malformed or oversized base64 data
+- **THEN** LinkTerm returns the normal validation error
 - **AND** it does not call the backend
 
-#### Scenario: Flash write is not confirmed
-- **WHEN** `flash_write` is called without `confirm=true`
-- **THEN** LinkTerm returns `CONFIRMATION_REQUIRED`
-- **AND** it does not decode the base64 payload
-- **AND** it does not call the backend
-
-#### Scenario: Reset or GDB server start is not confirmed
-- **WHEN** `cpu_reset` or `gdb_server_start` is called without `confirm=true`
-- **THEN** LinkTerm returns `CONFIRMATION_REQUIRED`
-- **AND** the backend method is not invoked
+#### Scenario: Reset or GDB server start ignores legacy confirmation metadata
+- **WHEN** `cpu_reset` or `gdb_server_start` is called with valid input and `confirm` omitted or false
+- **THEN** the corresponding backend method is invoked after normal admission
+- **AND** the value does not grant or deny authorization
 
 ### Requirement: Debug schema mismatch follows sensitivity policy
 LinkTerm SHALL apply schema-version mismatch policy according to debug tool sensitivity.

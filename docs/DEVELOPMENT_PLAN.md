@@ -4,6 +4,8 @@
 
 LinkTerm v2 需要用 Electron/TypeScript 重写，替代旧 Qt/C++ 实现，形成单一运行时的桌面终端 + MCP 自动化平台。本计划起草时项目为完全绿地状态，仅有需求文档；当前状态以阶段记录、工程卫生追记和 README 为准。本计划将需求拆分为 13 个可交付、可测试的阶段，按依赖顺序推进。
 
+> 当前授权策略（2026-07-15 起）：AI 与人工操作在正常 schema、运行时、资源和准入检查通过后自动执行；Activity、transcript 与 durable audit 负责观测。历史 Phase 记录中的 `confirm=true` / `CONFIRMATION_REQUIRED` 门禁已经被 `observe-only-ai-execution` 决策取代，旧 `confirm` 字段仅作为兼容元数据被接受并忽略。
+
 ---
 
 ## 阶段进度总览

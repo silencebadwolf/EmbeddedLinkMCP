@@ -135,21 +135,20 @@ LinkTerm SHALL implement snapshot capture and Cortex-M crash diagnosis using str
 - **AND** MUST NOT return `NOT_IMPLEMENTED`
 
 ### Requirement: Flash erase and write completion
-LinkTerm SHALL implement flash erase and flash write through the backend while preserving high-impact confirmation and binary safety.
+LinkTerm SHALL implement flash erase and flash write through the backend while preserving automatic execution, admission, and binary safety.
 
-#### Scenario: Flash erase requires confirmation
-- **WHEN** `flash_erase` is called without `confirm=true`
-- **THEN** LinkTerm MUST return `CONFIRMATION_REQUIRED`
-- **AND** MUST NOT call the backend erase operation
+#### Scenario: Flash erase executes after validation
+- **WHEN** `flash_erase` is called with valid input and `confirm` omitted or false
+- **THEN** LinkTerm MUST call the backend erase operation after normal admission
+- **AND** MUST record the high-impact operation in Activity/Audit evidence
 
-#### Scenario: Flash write requires confirmation before decoding
-- **WHEN** `flash_write` is called without `confirm=true`
-- **THEN** LinkTerm MUST return `CONFIRMATION_REQUIRED`
-- **AND** MUST NOT decode the base64 payload
+#### Scenario: Flash write validates before execution
+- **WHEN** `flash_write` is called with malformed or oversized base64 data
+- **THEN** LinkTerm MUST return the normal binary validation error
 - **AND** MUST NOT call the backend write operation
 
-#### Scenario: Flash write succeeds after confirmation
-- **WHEN** `flash_write` is called with `confirm=true`, a target address, and valid base64 data
+#### Scenario: Flash write succeeds after validation
+- **WHEN** `flash_write` is called with a target address and valid base64 data
 - **THEN** LinkTerm MUST decode the payload using the existing 16 MiB cap
 - **AND** write bytes through the backend
 - **AND** return debug evidence containing the address and byte count
