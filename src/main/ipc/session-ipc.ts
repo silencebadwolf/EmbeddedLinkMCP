@@ -15,6 +15,8 @@ import type {
   PreloadFail,
 } from '../../shared/preload-api.js';
 import { ERROR_CODES } from '../../shared/error-codes.js';
+import { decodeDataPayload } from '../../mcp/surfaces/terminal/schemas.js';
+import { MAX_BASE64_INPUT_LEN, MAX_BINARY_BYTES } from '../../mcp/limits.js';
 
 const { BrowserWindow, ipcMain } = electron;
 
@@ -125,10 +127,20 @@ export function registerSessionIpc(sessionManager: SessionManager): () => void {
   };
   sessionManager.on('session:destroyed', onSessionDestroyed);
 
-  /** 把字符串 base64 解为 Uint8Array。容错空串、非法字符都抛 INVALID_PAYLOAD。 */
+  /** 严格解码 base64；空串是合法 0 字节写入，非法字符和超大载荷会在分配前拒绝。 */
   const decodeBase64 = (s: string): Uint8Array => {
+    if (typeof s !== 'string') {
+      throw new IpcError(ERROR_CODES.INVALID_PAYLOAD, 'Base64 payload must be a string');
+    }
+    const stripped = s.replace(/[\r\n\t ]/g, '');
+    if (stripped.length > MAX_BASE64_INPUT_LEN) {
+      throw new IpcError(
+        ERROR_CODES.BUFFER_TOO_LARGE,
+        `Decoded payload exceeds ${MAX_BINARY_BYTES} bytes`,
+      );
+    }
     try {
-      return new Uint8Array(Buffer.from(s, 'base64'));
+      return decodeDataPayload({ encoding: 'base64', data: stripped });
     } catch (err) {
       throw new IpcError(ERROR_CODES.INVALID_PAYLOAD, err instanceof Error ? err.message : String(err));
     }

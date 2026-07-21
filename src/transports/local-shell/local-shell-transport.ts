@@ -56,6 +56,7 @@ function resolveDefaultShell(): string {
 export class LocalShellTransport extends EventEmitter implements ITransport {
   readonly #spawnOptions: PtySpawnOptions;
   readonly #ptyFactory: PtyFactory;
+  readonly #inputDecoder = new TextDecoder('utf-8');
   #pty: PtyLike | null = null;
   #disposables: IDisposable[] = [];
   #closed = false;
@@ -137,8 +138,8 @@ export class LocalShellTransport extends EventEmitter implements ITransport {
     if (!this.isOpen() || !this.#pty) {
       throw new Error('LocalShellTransport is not open');
     }
-    const text = new TextDecoder('utf-8').decode(data);
-    this.#pty.write(text);
+    const text = this.#inputDecoder.decode(data, { stream: true });
+    if (text !== '') this.#pty.write(text);
   }
 
   /**

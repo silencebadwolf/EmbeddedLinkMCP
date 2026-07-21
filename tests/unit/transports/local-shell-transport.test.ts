@@ -95,6 +95,18 @@ describe('LocalShellTransport', () => {
     expect(created[0]!.writes).toEqual(['echo hi\n']);
   });
 
+  it('preserves a utf8 character split across consecutive writes', async () => {
+    const { factory, created } = createMockPtyFactory();
+    const transport = new LocalShellTransport({ config: baseConfig, ptyFactory: factory });
+    await transport.open();
+    const bytes = utf8('你');
+
+    await transport.write(bytes.subarray(0, 1));
+    await transport.write(bytes.subarray(1));
+
+    expect(created[0]!.writes.join('')).toBe('你');
+  });
+
   it('write() throws when transport is not open', async () => {
     const { factory } = createMockPtyFactory();
     const transport = new LocalShellTransport({ config: baseConfig, ptyFactory: factory });
