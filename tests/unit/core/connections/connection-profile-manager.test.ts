@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   ConnectionProfileManager,
+  ConnectionProfileConflictError,
   CredentialStorageUnavailableError,
   CONNECTIONS_SCHEMA_VERSION,
   type SecretCodec,
@@ -198,5 +199,90 @@ describe('ConnectionProfileManager', () => {
         saveCredentials: true,
       }),
     ).rejects.toBeInstanceOf(CredentialStorageUnavailableError);
+  });
+
+  it('updates a saved serial profile in place and preserves identity timestamps', async () => {
+    const manager = new ConnectionProfileManager({ filePath, secretCodec: new ReversibleCodec() });
+    const saved = await manager.save({
+      label: 'Old port',
+      config: {
+        type: 'serial',
+        port: 'COM10',
+        baudRate: 115_200,
+        mode: 'terminal',
+        hardwareIdentity: `sha256:${'a'.repeat(64)}`,
+        parentIdentity: `sha256:${'b'.repeat(64)}`,
+      },
+    });
+
+    const updated = await manager.update({
+      profileId: saved.id,
+      expectedUpdatedAt: saved.updatedAt,
+      label: 'New J-Link port',
+      config: { type: 'serial', port: 'COM12', baudRate: 115_200, mode: 'terminal' },
+    });
+
+    expect(updated).toMatchObject({
+      id: saved.id,
+      label: 'New J-Link port',
+      config: { type: 'serial', port: 'COM12' },
+      createdAt: saved.createdAt,
+    });
+    expect(updated.config).toMatchObject({
+      hardwareIdentity: `sha256:${'a'.repeat(64)}`,
+      parentIdentity: `sha256:${'b'.repeat(64)}`,
+    });
+    expect(updated.updatedAt).not.toBe(saved.updatedAt);
+    await expect(manager.list()).resolves.toEqual([updated]);
+  });
+
+  it('rejects stale updates instead of overwriting a newer profile', async () => {
+    const manager = new ConnectionProfileManager({ filePath, secretCodec: new ReversibleCodec() });
+    const saved = await manager.save({
+      label: 'Console',
+      config: { type: 'serial', port: 'COM10', baudRate: 115_200, mode: 'terminal' },
+    });
+    await manager.update({
+      profileId: saved.id,
+      expectedUpdatedAt: saved.updatedAt,
+      label: 'First update',
+      config: { type: 'serial', port: 'COM11', baudRate: 115_200, mode: 'terminal' },
+    });
+
+    await expect(
+      manager.update({
+        profileId: saved.id,
+        expectedUpdatedAt: saved.updatedAt,
+        label: 'Stale update',
+        config: { type: 'serial', port: 'COM12', baudRate: 115_200, mode: 'terminal' },
+      }),
+    ).rejects.toBeInstanceOf(ConnectionProfileConflictError);
+  });
+
+  it('preserves encrypted ssh credentials unless replacement is explicit', async () => {
+    const manager = new ConnectionProfileManager({ filePath, secretCodec: new ReversibleCodec() });
+    const saved = await manager.save({
+      label: 'SSH',
+      config: {
+        type: 'ssh',
+        host: '192.0.2.10',
+        port: 22,
+        username: 'root',
+        credentials: { kind: 'password', password: 'old-secret' },
+      },
+      saveCredentials: true,
+    });
+
+    const updated = await manager.update({
+      profileId: saved.id,
+      expectedUpdatedAt: saved.updatedAt,
+      label: 'SSH moved',
+      config: { type: 'ssh', host: '192.0.2.11', port: 22, username: 'root' },
+    });
+
+    await expect(manager.openConfig(updated.id)).resolves.toMatchObject({
+      host: '192.0.2.11',
+      credentials: { kind: 'password', password: 'old-secret' },
+    });
   });
 });

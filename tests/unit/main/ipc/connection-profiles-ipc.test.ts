@@ -61,9 +61,8 @@ let registerConnectionProfilesIpc: typeof RegisterConnectionProfilesIpc;
 
 describe('registerConnectionProfilesIpc', () => {
   beforeEach(async () => {
-    ({ registerConnectionProfilesIpc } = await import(
-      '../../../../src/main/ipc/connection-profiles-ipc.js'
-    ));
+    ({ registerConnectionProfilesIpc } =
+      await import('../../../../src/main/ipc/connection-profiles-ipc.js'));
     handlers.clear();
     ipcMainMock.handle.mockClear();
     ipcMainMock.removeHandler.mockClear();
@@ -84,12 +83,7 @@ describe('registerConnectionProfilesIpc', () => {
         rtt: { enabled: true, channels: [0], controlBlockAddress: '0x24005310' },
       });
       const backend = new FakeJLinkBackend();
-      registerConnectionProfilesIpc(
-        sessionManager,
-        profileManager,
-        backend,
-        controlProfileManager,
-      );
+      registerConnectionProfilesIpc(sessionManager, profileManager, backend, controlProfileManager);
       const saveAndOpen = handlers.get(IPC_CHANNELS.CONNECTIONS_SAVE_AND_OPEN)!;
 
       const result = await saveAndOpen(undefined, {
@@ -152,12 +146,7 @@ describe('registerConnectionProfilesIpc', () => {
         config: { type: 'rtt-log', root, channelIndex: 0 },
       });
       const backend = new FakeJLinkBackend();
-      registerConnectionProfilesIpc(
-        sessionManager,
-        profileManager,
-        backend,
-        controlProfileManager,
-      );
+      registerConnectionProfilesIpc(sessionManager, profileManager, backend, controlProfileManager);
       const open = handlers.get(IPC_CHANNELS.CONNECTIONS_OPEN)!;
 
       const result = await open(undefined, { profileId: saved.id });
@@ -195,14 +184,11 @@ describe('registerConnectionProfilesIpc', () => {
       };
       const saved = await profileManager.save({ label: 'Saved COM7', config: serialConfig });
       const aiOpened = await coordinator.openOrReuse(serialConfig, async () => {
-        const session = await sessionManager.createAndOpen(
-          (id) => new TestSerialSession(id),
-          {
-            connectionType: 'serial',
-            createdBy: 'ai',
-            serial: { port: 'COM7', baudRate: 115_200, mode: 'terminal' },
-          },
-        );
+        const session = await sessionManager.createAndOpen((id) => new TestSerialSession(id), {
+          connectionType: 'serial',
+          createdBy: 'ai',
+          serial: { port: 'COM7', baudRate: 115_200, mode: 'terminal' },
+        });
         return { sessionId: session.id, state: session.state };
       });
       registerConnectionProfilesIpc(
@@ -223,6 +209,56 @@ describe('registerConnectionProfilesIpc', () => {
         data: { sessionId: aiOpened.sessionId, state: 'open' },
       });
       expect(sessionManager.listSummaries()).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('updates a saved serial profile through IPC without changing its id', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lt-serial-saved-update-ipc-'));
+    try {
+      const profileManager = new ConnectionProfileManager({
+        filePath: path.join(root, 'connections.json'),
+        secretCodec: new ReversibleCodec(),
+      });
+      const saved = await profileManager.save({
+        label: 'Old J-Link',
+        config: { type: 'serial', port: 'COM10', baudRate: 115_200, mode: 'terminal' },
+      });
+      registerConnectionProfilesIpc(
+        new SessionManager(),
+        profileManager,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        async () => ({
+          hardwareIdentity: `sha256:${'a'.repeat(64)}`,
+          parentIdentity: `sha256:${'b'.repeat(64)}`,
+        }),
+      );
+      const update = handlers.get(IPC_CHANNELS.CONNECTIONS_UPDATE)!;
+
+      const result = await update(undefined, {
+        profileId: saved.id,
+        expectedUpdatedAt: saved.updatedAt,
+        label: 'New J-Link',
+        config: { type: 'serial', port: 'COM12', baudRate: 115_200, mode: 'terminal' },
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        data: {
+          id: saved.id,
+          label: 'New J-Link',
+          config: {
+            port: 'COM12',
+            hardwareIdentity: `sha256:${'a'.repeat(64)}`,
+            parentIdentity: `sha256:${'b'.repeat(64)}`,
+          },
+        },
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

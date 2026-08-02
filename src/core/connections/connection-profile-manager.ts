@@ -10,6 +10,7 @@ import {
   type SavedConnectionProfile,
   type SavedConnectionSummary,
   type SecretCodec,
+  type UpdateConnectionProfileInput,
 } from './types.js';
 import { connectionsFileSchema } from './schemas.js';
 import { defaultFsPrimitives, type FsPrimitives } from '../workspace/fs-primitives.js';
@@ -55,6 +56,30 @@ export class ConnectionProfileNotFoundError extends Error {
   constructor(readonly profileId: string) {
     super(`Connection profile not found: ${profileId}`);
     this.name = 'ConnectionProfileNotFoundError';
+  }
+}
+
+/** profile 已被其它窗口或流程修改，拒绝覆盖较新的版本。 */
+export class ConnectionProfileConflictError extends Error {
+  readonly code = 'CONNECTION_PROFILE_CONFLICT';
+
+  constructor(
+    readonly profileId: string,
+    readonly expectedUpdatedAt: string,
+    readonly actualUpdatedAt: string,
+  ) {
+    super(`Connection profile was modified after it was loaded: ${profileId}`);
+    this.name = 'ConnectionProfileConflictError';
+  }
+}
+
+/** 首版原位更新不允许改变连接类型。 */
+export class ConnectionProfileTypeChangeError extends Error {
+  readonly code = 'CONNECTION_PROFILE_TYPE_CHANGE_NOT_ALLOWED';
+
+  constructor(readonly profileId: string) {
+    super(`Connection profile type cannot be changed in place: ${profileId}`);
+    this.name = 'ConnectionProfileTypeChangeError';
   }
 }
 
@@ -144,6 +169,42 @@ export class ConnectionProfileManager {
     }
   }
 
+  /** 原位更新一个 profile，保留 id/createdAt，并用 updatedAt 做乐观并发控制。 */
+  async update(input: UpdateConnectionProfileInput): Promise<SavedConnectionSummary> {
+    return this.#serialize(async () => {
+      const file = await this.#readFileOrDefault();
+      const index = file.profiles.findIndex((profile) => profile.id === input.profileId);
+      if (index < 0) throw new ConnectionProfileNotFoundError(input.profileId);
+
+      const current = file.profiles[index]!;
+      if (current.updatedAt !== input.expectedUpdatedAt) {
+        throw new ConnectionProfileConflictError(
+          input.profileId,
+          input.expectedUpdatedAt,
+          current.updatedAt,
+        );
+      }
+      if (current.type !== input.config.type) {
+        throw new ConnectionProfileTypeChangeError(input.profileId);
+      }
+
+      const encryptedCredential = this.#credentialForUpdate(current, input);
+      const updated: SavedConnectionProfile = {
+        id: current.id,
+        label: normalizeLabel(input.label),
+        type: current.type,
+        config: preserveSerialIdentity(current.config, toSavedConfig(input.config)),
+        ...(encryptedCredential !== undefined ? { encryptedCredential } : {}),
+        createdAt: current.createdAt,
+        updatedAt: nextTimestamp(current.updatedAt),
+      };
+      const profiles = [...file.profiles];
+      profiles[index] = updated;
+      await this.#writeFile({ schemaVersion: CONNECTIONS_SCHEMA_VERSION, profiles });
+      return toSummary(updated);
+    });
+  }
+
   #encryptCredentialIfRequested(
     input: SaveConnectionProfileInput,
   ): EncryptedCredentialBlob | undefined {
@@ -163,6 +224,24 @@ export class ConnectionProfileManager {
     } catch {
       throw new CredentialDecryptFailedError();
     }
+  }
+
+  #credentialForUpdate(
+    current: SavedConnectionProfile,
+    input: UpdateConnectionProfileInput,
+  ): EncryptedCredentialBlob | undefined {
+    const action = input.credentialAction ?? 'preserve';
+    if (action === 'preserve') return current.encryptedCredential;
+    if (action === 'clear') return undefined;
+    if (input.config.type !== 'ssh' || input.config.credentials === undefined) {
+      throw new Error('Replacing credentials requires SSH credentials');
+    }
+    if (!this.#secretCodec.isAvailable()) throw new CredentialStorageUnavailableError();
+    return {
+      provider: 'electron-safeStorage',
+      version: 1,
+      ciphertextBase64: this.#secretCodec.encryptUtf8(JSON.stringify(input.config.credentials)),
+    };
   }
 
   async #readFileOrDefault(): Promise<ConnectionsFile> {
@@ -213,6 +292,32 @@ function toSummary(profile: SavedConnectionProfile): SavedConnectionSummary {
 function normalizeLabel(label: string): string {
   const trimmed = label.trim();
   return trimmed.length > 0 ? trimmed.slice(0, 128) : 'Saved connection';
+}
+
+function nextTimestamp(previous: string): string {
+  const now = Date.now();
+  const previousMs = Date.parse(previous);
+  return new Date(Number.isFinite(previousMs) ? Math.max(now, previousMs + 1) : now).toISOString();
+}
+
+function preserveSerialIdentity(
+  current: SavedConnectionProfile['config'],
+  next: SavedConnectionProfile['config'],
+): SavedConnectionProfile['config'] {
+  if (current.type !== 'serial' || next.type !== 'serial') return next;
+  return {
+    ...next,
+    ...(next.hardwareIdentity !== undefined
+      ? { hardwareIdentity: next.hardwareIdentity }
+      : current.hardwareIdentity !== undefined
+        ? { hardwareIdentity: current.hardwareIdentity }
+        : {}),
+    ...(next.parentIdentity !== undefined
+      ? { parentIdentity: next.parentIdentity }
+      : current.parentIdentity !== undefined
+        ? { parentIdentity: current.parentIdentity }
+        : {}),
+  };
 }
 
 function parseSshCredentials(value: unknown): SshCredentialsPayload {

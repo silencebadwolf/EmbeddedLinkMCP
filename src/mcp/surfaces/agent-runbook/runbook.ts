@@ -96,6 +96,12 @@ const DEFAULT_PROFILE_SUMMARY: RunbookProfileSummary = {
   sections: { serial: false, jlink: false, flash: false, rtt: false },
 };
 
+const SAVED_CONFIGURATION_GUIDANCE =
+  'Saved configuration maintenance: use update_workspace_config for <root>/.linkterm/config.json. To replace <root>/.linkterm/control-profile.json, read the current profile first and call init_control_profile with force=true and the reviewed complete profile. App-saved connection entries must be edited in place from the desktop Connections UI; ui_configure can open or prefill the dialog but does not update an existing saved record. A successful edit preserves the record identity and does not migrate or close an already active Session. If an optimistic-update conflict is reported, refresh the record and review the newer values before retrying; do not create a duplicate merely because the serial port changed.';
+
+const JLINK_VCOM_RECOVERY_GUIDANCE =
+  'J-Link VCOM recovery is an explicit desktop control-profile repair action and is not currently exposed as an MCP tool. Do not try to enable VCOM through jlink_commander_script or an external Commander process. Use the UI action Recover J-Link serial only for an SWD profile when the saved port is missing and one probe/candidate can be identified unambiguously. LinkTerm queries VCOM first and enables it only when Commander explicitly reports disabled; if VCOM is already enabled but no SEGGER CDC port appears, power-cycle or replug the probe, then call get_app_status again. Active GDB/RTT use, multiple probes, unknown VCOM state, or multiple CDC candidates requires stopping for user resolution; never guess a port.';
+
 export const RUNBOOK_WORKFLOWS: readonly RunbookWorkflow[] = [
   {
     id: 'observe_serial',
@@ -233,6 +239,8 @@ const SAFETY_RULES = [
   'For RTT sessions, a successful write_to_session/send_and_wait bytesWritten result only proves LinkTerm accepted bytes into the shared write path; it does not prove target firmware consumed RTT down-channel input. Use device-origin transcript bytes or diagnose_rtt_log_session target_input_unanswered evidence before claiming interactive board success.',
   'If a continuous RTT log session is silent or only shows a SEGGER banner, call diagnose_rtt_log_session and treat it as a firmware-output/channel/control-block diagnosis; when the firmware exposes a known _SEGGER_RTT address, save it as profile.rtt.controlBlockAddress and reopen the root/profile RTT log path instead of repeating flash.',
   'Prefer the current workspace control profile: inspect or read <root>/.linkterm/control-profile.json first, and omit firmware.filePath when profile.flash.binary already names the firmware.',
+  SAVED_CONFIGURATION_GUIDANCE,
+  JLINK_VCOM_RECOVERY_GUIDANCE,
   'When only the chip/J-Link target should be connected, use connect_control_profile_chip and disconnect_control_profile_chip; keep serial/RTT session lifecycle separate.',
   FIRMWARE_IMAGE_USAGE_GUIDANCE,
   'High-impact J-Link and workflow operations execute immediately after validation; observe progress and results in Activity Center, transcript, and audit records.',
@@ -270,6 +278,8 @@ export function createAgentRunbookInstructions(schemaVersion: string): string {
     'For RTT terminal sessions, bytesWritten from write_to_session/send_and_wait is host-side acceptance only; require later device-origin output or diagnose_rtt_log_session evidence that is not target_input_unanswered before claiming the board consumed the input.',
     'For continuous RTT log observation, call open_rtt_log_session with root/profile and then read_from_session; this high-level path owns managed GDB server startup and RTT connect internally. If the session is silent or only shows a SEGGER banner, call diagnose_rtt_log_session before considering flash/reset/debug recovery; when _SEGGER_RTT is known, persist it as profile.rtt.controlBlockAddress so LinkTerm configures SEGGER RTT Telnet with that control block. Use probeId only to reuse an already prepared RTT backend; use rtt_read/rtt_search/rtt_clear only for bounded one-shot debug evidence.',
     'Prefer the current workspace control profile: inspect or read <root>/.linkterm/control-profile.json first, and omit firmware.filePath when profile.flash.binary already names the firmware.',
+    SAVED_CONFIGURATION_GUIDANCE,
+    JLINK_VCOM_RECOVERY_GUIDANCE,
     'Use connect_control_profile_chip/disconnect_control_profile_chip when you need only the chip connection; use activate_control_profile only when opening the configured observation session too is intended.',
     FIRMWARE_IMAGE_USAGE_GUIDANCE,
     'Prefer run_control_workflow for supported hardware workflows before manually chaining low-level serial and J-Link tools.',
@@ -447,6 +457,11 @@ function renderRunbookMarkdown(payload: Omit<AgentRunbook, 'markdown'>): string 
     '- control workflow: prefer run_control_workflow for flash/observe/debug modes instead of manually chaining low-level serial and J-Link tools. When profile.flash.binary already names the firmware, omit firmware.filePath unless intentionally overriding it. For long operations, request background job mode and recover evidence with get_control_workflow_job_status and read_control_workflow_job; use cancel_control_workflow_job only when cancellation is needed.',
     '- J-Link debug/flash/RTT/GDB: use LinkTerm MCP debug tools only; do not launch external SEGGER or GDB commands. For silent RTT logs, use diagnose_rtt_log_session to distinguish SEGGER banner transport evidence from firmware log output before considering flash or reset.',
     '- UI: use ui_configure and ui_screenshot for whitelisted non-sensitive UI assistance.',
+    '',
+    '## Saved configuration and J-Link VCOM recovery',
+    '',
+    `- ${SAVED_CONFIGURATION_GUIDANCE}`,
+    `- ${JLINK_VCOM_RECOVERY_GUIDANCE}`,
     '',
     '## Reference design use',
     '',

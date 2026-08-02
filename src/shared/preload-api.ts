@@ -21,6 +21,7 @@ import type {
   SerialDataBits,
   SerialStopBits,
   SerialParity,
+  StableSerialIdentity,
 } from './types.js';
 import type { TranscriptEventEnvelope, SerializedTranscriptEvent } from './transcript-ipc-types.js';
 import type {
@@ -187,7 +188,29 @@ export type RttLogSavedConnectionConfig = RttLogConnectionConfig & {
 };
 
 /** 保存连接 profile 的入参配置；RTT 不属于 generic session:create，但允许保存。 */
-export type SaveConnectionProfileConfig = SessionCreateRequestConfig | RttLogSavedConnectionConfig;
+export type SaveConnectionProfileConfig =
+  | (SerialSessionConfig & StableSerialIdentity)
+  | LocalShellSessionConfig
+  | SshSessionConfigWithCredentials
+  | RttLogSavedConnectionConfig;
+
+/** 编辑保存连接时的配置；SSH 凭据可省略，以便主进程保留原有密文。 */
+export type UpdateConnectionProfileConfig =
+  | (SerialSessionConfig & StableSerialIdentity)
+  | LocalShellSessionConfig
+  | (SshSessionConfig & { credentials?: SshCredentialsPayload })
+  | RttLogSavedConnectionConfig;
+
+export type ConnectionCredentialAction = 'preserve' | 'replace' | 'clear';
+
+/** 原位更新保存连接的入参；expectedUpdatedAt 用于阻止覆盖并发修改。 */
+export interface UpdateConnectionProfileRequest {
+  profileId: ConnectionProfileId;
+  expectedUpdatedAt: string;
+  label: string;
+  config: UpdateConnectionProfileConfig;
+  credentialAction?: ConnectionCredentialAction;
+}
 
 /** 保存连接打开后的统一结果；RTT 分支携带解析后的 runtime probe/channel 元信息。 */
 export interface SavedConnectionOpenSuccess {
@@ -298,6 +321,9 @@ export interface NonSensitivePrefill {
   rttRoot?: string;
   rttProbeId?: string;
   rttChannel?: string;
+  /** 仅由本地 UI 修复入口设置；不是凭据或硬件秘密。 */
+  connectionProfileId?: ConnectionProfileId;
+  connectionProfileUpdatedAt?: string;
 }
 
 /**
@@ -411,7 +437,7 @@ export interface SavedConnectionSummary {
   label: string;
   type: ConnectionType;
   config:
-    | Omit<SerialSessionConfig, 'label'>
+    | (Omit<SerialSessionConfig, 'label'> & StableSerialIdentity)
     | Omit<SshSessionConfig, 'label'>
     | Omit<LocalShellSessionConfig, 'label' | 'env'>
     | RttLogSavedConnectionConfig;
@@ -430,6 +456,12 @@ export interface ConnectionsNamespace {
     label: string;
     saveCredentials?: boolean;
   }): Promise<PreloadResult<SavedConnectionOpenSuccess>>;
+  /** 原位更新 profile，不影响当前活动会话。 */
+  update(req: UpdateConnectionProfileRequest): Promise<PreloadResult<SavedConnectionSummary>>;
+  /** 原位更新 profile 后，用新配置打开一个会话。 */
+  updateAndOpen(
+    req: UpdateConnectionProfileRequest,
+  ): Promise<PreloadResult<SavedConnectionOpenSuccess>>;
   /** 快捷打开已保存连接；SSH 凭据在主进程解密，不返回 renderer。 */
   open(req: { profileId: ConnectionProfileId }): Promise<PreloadResult<SavedConnectionOpenSuccess>>;
   /** 删除已保存连接。 */
@@ -503,6 +535,8 @@ export interface ControlProfilePayload {
     port?: string;
     baudRate?: number;
     mode?: 'normal' | 'terminal';
+    hardwareIdentity?: string;
+    parentIdentity?: string;
   };
   jlink?: {
     enabled: boolean;
@@ -616,10 +650,24 @@ export interface ControlProfileChipProbePayload {
   connected: boolean;
 }
 
+export interface JLinkVcomRecoveryPayload {
+  status: 'already-available' | 'replacement-opened' | 'recovered' | 'power-cycle-required';
+  record: SavedControlProfileRecordPayload;
+  port?: string;
+  sessionId?: string;
+  sessionState?: SessionState;
+  firmwareUpdateObserved: boolean;
+}
+
 /** 工作区控制配置命名空间。 */
 export interface ControlProfileNamespace {
   /** 保存/覆盖 `<root>/.linkterm/control-profile.json`。 */
-  save(req: { root: string; profile: ControlProfilePayload }): Promise<
+  save(req: {
+    root: string;
+    profile: ControlProfilePayload;
+    recordId?: string;
+    expectedUpdatedAt?: string;
+  }): Promise<
     PreloadResult<{
       path: string;
       profile: ControlProfileFilePayload;
@@ -638,6 +686,11 @@ export interface ControlProfileNamespace {
   }): Promise<PreloadResult<{ path: string; record: SavedControlProfileRecordPayload }>>;
   /** 删除一套保存的控制配置记录。 */
   deleteRecord(req: { recordId: string }): Promise<PreloadResult<{ deleted: true }>>;
+  /** 显式恢复 SWD 工作区的 J-Link VCOM；不会在 readiness/startup 自动执行。 */
+  recoverJlinkVcom(req: {
+    recordId: string;
+    expectedUpdatedAt: string;
+  }): Promise<PreloadResult<JLinkVcomRecoveryPayload>>;
   /** 按当前工作区 control-profile.json 执行人工下载/烧录。 */
   runDownload(
     req: ControlProfileDownloadRequestPayload,
@@ -665,9 +718,7 @@ export interface ControlProfileNamespace {
   /** 读取后台下载/烧录 job 的完整结构化证据。 */
   readDownload(req: { jobId: string }): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
   /** 请求后台下载/烧录 job 通过既有 AbortSignal 路径停止；不承诺硬件状态复原。 */
-  cancelDownload(req: {
-    jobId: string;
-  }): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
+  cancelDownload(req: { jobId: string }): Promise<PreloadResult<ControlProfileDownloadJobPayload>>;
   /** 按当前工作区 control-profile.json 只连接芯片/J-Link，不创建串口或 RTT 会话。 */
   connectChip(req: {
     root: string;

@@ -6,10 +6,12 @@ import type {
   SerialSessionConfig,
   SerialStopBits,
   SshSessionConfig,
+  StableSerialIdentity,
 } from '../../shared/types.js';
 import type {
   RttLogSavedConnectionConfig,
   SaveConnectionProfileConfig,
+  UpdateConnectionProfileConfig,
 } from '../../shared/preload-api.js';
 
 export type { SavedConnectionSummary } from '../../shared/preload-api.js';
@@ -31,7 +33,7 @@ export interface SecretCodec {
 }
 
 /** 串口保存配置；与 SerialSessionConfig 非敏感字段一致。 */
-export interface SerialSavedConnectionConfig {
+export interface SerialSavedConnectionConfig extends StableSerialIdentity {
   type: 'serial';
   port: string;
   baudRate: number;
@@ -109,8 +111,19 @@ export interface SaveConnectionProfileInput {
   saveCredentials?: boolean;
 }
 
+/** 原位更新 profile 的 core 入参。 */
+export interface UpdateConnectionProfileInput {
+  profileId: ConnectionProfileId;
+  expectedUpdatedAt: string;
+  label: string;
+  config: UpdateConnectionProfileConfig;
+  credentialAction?: 'preserve' | 'replace' | 'clear';
+}
+
 /** 将会话配置剥离为可安全落盘的非敏感配置。 */
-export function toSavedConfig(config: SaveConnectionProfileConfig): SavedConnectionConfig {
+export function toSavedConfig(
+  config: SaveConnectionProfileConfig | UpdateConnectionProfileConfig,
+): SavedConnectionConfig {
   switch (config.type) {
     case 'serial':
       return {
@@ -124,6 +137,10 @@ export function toSavedConfig(config: SaveConnectionProfileConfig): SavedConnect
         ...(config.rtscts !== undefined ? { rtscts: config.rtscts } : {}),
         ...(config.xon !== undefined ? { xon: config.xon } : {}),
         ...(config.xoff !== undefined ? { xoff: config.xoff } : {}),
+        ...(config.hardwareIdentity !== undefined
+          ? { hardwareIdentity: config.hardwareIdentity }
+          : {}),
+        ...(config.parentIdentity !== undefined ? { parentIdentity: config.parentIdentity } : {}),
       } satisfies SerialSavedConnectionConfig;
     case 'ssh':
       return {

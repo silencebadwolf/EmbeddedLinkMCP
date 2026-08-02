@@ -53,7 +53,9 @@ vi.mock('../../../src/renderer/components/TerminalView.js', () => ({
             <button
               type="button"
               data-testid={`terminal-display-unavailable-${sessionId}`}
-              onClick={() => onTranscriptDisplayUnavailable?.('firstSignal.display.subscribeFailed')}
+              onClick={() =>
+                onTranscriptDisplayUnavailable?.('firstSignal.display.subscribeFailed')
+              }
             >
               display unavailable
             </button>
@@ -97,9 +99,7 @@ describe('App Start Center integration', () => {
     resetStore();
     terminalMockState.propsBySession.clear();
     mock = installMockPreload();
-    mock.setReadinessSnapshot(
-      mock.readinessSnapshot(1, 'action-required'),
-    );
+    mock.setReadinessSnapshot(mock.readinessSnapshot(1, 'action-required'));
   });
 
   it('replaces the no-session canvas with Start Center without first-signal states', async () => {
@@ -235,6 +235,8 @@ describe('App Start Center integration', () => {
     expect(useAppStore.getState().connectionDialogPrefill).toEqual({
       type: 'serial',
       label: 'Disconnected FNA board',
+      connectionProfileId: 'conn_missing_com6',
+      connectionProfileUpdatedAt: new Date(0).toISOString(),
       serialPort: 'COM6',
       baudRate: '115200',
       serialMode: 'terminal',
@@ -316,7 +318,12 @@ describe('App Start Center integration', () => {
       id: 'conn_com6',
       label: 'FNA board',
       type: 'serial' as const,
-      config: { type: 'serial' as const, port: 'COM6', baudRate: 115200, mode: 'terminal' as const },
+      config: {
+        type: 'serial' as const,
+        port: 'COM6',
+        baudRate: 115200,
+        mode: 'terminal' as const,
+      },
       hasCredential: false,
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
@@ -350,7 +357,12 @@ describe('App Start Center integration', () => {
       profile: {
         schemaVersion: 'linkterm-control/1.0.0' as const,
         serial: { enabled: true, port: 'COM7', baudRate: 115200, mode: 'terminal' as const },
-        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd' as const, speedKHz: 'auto' as const },
+        jlink: {
+          enabled: true,
+          target: 'STM32H743II',
+          interface: 'swd' as const,
+          speedKHz: 'auto' as const,
+        },
         flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
       },
       createdAt: new Date(0).toISOString(),
@@ -422,7 +434,10 @@ describe('App Start Center integration', () => {
       success: false,
       error: { code: 'CONNECTION_DELETE_FAILED', message: 'saved workspace is locked' },
     });
-    vi.stubGlobal('confirm', vi.fn(() => true));
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    );
 
     const { App } = await import('../../../src/renderer/App.js');
     render(<App />);

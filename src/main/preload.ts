@@ -60,6 +60,7 @@ import type {
   JLinkDeviceSearchResultPayload,
   ControlProfileDownloadJobPayload,
   ControlProfileChipProbePayload,
+  JLinkVcomRecoveryPayload,
   ControlProfileFilePayload,
   ControlProfileDownloadResultPayload,
   SavedControlProfileRecordPayload,
@@ -191,7 +192,10 @@ const ReadinessUnsubscribeResultSchema = z.discriminatedUnion('success', [
   z
     .object({
       success: z.literal(true),
-      data: z.object({ unsubscribed: z.literal(true) }).strict().readonly(),
+      data: z
+        .object({ unsubscribed: z.literal(true) })
+        .strict()
+        .readonly(),
     })
     .strict()
     .readonly(),
@@ -225,7 +229,10 @@ const FirstSignalUnsubscribeResultSchema = z.discriminatedUnion('success', [
   z
     .object({
       success: z.literal(true),
-      data: z.object({ unsubscribed: z.literal(true) }).strict().readonly(),
+      data: z
+        .object({ unsubscribed: z.literal(true) })
+        .strict()
+        .readonly(),
     })
     .strict()
     .readonly(),
@@ -306,6 +313,9 @@ const api: PreloadAPI = {
     list: () => invoke<ReadonlyArray<SavedConnectionSummary>>(IPC_CHANNELS.CONNECTIONS_LIST),
     saveAndOpen: (req) =>
       invoke<SavedConnectionOpenSuccess>(IPC_CHANNELS.CONNECTIONS_SAVE_AND_OPEN, req),
+    update: (req) => invoke<SavedConnectionSummary>(IPC_CHANNELS.CONNECTIONS_UPDATE, req),
+    updateAndOpen: (req) =>
+      invoke<SavedConnectionOpenSuccess>(IPC_CHANNELS.CONNECTIONS_UPDATE_AND_OPEN, req),
     open: (req) => invoke<SavedConnectionOpenSuccess>(IPC_CHANNELS.CONNECTIONS_OPEN, req),
     delete: (req) => invoke<{ deleted: true }>(IPC_CHANNELS.CONNECTIONS_DELETE, req),
   },
@@ -346,6 +356,8 @@ const api: PreloadAPI = {
       ),
     deleteRecord: (req) =>
       invoke<{ deleted: true }>(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_DELETE, req),
+    recoverJlinkVcom: (req) =>
+      invoke<JLinkVcomRecoveryPayload>(IPC_CHANNELS.CONTROL_PROFILE_RECOVER_JLINK_VCOM, req),
     runDownload: (req) =>
       invoke<ControlProfileDownloadResultPayload>(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD, req),
     startDownload: (req) =>

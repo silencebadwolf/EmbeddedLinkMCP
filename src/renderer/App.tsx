@@ -111,8 +111,9 @@ export function App(): React.ReactElement {
     React.useState<ControlProfileOpenedEvent | null>(null);
   const [controlProfileDownload, setControlProfileDownload] =
     React.useState<ControlProfileDownloadState>({ phase: 'idle' });
-  const [controlProfileChip, setControlProfileChip] =
-    React.useState<ControlProfileChipState>({ phase: 'idle' });
+  const [controlProfileChip, setControlProfileChip] = React.useState<ControlProfileChipState>({
+    phase: 'idle',
+  });
   const [controlProfileConnecting, setControlProfileConnecting] = React.useState(false);
   const [controlProfileDisconnecting, setControlProfileDisconnecting] = React.useState(false);
   const [controlProfileRecords, setControlProfileRecords] = React.useState<
@@ -161,8 +162,7 @@ export function App(): React.ReactElement {
   }, [activeId, openedControlProfilesByRecordId, visibleControlProfile]);
   const rememberActivityReturnFocus = React.useCallback(() => {
     const activeElement = document.activeElement;
-    activityReturnFocusRef.current =
-      activeElement instanceof HTMLElement ? activeElement : null;
+    activityReturnFocusRef.current = activeElement instanceof HTMLElement ? activeElement : null;
   }, []);
 
   const openActivityCenter = React.useCallback(() => {
@@ -171,11 +171,14 @@ export function App(): React.ReactElement {
     setActivityDrawerOpen(true);
   }, [rememberActivityReturnFocus]);
 
-  const openActivityCenterForSession = React.useCallback((sessionId: SessionId) => {
-    rememberActivityReturnFocus();
-    setActivityFilter({ sessionId });
-    setActivityDrawerOpen(true);
-  }, [rememberActivityReturnFocus]);
+  const openActivityCenterForSession = React.useCallback(
+    (sessionId: SessionId) => {
+      rememberActivityReturnFocus();
+      setActivityFilter({ sessionId });
+      setActivityDrawerOpen(true);
+    },
+    [rememberActivityReturnFocus],
+  );
 
   const dispatchFirstSuccess = React.useCallback((action: FirstSuccessAction) => {
     setFirstSuccessState((state) => reduceFirstSuccessState(state, action));
@@ -301,7 +304,10 @@ export function App(): React.ReactElement {
         ? latestReadiness.data
         : readinessState.snapshot;
       if (isDraftCandidateStale(draft, revalidationSnapshot)) {
-        markFirstSuccessError('FIRST_SIGNAL_CANDIDATE_CHANGED', t('firstSuccess.error.candidateChanged'));
+        markFirstSuccessError(
+          'FIRST_SIGNAL_CANDIDATE_CHANGED',
+          t('firstSuccess.error.candidateChanged'),
+        );
         return;
       }
       const config = serialConfigFromDraft(draft);
@@ -712,41 +718,38 @@ export function App(): React.ReactElement {
     [openControlProfileRecord, openSavedConnection, savedConnections, t],
   );
 
-  const repairWorkspace = React.useCallback((workspace: WorkspaceSummary): void => {
-    setWorkspaceOpenError(null);
-    if (workspace.source === 'control-profile') {
-      const record = controlProfileRecords.find(
-        (item) => item.id === workspace.controlProfileRecordId,
-      );
-      if (record === undefined) {
+  const repairWorkspace = React.useCallback(
+    (workspace: WorkspaceSummary): void => {
+      setWorkspaceOpenError(null);
+      if (workspace.source === 'control-profile') {
+        const record = controlProfileRecords.find(
+          (item) => item.id === workspace.controlProfileRecordId,
+        );
+        if (record === undefined) {
+          setWorkspaceOpenError({
+            workspaceId: workspace.id,
+            message: t('workspace.open.unavailable'),
+          });
+          return;
+        }
+        setControlProfileRepairRecord(record);
+        setControlPanelOpen(true);
+        return;
+      }
+
+      const profile = savedConnections.find((item) => item.id === workspace.connectionProfileId);
+      if (profile === undefined || profile.config.type !== 'serial') {
         setWorkspaceOpenError({
           workspaceId: workspace.id,
           message: t('workspace.open.unavailable'),
         });
         return;
       }
-      setControlProfileRepairRecord(record);
-      setControlPanelOpen(true);
-      return;
-    }
-
-    const profile = savedConnections.find((item) => item.id === workspace.connectionProfileId);
-    if (profile === undefined || profile.config.type !== 'serial') {
-      setWorkspaceOpenError({
-        workspaceId: workspace.id,
-        message: t('workspace.open.unavailable'),
-      });
-      return;
-    }
-    setConnectionDialogPrefill(serialConnectionRepairPrefill(profile));
-    openDialog();
-  }, [
-    controlProfileRecords,
-    openDialog,
-    savedConnections,
-    setConnectionDialogPrefill,
-    t,
-  ]);
+      setConnectionDialogPrefill(serialConnectionRepairPrefill(profile));
+      openDialog();
+    },
+    [controlProfileRecords, openDialog, savedConnections, setConnectionDialogPrefill, t],
+  );
 
   const handleControlPanelOpenChange = React.useCallback((open: boolean): void => {
     setControlPanelOpen(open);
@@ -904,7 +907,9 @@ export function App(): React.ReactElement {
       return;
     }
     setControlProfileDownload({ phase: 'running' });
-    const result = await api.controlProfile.startDownload({ root: openedControlProfile.record.root });
+    const result = await api.controlProfile.startDownload({
+      root: openedControlProfile.record.root,
+    });
     if (result.success) {
       setControlProfileDownload({ phase: 'running', job: result.data });
       return;
@@ -945,16 +950,21 @@ export function App(): React.ReactElement {
         return;
       }
       if (result.data.record !== undefined) {
-        setControlProfileRecords((records) => upsertControlProfileRecord(records, result.data.record!));
+        setControlProfileRecords((records) =>
+          upsertControlProfileRecord(records, result.data.record!),
+        );
       }
       void readinessState.refresh();
     },
     [preloadUnavailableMessage, readinessState],
   );
 
-  const skipProfileSuggestion = React.useCallback((_suggestionId: string): void => {
-    void readinessState.refresh();
-  }, [readinessState]);
+  const skipProfileSuggestion = React.useCallback(
+    (_suggestionId: string): void => {
+      void readinessState.refresh();
+    },
+    [readinessState],
+  );
 
   const runningDownloadJobId =
     controlProfileDownload.phase === 'running' ? controlProfileDownload.job?.jobId : undefined;
@@ -1021,10 +1031,7 @@ export function App(): React.ReactElement {
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <AiStatusCapsule
-            state={activityState}
-            onOpen={openActivityCenter}
-          />
+          <AiStatusCapsule state={activityState} onOpen={openActivityCenter} />
           {sessionList.length > 0 ? (
             <>
               <Button
@@ -1065,7 +1072,10 @@ export function App(): React.ReactElement {
       />
 
       <main className="flex min-h-0 flex-1 overflow-hidden">
-        {sessionList.length > 0 || firstSuccessDraft !== null || jlinkRttReview !== null || visibleControlProfile !== null ? (
+        {sessionList.length > 0 ||
+        firstSuccessDraft !== null ||
+        jlinkRttReview !== null ||
+        visibleControlProfile !== null ? (
           <ControlProfileSidebar
             records={controlProfileRecords}
             loading={controlProfileRecordsLoading}
@@ -1208,6 +1218,8 @@ function serialConnectionRepairPrefill(profile: SavedConnectionSummary): NonSens
   return {
     type: 'serial',
     label: profile.label,
+    connectionProfileId: profile.id,
+    connectionProfileUpdatedAt: profile.updatedAt,
     serialPort: config.port,
     baudRate: String(config.baudRate),
     serialMode: config.mode,
@@ -1719,10 +1731,7 @@ function ChipStatusPanel({ chip }: { chip: ControlProfileChipState }): React.Rea
   );
 }
 
-function describeChipPhase(
-  chip: ControlProfileChipState,
-  t: ReturnType<typeof useT>,
-): string {
+function describeChipPhase(chip: ControlProfileChipState, t: ReturnType<typeof useT>): string {
   switch (chip.phase) {
     case 'idle':
       return t('controlProfile.chip.idle');
@@ -1837,9 +1846,7 @@ function getDownloadProgressPercent(download: ControlProfileDownloadState): numb
   return 0;
 }
 
-function getCurrentFlashProgress(
-  download: ControlProfileDownloadState,
-): FlashProgressView | null {
+function getCurrentFlashProgress(download: ControlProfileDownloadState): FlashProgressView | null {
   if (download.phase === 'idle') return null;
   const currentStep =
     download.phase === 'running' ? download.job?.currentStep : download.result?.steps.at(-1);

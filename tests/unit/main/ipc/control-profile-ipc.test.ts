@@ -240,7 +240,18 @@ describe('registerControlProfileIpc', () => {
       get: vi.fn(async () => record),
       delete: vi.fn(async () => undefined),
     } as unknown as ControlProfileRecordManager;
-    registerControlProfileIpc(manager, recordManager);
+    registerControlProfileIpc(manager, recordManager, {
+      serialDiscovery: {
+        listPorts: async () => [
+          {
+            path: 'COM7',
+            vendorId: '1366',
+            productId: '0105',
+            serialNumber: '123456789',
+          },
+        ],
+      },
+    });
 
     const save = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_SAVE)!;
     const saveResult = await save({}, { root: 'C:/repo', profile: profileBody });
@@ -256,6 +267,36 @@ describe('registerControlProfileIpc', () => {
       root: 'C:/repo',
       source: 'manual',
       profile: savedProfile,
+    });
+    expect(init).toHaveBeenCalledWith(
+      'C:/repo',
+      expect.objectContaining({
+        serial: expect.objectContaining({
+          hardwareIdentity: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+          parentIdentity: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+        }),
+      }),
+      { force: true },
+    );
+
+    recordManager.save.mockClear();
+    await expect(
+      save(
+        {},
+        {
+          root: 'C:/repo',
+          profile: profileBody,
+          recordId: record.id,
+          expectedUpdatedAt: record.updatedAt,
+        },
+      ),
+    ).resolves.toMatchObject({ success: true, data: { record } });
+    expect(recordManager.save).toHaveBeenCalledWith({
+      root: 'C:/repo',
+      source: 'manual',
+      profile: savedProfile,
+      recordId: record.id,
+      expectedUpdatedAt: record.updatedAt,
     });
 
     const list = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_LIST)!;
@@ -485,7 +526,10 @@ describe('registerControlProfileIpc', () => {
     const run = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD)!;
     const result = await run({ sender: { id: 7 } }, { root: 'C:/repo' });
 
-    expect(result).toEqual({ success: true, data: expect.objectContaining({ mode: 'flash-observe' }) });
+    expect(result).toEqual({
+      success: true,
+      data: expect.objectContaining({ mode: 'flash-observe' }),
+    });
     expect(approvalGate.evaluate).not.toHaveBeenCalled();
     expect(runControlWorkflowMock).toHaveBeenCalledOnce();
   });
@@ -533,7 +577,10 @@ describe('registerControlProfileIpc', () => {
     const start = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD)!;
     const result = await start({ sender: { id: 8 } }, { root: 'C:/repo' });
 
-    expect(result).toEqual({ success: true, data: expect.objectContaining({ jobId: 'job-start-immediate' }) });
+    expect(result).toEqual({
+      success: true,
+      data: expect.objectContaining({ jobId: 'job-start-immediate' }),
+    });
     expect(approvalGate.evaluate).not.toHaveBeenCalled();
     expect(jobManager.create).toHaveBeenCalledOnce();
   });
@@ -621,7 +668,10 @@ describe('registerControlProfileIpc', () => {
     const reflash = handlers.get(IPC_CHANNELS.CONTROL_PROFILE_START_COMPENSATION_REFLASH)!;
     const result = await reflash({ sender: { id: 9 } }, { candidateId: 'candidate_1' });
 
-    expect(result).toEqual({ success: true, data: expect.objectContaining({ jobId: 'job-start-1' }) });
+    expect(result).toEqual({
+      success: true,
+      data: expect.objectContaining({ jobId: 'job-start-1' }),
+    });
     expect(compensationCandidateService.candidateWorkspaceRoot).toHaveBeenCalledWith('candidate_1');
     expect(readCurrentDeploymentEvidenceMock).toHaveBeenCalledWith(expect.anything(), 'C:/repo');
     expect(compensationCandidateService.reflashRequest).toHaveBeenCalledWith('candidate_1', {
@@ -961,7 +1011,10 @@ describe('registerControlProfileIpc', () => {
       { root: 'C:/repo', kind: 'continue-approved', approvalId: 'approval_run_1' },
     );
 
-    expect(result).toEqual({ success: true, data: expect.objectContaining({ mode: 'flash-observe' }) });
+    expect(result).toEqual({
+      success: true,
+      data: expect.objectContaining({ mode: 'flash-observe' }),
+    });
     expect(approvalGate.evaluate).not.toHaveBeenCalled();
     expect(runControlWorkflowMock).toHaveBeenCalledOnce();
   });

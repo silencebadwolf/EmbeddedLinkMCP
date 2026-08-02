@@ -152,6 +152,16 @@ describe('agent runbook builder', () => {
       'must not treat the ELF file header as a raw Cortex-M vector table',
     );
     expect(runbook.markdown).toContain('do not rewrite the profile to a .bin file');
+    expect(runbook.markdown).toContain('Saved configuration maintenance');
+    expect(runbook.markdown).toContain('init_control_profile with force=true');
+    expect(runbook.markdown).toContain('edited in place from the desktop Connections UI');
+    expect(runbook.markdown).toContain('does not update an existing saved record');
+    expect(runbook.markdown).toContain('does not migrate or close an already active Session');
+    expect(runbook.markdown).toContain('J-Link VCOM recovery');
+    expect(runbook.markdown).toContain('not currently exposed as an MCP tool');
+    expect(runbook.markdown).toContain('Recover J-Link serial');
+    expect(runbook.markdown).toContain('power-cycle or replug the probe');
+    expect(runbook.markdown).toContain('never guess a port');
     expect(runbook.markdown).not.toMatch(/nRF52|cmds\.jlink|reference-repos|JLinkMCP\/main\.go/);
 
     expect(runbook.workflows.map((workflow) => workflow.id)).toEqual(
@@ -338,6 +348,14 @@ describe('MCP agent runbook tool', () => {
     expect(instructions).toContain('.bin/.hex/.elf');
     expect(instructions).toContain('ELF loadable segments');
     expect(instructions).toContain('do not change the profile firmware from .elf to .bin');
+    expect(instructions).toContain('Saved configuration maintenance');
+    expect(instructions).toContain('init_control_profile with force=true');
+    expect(instructions).toContain('desktop Connections UI');
+    expect(instructions).toContain('does not update an existing saved record');
+    expect(instructions).toContain('J-Link VCOM recovery');
+    expect(instructions).toContain('not currently exposed as an MCP tool');
+    expect(instructions).toContain('Recover J-Link serial');
+    expect(instructions).toContain('power-cycle or replug the probe');
     expect(instructions).toContain('execute immediately');
     expect(instructions).not.toContain('CONFIRMATION_REQUIRED');
     expect(instructions).toContain('get_agent_runbook');

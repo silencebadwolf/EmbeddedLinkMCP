@@ -76,6 +76,13 @@ list_sessions
 
 App 保存的连接记录和工作区卡片不是一个通用 MCP 列表工具。MCP 可以看到 Main 中的活动 Session，也可以在已知 `root` 下读取工作区/控制配置；说明书不能声称 AI 能枚举所有 App-only 保存记录。
 
+保存配置发生变化时要区分两类入口：
+
+- `<root>/.linkterm/config.json` 可由 MCP `update_workspace_config` 更新；修改 `<root>/.linkterm/control-profile.json` 时，先读取完整现值，再用 `init_control_profile({force:true, ...})` 覆盖经过核对的完整配置。
+- App 保存的连接记录通过桌面端 Connections 列表的 Edit 原位修改；`ui_configure` 只能打开或预填连接对话框，不能更新现有保存记录。原位修改不会迁移或关闭已经活动的 Session；如果发生乐观并发冲突，应先刷新并核对较新的记录，不能因 COM 变化直接创建重复记录。
+
+J-Link VCOM 恢复同样需要明确能力边界：当前它是工作区控制配置修复面板中的“恢复 J-Link 串口”显式操作，尚未暴露为 MCP 工具。AI 不得改用 `jlink_commander_script` 或外部 Commander 执行 `vcom enable`。仅当 SWD 配置、保存端口缺失并且探针与 SEGGER CDC 候选唯一时，才由该 UI 流程查询 VCOM 状态并在明确为 disabled 时启用；若 VCOM 已启用但 CDC 未出现，应重新插拔或断电重连探针，再调用 `get_app_status` 复查。多探针、状态未知、多个 CDC 候选或活动 GDB/RTT 占用时必须停止并交由用户消歧，不能猜测端口。
+
 ## 4. 人和 AI 如何共享终端
 
 人工输入从 `session:write` IPC 进入 `SessionManager.write({origin:'human'})`；AI 输入从 MCP 工具进入 `SessionManager.write({origin:'ai'})`。两者进入同一个 Session、WriteQueue、Transport 和 Transcript。

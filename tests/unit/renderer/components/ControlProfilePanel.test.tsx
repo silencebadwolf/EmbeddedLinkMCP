@@ -45,9 +45,7 @@ describe('ControlProfilePanel', () => {
       />,
     );
 
-    expect(
-      screen.getByRole('button', { name: 'Serial-only connection' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Serial-only connection' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Full device workspace' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Workspace root')).toBeNull();
 
@@ -471,8 +469,116 @@ describe('ControlProfilePanel', () => {
     expect(screen.getByLabelText('RTT control block address')).toHaveValue('0x24005310');
   });
 
+  it('passes repair record identity when saving a changed serial port', async () => {
+    const timestamp = new Date(0).toISOString();
+    const repairRecord = {
+      id: 'ctrl_repair',
+      label: 'J-Link workspace',
+      root: 'C:/repo',
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM10', baudRate: 115200, mode: 'terminal' as const },
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd' as const, speedKHz: 4000 },
+        flash: { binary: 'build/app.bin', baseAddress: '0x08000000', verify: true },
+      },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    mock.spies.controlProfile.save.mockResolvedValueOnce({
+      success: true,
+      data: {
+        path: 'C:/repo/.linkterm/control-profile.json',
+        profile: repairRecord.profile,
+        record: {
+          ...repairRecord,
+          profile: {
+            ...repairRecord.profile,
+            serial: { ...repairRecord.profile.serial, baudRate: 921600 },
+          },
+          updatedAt: new Date(1).toISOString(),
+        },
+      },
+    });
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} repairRecord={repairRecord} />);
+    await waitFor(() => expect(screen.getByLabelText('Workspace root')).toHaveValue('C:/repo'));
+    fireEvent.change(screen.getByLabelText('Baud rate'), { target: { value: '921600' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save to workspace' }));
+
+    await waitFor(() =>
+      expect(mock.spies.controlProfile.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          root: 'C:/repo',
+          recordId: 'ctrl_repair',
+          expectedUpdatedAt: timestamp,
+          profile: expect.objectContaining({
+            serial: expect.objectContaining({ port: 'COM10', baudRate: 921600 }),
+          }),
+        }),
+      ),
+    );
+  });
+
+  it('runs explicit J-Link VCOM recovery from an SWD repair record', async () => {
+    const timestamp = new Date(0).toISOString();
+    const repairRecord = {
+      id: 'ctrl_vcom',
+      label: 'J-Link console',
+      root: 'C:/repo',
+      source: 'manual' as const,
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0' as const,
+        serial: { enabled: true, port: 'COM10', baudRate: 115200, mode: 'terminal' as const },
+        jlink: { enabled: true, target: 'STM32H743II', interface: 'swd' as const },
+      },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const updatedRecord = {
+      ...repairRecord,
+      profile: {
+        ...repairRecord.profile,
+        serial: { ...repairRecord.profile.serial, port: 'COM12' },
+      },
+      updatedAt: new Date(1).toISOString(),
+    };
+    mock.spies.controlProfile.recoverJlinkVcom.mockResolvedValueOnce({
+      success: true,
+      data: {
+        status: 'recovered',
+        record: updatedRecord,
+        port: 'COM12',
+        sessionId: 'sess_com12',
+        sessionState: 'open',
+        firmwareUpdateObserved: true,
+      },
+    });
+
+    render(<ControlProfilePanel open onOpenChange={onOpenChange} repairRecord={repairRecord} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Recover J-Link serial' }));
+
+    await waitFor(() =>
+      expect(mock.spies.controlProfile.recoverJlinkVcom).toHaveBeenCalledWith({
+        recordId: 'ctrl_vcom',
+        expectedUpdatedAt: timestamp,
+      }),
+    );
+    expect(useAppStore.getState().sessions.get('sess_com12')).toMatchObject({
+      label: 'J-Link console',
+      connectionType: 'serial',
+      state: 'open',
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Commander also updated the probe firmware',
+    );
+  });
+
   it('deletes a saved control profile record from the list', async () => {
-    vi.stubGlobal('confirm', vi.fn(() => true));
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    );
     const record = {
       id: 'ctrl_saved',
       label: 'repo - STM32H743II',
@@ -561,11 +667,15 @@ describe('ControlProfilePanel', () => {
     });
     let finishDelete!: (value: { success: true; data: { deleted: true } }) => void;
     mock.spies.controlProfile.deleteRecord.mockImplementationOnce(
-      () => new Promise((resolve) => {
-        finishDelete = resolve;
-      }),
+      () =>
+        new Promise((resolve) => {
+          finishDelete = resolve;
+        }),
     );
-    vi.stubGlobal('confirm', vi.fn(() => true));
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    );
 
     render(<ControlProfilePanel open onOpenChange={onOpenChange} />);
 
@@ -580,7 +690,10 @@ describe('ControlProfilePanel', () => {
   });
 
   it('keeps a saved control profile record visible when deletion fails', async () => {
-    vi.stubGlobal('confirm', vi.fn(() => true));
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    );
     const record = {
       id: 'ctrl_saved',
       label: 'repo - STM32H743II',

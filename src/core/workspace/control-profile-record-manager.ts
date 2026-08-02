@@ -27,6 +27,19 @@ export class ControlProfileRecordNotFoundError extends Error {
   }
 }
 
+export class ControlProfileRecordConflictError extends Error {
+  readonly code = 'CONTROL_PROFILE_RECORD_CONFLICT' as const;
+
+  constructor(
+    readonly recordId: string,
+    readonly expectedUpdatedAt: string,
+    readonly actualUpdatedAt: string,
+  ) {
+    super(`Control profile record was modified after it was loaded: ${recordId}`);
+    this.name = 'ControlProfileRecordConflictError';
+  }
+}
+
 export class ControlProfileRecordManager {
   readonly #filePath: string;
   readonly #fs: FsPrimitives;
@@ -45,8 +58,38 @@ export class ControlProfileRecordManager {
   async save(input: SaveControlProfileRecordInput): Promise<ControlProfileRecord> {
     return this.#serialize(async () => {
       const file = await this.#readFileOrDefault();
-      const now = new Date().toISOString();
       const profile = controlProfileSchema.parse(input.profile);
+      if (input.recordId !== undefined || input.expectedUpdatedAt !== undefined) {
+        if (input.recordId === undefined || input.expectedUpdatedAt === undefined) {
+          throw new Error('recordId and expectedUpdatedAt must be provided together');
+        }
+        const existingIndex = file.records.findIndex((record) => record.id === input.recordId);
+        if (existingIndex < 0) throw new ControlProfileRecordNotFoundError(input.recordId);
+        const existing = file.records[existingIndex]!;
+        if (existing.updatedAt !== input.expectedUpdatedAt) {
+          throw new ControlProfileRecordConflictError(
+            input.recordId,
+            input.expectedUpdatedAt,
+            existing.updatedAt,
+          );
+        }
+        const record: ControlProfileRecord = {
+          ...existing,
+          label: normalizeLabel(input.label) ?? existing.label,
+          root: input.root,
+          source: input.source,
+          profile,
+          updatedAt: nextTimestamp(existing.updatedAt),
+        };
+        const records = file.records.map((item) => (item.id === existing.id ? record : item));
+        await this.#writeFile({
+          schemaVersion: CONTROL_PROFILE_RECORDS_SCHEMA_VERSION,
+          records: newestFirst(records).slice(0, MAX_CONTROL_PROFILE_RECORDS),
+        });
+        return record;
+      }
+
+      const now = new Date().toISOString();
       const fingerprint = buildRecordFingerprint(input.root, profile);
       const existing = file.records.find(
         (record) => buildRecordFingerprint(record.root, record.profile) === fingerprint,
@@ -137,6 +180,12 @@ function normalizeLabel(label: string | undefined): string | undefined {
   const trimmed = label?.trim();
   if (!trimmed) return undefined;
   return trimmed.slice(0, 128);
+}
+
+function nextTimestamp(previous: string): string {
+  const now = Date.now();
+  const previousMs = Date.parse(previous);
+  return new Date(Number.isFinite(previousMs) ? Math.max(now, previousMs + 1) : now).toISOString();
 }
 
 function defaultLabel(root: string, profile: ControlProfileRecord['profile']): string {

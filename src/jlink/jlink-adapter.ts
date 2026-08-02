@@ -56,6 +56,12 @@ import {
   type JLinkRttSession,
 } from './segger-command-runner.js';
 import { normalizeJLinkTargetName } from '../shared/jlink-target-name.js';
+import type {
+  IJLinkVcomControl,
+  ProbeSelector,
+  VcomChangeResult,
+  VcomInspection,
+} from './vcom-types.js';
 
 /** JLinkAdapter 的可注入依赖；生产默认使用 SEGGER Commander/GDB server，测试注入 fake。 */
 export interface JLinkAdapterOptions {
@@ -100,7 +106,7 @@ interface CortexMFaultRegisters {
  * Phase 9 仅实现探针生命周期；其它方法 stub。Phase 13+ 替换为真实 SEGGER J-Link
  * 调用时只需扩展非 lifecycle 方法的实现，不触动接口或上层 MCP 工具。
  */
-export class JLinkAdapter implements IJLinkBackend {
+export class JLinkAdapter implements IJLinkBackend, IJLinkVcomControl {
   readonly #probes = new Map<string, ProbeHandle>();
   readonly #busyProbeKeys = new Set<string>();
   readonly #commander: JLinkCommanderClient;
@@ -178,7 +184,9 @@ export class JLinkAdapter implements IJLinkBackend {
       target: normalizedOpts.target,
       ...(normalizedOpts.interface !== undefined ? { interface: normalizedOpts.interface } : {}),
       ...(normalizedOpts.speedKHz !== undefined ? { speedKHz: normalizedOpts.speedKHz } : {}),
-      ...(normalizedOpts.serialNumber !== undefined ? { serialNumber: normalizedOpts.serialNumber } : {}),
+      ...(normalizedOpts.serialNumber !== undefined
+        ? { serialNumber: normalizedOpts.serialNumber }
+        : {}),
       probeKey: this.#probeOperationKey(normalizedOpts),
       busy: false,
       breakpoints: new Map<number, BreakpointSpec>(),
@@ -247,6 +255,36 @@ export class JLinkAdapter implements IJLinkBackend {
     return this.#withProbeSelectionOperation(probeKey, async () => {
       this.#throwIfAborted(signal);
       const result = await rebootProbe.call(this.#commander, normalizedOpts, signal);
+      await this.#retireProbeHandlesAfterReboot(probeKey);
+      return result;
+    });
+  }
+
+  /** 查询 VCOM，不连接目标芯片；与 flash/GDB/RTT 共享物理 probe 互斥锁。 */
+  async inspectVcom(selector: ProbeSelector = {}, signal?: AbortSignal): Promise<VcomInspection> {
+    const operation = this.#commander.inspectVcom;
+    if (operation === undefined) throw new JLinkNotImplementedError('inspectVcom');
+    const probeKey = this.#probeOperationKeyFromSerialNumber(selector.serialNumber);
+    this.#assertProbeSelectionHasNoActiveSessions(probeKey);
+    return this.#withProbeSelectionOperation(probeKey, () => {
+      this.#assertProbeSelectionHasNoActiveSessions(probeKey);
+      return operation.call(this.#commander, selector, signal);
+    });
+  }
+
+  /** 显式切换 VCOM；成功只表示命令被接受，USB 重新枚举由恢复服务负责等待。 */
+  async setVcomEnabled(
+    selector: ProbeSelector = {},
+    enabled: boolean,
+    signal?: AbortSignal,
+  ): Promise<VcomChangeResult> {
+    const operation = this.#commander.setVcomEnabled;
+    if (operation === undefined) throw new JLinkNotImplementedError('setVcomEnabled');
+    const probeKey = this.#probeOperationKeyFromSerialNumber(selector.serialNumber);
+    this.#assertProbeSelectionHasNoActiveSessions(probeKey);
+    return this.#withProbeSelectionOperation(probeKey, async () => {
+      this.#assertProbeSelectionHasNoActiveSessions(probeKey);
+      const result = await operation.call(this.#commander, selector, enabled, signal);
       await this.#retireProbeHandlesAfterReboot(probeKey);
       return result;
     });
@@ -330,7 +368,9 @@ export class JLinkAdapter implements IJLinkBackend {
 
   async registerRead(probeId: string, name: string): Promise<RegisterValue> {
     const handle = this.#requireProbe(probeId);
-    return this.#withProbeOperation(handle, async () => this.#commander.readRegister(this.#toCommanderContext(handle), name));
+    return this.#withProbeOperation(handle, async () =>
+      this.#commander.readRegister(this.#toCommanderContext(handle), name),
+    );
   }
 
   async registerWrite(probeId: string, name: string, value: number): Promise<void> {
@@ -342,14 +382,18 @@ export class JLinkAdapter implements IJLinkBackend {
 
   async registerList(probeId: string): Promise<RegisterValue[]> {
     const handle = this.#requireProbe(probeId);
-    return this.#withProbeOperation(handle, async () => this.#commander.listRegisters(this.#toCommanderContext(handle)));
+    return this.#withProbeOperation(handle, async () =>
+      this.#commander.listRegisters(this.#toCommanderContext(handle)),
+    );
   }
 
   // -- memory (stub) --
 
   async memoryRead(probeId: string, range: MemoryRange): Promise<Buffer> {
     const handle = this.#requireProbe(probeId);
-    return this.#withProbeOperation(handle, async () => this.#commander.readMemory(this.#toCommanderContext(handle), range));
+    return this.#withProbeOperation(handle, async () =>
+      this.#commander.readMemory(this.#toCommanderContext(handle), range),
+    );
   }
 
   async memoryWrite(probeId: string, address: number, data: Buffer): Promise<void> {
@@ -371,10 +415,13 @@ export class JLinkAdapter implements IJLinkBackend {
     const handle = this.#requireProbe(probeId);
     const address = opts?.address;
     if (address === undefined) {
-      throw new JLinkInvalidStateError('flashDownload requires an explicit address for raw binary input', {
-        expected: 'address number',
-        actual: 'undefined',
-      });
+      throw new JLinkInvalidStateError(
+        'flashDownload requires an explicit address for raw binary input',
+        {
+          expected: 'address number',
+          actual: 'undefined',
+        },
+      );
     }
     return this.#withProbeOperation(handle, async () => {
       this.#throwIfAborted(signal);
@@ -398,22 +445,23 @@ export class JLinkAdapter implements IJLinkBackend {
           signal,
         );
         if (!verifyResult.ok) {
-          const mismatch = verifyResult.mismatchAt === undefined
-            ? 'unknown'
-            : `0x${verifyResult.mismatchAt.toString(16).padStart(8, '0')}`;
-          throw new JLinkOperationError(`J-Link flashDownload independent verify failed at ${mismatch}`, {
-            operation: 'flashDownload',
-          });
+          const mismatch =
+            verifyResult.mismatchAt === undefined
+              ? 'unknown'
+              : `0x${verifyResult.mismatchAt.toString(16).padStart(8, '0')}`;
+          throw new JLinkOperationError(
+            `J-Link flashDownload independent verify failed at ${mismatch}`,
+            {
+              operation: 'flashDownload',
+            },
+          );
         }
       }
       return result;
     });
   }
 
-  async flashErase(
-    probeId: string,
-    opts?: { address?: number; length?: number },
-  ): Promise<void> {
+  async flashErase(probeId: string, opts?: { address?: number; length?: number }): Promise<void> {
     const handle = this.#requireProbe(probeId);
     await this.#withProbeOperation(handle, async () => {
       await this.#commander.eraseFlash(this.#toCommanderContext(handle), opts);
@@ -437,10 +485,13 @@ export class JLinkAdapter implements IJLinkBackend {
     const handle = this.#requireProbe(probeId);
     const address = opts?.address;
     if (address === undefined) {
-      throw new JLinkInvalidStateError('flashVerify requires an explicit address for raw binary input', {
-        expected: 'address number',
-        actual: 'undefined',
-      });
+      throw new JLinkInvalidStateError(
+        'flashVerify requires an explicit address for raw binary input',
+        {
+          expected: 'address number',
+          actual: 'undefined',
+        },
+      );
     }
     return this.#withProbeOperation(handle, async () => {
       this.#throwIfAborted(signal);
@@ -462,10 +513,13 @@ export class JLinkAdapter implements IJLinkBackend {
     const handle = this.#requireProbe(probeId);
     const gdbServer = handle.gdbServer;
     if (gdbServer === undefined || gdbServer.rttTelnetPort === undefined) {
-      throw new JLinkInvalidStateError('RTT requires a running GDB server with RTT telnet enabled', {
-        expected: 'running GDB server session with rttTelnetPort',
-        actual: 'not connected',
-      });
+      throw new JLinkInvalidStateError(
+        'RTT requires a running GDB server with RTT telnet enabled',
+        {
+          expected: 'running GDB server session with rttTelnetPort',
+          actual: 'not connected',
+        },
+      );
     }
     if (handle.rttSession !== undefined) {
       await handle.rttSession.close();
@@ -474,7 +528,9 @@ export class JLinkAdapter implements IJLinkBackend {
     const session = await this.#connectRttAfterTelnetReady({
       host: gdbServer.host,
       port: gdbServer.rttTelnetPort,
-      ...(opts?.controlBlockAddress !== undefined ? { controlBlockAddress: opts.controlBlockAddress } : {}),
+      ...(opts?.controlBlockAddress !== undefined
+        ? { controlBlockAddress: opts.controlBlockAddress }
+        : {}),
     });
     handle.rttSession = session;
     return { channels: session.channels };
@@ -520,7 +576,10 @@ export class JLinkAdapter implements IJLinkBackend {
       if (handle.gdbServer.host === requestedHost && handle.gdbServer.port === requestedPort) {
         return { host: handle.gdbServer.host, port: handle.gdbServer.port };
       }
-      throw new ProbeBusyError(probeId, 'Probe already has a running GDB server on a different endpoint');
+      throw new ProbeBusyError(
+        probeId,
+        'Probe already has a running GDB server on a different endpoint',
+      );
     }
     const session = await this.#withProbeOperation(handle, async () => {
       this.#throwIfAborted(signal);
@@ -567,7 +626,10 @@ export class JLinkAdapter implements IJLinkBackend {
       const sp = findRegisterValue(registers, 'sp') ?? 0;
       const memorySnippets = [];
       for (const range of ranges) {
-        memorySnippets.push({ address: range.address, data: await this.#commander.readMemory(context, range) });
+        memorySnippets.push({
+          address: range.address,
+          data: await this.#commander.readMemory(context, range),
+        });
       }
       return {
         pc,
@@ -588,7 +650,10 @@ export class JLinkAdapter implements IJLinkBackend {
       const lr = findRegisterValue(registers, 'lr') ?? 0;
       const sp = findRegisterValue(registers, 'sp') ?? 0;
       const faultRegisters = decodeCortexMFaultRegisters(
-        await this.#commander.readMemory(context, { address: CORTEX_M_FAULT_REGISTERS_BASE, length: 16 }),
+        await this.#commander.readMemory(context, {
+          address: CORTEX_M_FAULT_REGISTERS_BASE,
+          length: 16,
+        }),
       );
       const fault = classifyCortexMFault(faultRegisters);
       const reason = describeCortexMFault(faultRegisters, fault);
@@ -657,7 +722,9 @@ export class JLinkAdapter implements IJLinkBackend {
     return {
       force: opts?.force ?? true,
       ...(serialNumber !== undefined && serialNumber !== '' ? { serialNumber } : {}),
-      ...(opts?.reconnectTimeoutMs !== undefined ? { reconnectTimeoutMs: opts.reconnectTimeoutMs } : {}),
+      ...(opts?.reconnectTimeoutMs !== undefined
+        ? { reconnectTimeoutMs: opts.reconnectTimeoutMs }
+        : {}),
       ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
     };
   }
@@ -701,6 +768,23 @@ export class JLinkAdapter implements IJLinkBackend {
     }
   }
 
+  /** VCOM 维护会重枚举探针，任何匹配选择器的持续 GDB/RTT 会话都必须先结束。 */
+  #assertProbeSelectionHasNoActiveSessions(probeKey: string): void {
+    const active = Array.from(this.#probes.values()).find(
+      (handle) =>
+        (probeKey === DEFAULT_PROBE_SELECTION_KEY ||
+          handle.probeKey === probeKey ||
+          handle.probeKey === DEFAULT_PROBE_SELECTION_KEY) &&
+        (handle.gdbServer !== undefined || handle.rttSession !== undefined),
+    );
+    if (active !== undefined) {
+      throw new ProbeBusyError(
+        active.probeId,
+        'J-Link VCOM cannot be changed while a GDB or RTT session is active',
+      );
+    }
+  }
+
   #retireStaleProbeHandlesForSelection(opts: ProbeConnectOptions): void {
     const probeKey = this.#probeOperationKey(opts);
     const staleHandles = Array.from(this.#probes.values()).filter(
@@ -713,7 +797,10 @@ export class JLinkAdapter implements IJLinkBackend {
         handle.gdbServer !== undefined ||
         handle.rttSession !== undefined
       ) {
-        throw new ProbeBusyError(handle.probeId, 'Probe selection is already connected with different options');
+        throw new ProbeBusyError(
+          handle.probeId,
+          'Probe selection is already connected with different options',
+        );
       }
     }
     for (const handle of staleHandles) {
@@ -729,7 +816,9 @@ export class JLinkAdapter implements IJLinkBackend {
   /** 生成物理 probe 级操作锁 key；未指定序列号时保守串行化所有默认选择操作。 */
   #probeOperationKeyFromSerialNumber(serialNumber: string | undefined): string {
     const trimmed = serialNumber?.trim();
-    return trimmed === undefined || trimmed === '' ? DEFAULT_PROBE_SELECTION_KEY : `serial:${trimmed}`;
+    return trimmed === undefined || trimmed === ''
+      ? DEFAULT_PROBE_SELECTION_KEY
+      : `serial:${trimmed}`;
   }
 
   /** 判断 probe 选择器是否与当前忙碌操作冲突；默认选择必须与所有操作互斥。 */
@@ -867,7 +956,10 @@ function classifyCortexMFault(registers: CortexMFaultRegisters): CrashDiagnosis[
   return 'unknown';
 }
 
-function describeCortexMFault(registers: CortexMFaultRegisters, fault: CrashDiagnosis['fault']): string {
+function describeCortexMFault(
+  registers: CortexMFaultRegisters,
+  fault: CrashDiagnosis['fault'],
+): string {
   const reasons: string[] = [];
   if ((registers.hfsr & 0x4000_0000) !== 0) reasons.push('HFSR.FORCED');
   if ((registers.hfsr & 0x0000_0002) !== 0) reasons.push('HFSR.VECTTBL');
@@ -878,6 +970,7 @@ function describeCortexMFault(registers: CortexMFaultRegisters, fault: CrashDiag
   if ((registers.cfsr & 0x0000_0100) !== 0) reasons.push('BFSR.IBUSERR');
   if ((registers.cfsr & 0x0000_0002) !== 0) reasons.push('MMFSR.DACCVIOL');
   if ((registers.cfsr & 0x0000_0001) !== 0) reasons.push('MMFSR.IACCVIOL');
-  if (reasons.length === 0 || fault === 'unknown') return 'No active Cortex-M fault bits were detected';
+  if (reasons.length === 0 || fault === 'unknown')
+    return 'No active Cortex-M fault bits were detected';
   return `Cortex-M ${fault}: ${reasons.join(', ')}`;
 }

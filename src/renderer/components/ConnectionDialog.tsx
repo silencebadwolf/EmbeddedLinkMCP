@@ -20,13 +20,7 @@ import {
 import { Button } from './ui/button.js';
 import { Input } from './ui/input.js';
 import { FormField } from './ui/form-field.js';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from './ui/select.js';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select.js';
 import { SerialPortPicker } from './SerialPortPicker.js';
 import { BaudRateInput } from './BaudRateInput.js';
 import { useAppStore } from '../store/app-store.js';
@@ -46,6 +40,7 @@ import type {
   RttLogConnectionConfig,
   SavedConnectionOpenSuccess,
   SessionCreateRequestConfig,
+  UpdateConnectionProfileConfig,
 } from '../../shared/preload-api.js';
 
 const DATA_BITS = ['5', '6', '7', '8'] as const;
@@ -85,6 +80,18 @@ interface FormState {
   rttRoot: string;
   rttProbeId: string;
   rttChannel: string;
+}
+
+interface EditingProfileTarget {
+  id: string;
+  updatedAt: string;
+  type: ConnectionType;
+  hasCredential: boolean;
+}
+
+interface BuiltProfileUpdate {
+  config: UpdateConnectionProfileConfig;
+  credentialAction?: 'preserve' | 'replace';
 }
 
 const INITIAL_FORM: FormState = {
@@ -132,6 +139,106 @@ function parseRttChannel(value: string): number | null {
   if (!/^\d+$/.test(value.trim())) return null;
   const channelIndex = Number(value.trim());
   return Number.isSafeInteger(channelIndex) ? channelIndex : null;
+}
+
+function formFromSavedProfile(profile: SavedConnectionSummary): FormState {
+  const base: FormState = {
+    ...INITIAL_FORM,
+    type: profile.type,
+    label: profile.label,
+    saveProfile: true,
+  };
+  const config = profile.config;
+  switch (config.type) {
+    case 'serial':
+      return {
+        ...base,
+        serialPort: config.port,
+        baudRate: String(config.baudRate),
+        serialMode: config.mode,
+        dataBits: String(config.dataBits ?? 8) as FormDataBits,
+        stopBits: String(config.stopBits ?? 1) as FormStopBits,
+        parity: config.parity ?? 'none',
+        rtscts: config.rtscts ?? false,
+        xon: config.xon ?? false,
+        xoff: config.xoff ?? false,
+      };
+    case 'ssh':
+      return {
+        ...base,
+        sshHost: config.host,
+        sshPort: String(config.port),
+        sshUsername: config.username,
+      };
+    case 'local-shell':
+      return {
+        ...base,
+        localShell: config.shell ?? '',
+        localCwd: config.cwd ?? '',
+      };
+    case 'rtt-log':
+      return {
+        ...base,
+        rttRoot: config.root,
+        rttChannel: String(config.channelIndex),
+      };
+  }
+}
+
+function buildProfileUpdate(form: FormState): BuiltProfileUpdate | null {
+  if (form.type === 'rtt-log') {
+    const config = buildRttConfig(form);
+    if (config === null || !config.root) return null;
+    return {
+      config: {
+        type: 'rtt-log',
+        root: config.root,
+        channelIndex: config.channelIndex,
+        ...(config.pollIntervalMs !== undefined ? { pollIntervalMs: config.pollIntervalMs } : {}),
+        ...(config.maxBytesPerRead !== undefined
+          ? { maxBytesPerRead: config.maxBytesPerRead }
+          : {}),
+      },
+    };
+  }
+  const config = buildConfig(form);
+  if (config === null) return null;
+  if (config.type === 'ssh') {
+    const { credentials, ...sshConfig } = config;
+    const nonSensitiveConfig = withoutLabel(sshConfig);
+    const replacementProvided =
+      credentials.kind === 'password'
+        ? credentials.password.length > 0
+        : credentials.privateKey.length > 0;
+    return replacementProvided
+      ? { config: { ...nonSensitiveConfig, credentials }, credentialAction: 'replace' }
+      : { config: nonSensitiveConfig, credentialAction: 'preserve' };
+  }
+  switch (config.type) {
+    case 'serial':
+      return { config: withoutLabel(config) };
+    case 'local-shell':
+      return { config: withoutLabel(config) };
+  }
+}
+
+function withoutLabel<T extends { label?: string }>(config: T): Omit<T, 'label'> {
+  const copy = { ...config };
+  delete copy.label;
+  return copy;
+}
+
+function defaultUpdateProfileLabel(config: UpdateConnectionProfileConfig): string {
+  switch (config.type) {
+    case 'serial':
+      return `${config.port} @ ${config.baudRate}`;
+    case 'ssh':
+      return `${config.username}@${config.host}`;
+    case 'local-shell':
+      return config.shell || 'Local Shell';
+    case 'rtt-log':
+      return defaultRttLabel(config);
+  }
 }
 
 /**
@@ -237,7 +344,9 @@ function describeProfile(profile: SavedConnectionSummary): string {
     case 'ssh':
       return `${profile.config.username}@${profile.config.host}:${profile.config.port}${profile.hasCredential ? ' · credential saved' : ''}`;
     case 'local-shell':
-      return [profile.config.shell, profile.config.cwd].filter(Boolean).join(' · ') || 'local shell';
+      return (
+        [profile.config.shell, profile.config.cwd].filter(Boolean).join(' · ') || 'local shell'
+      );
     case 'rtt-log':
       return defaultRttLabel(profile.config);
   }
@@ -266,7 +375,10 @@ export function ConnectionDialog(): React.ReactElement {
   const { create } = useSessions();
 
   const [form, setForm] = React.useState<FormState>(INITIAL_FORM);
-  const [savedProfiles, setSavedProfiles] = React.useState<ReadonlyArray<SavedConnectionSummary>>([]);
+  const [savedProfiles, setSavedProfiles] = React.useState<ReadonlyArray<SavedConnectionSummary>>(
+    [],
+  );
+  const [editingProfile, setEditingProfile] = React.useState<EditingProfileTarget | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -286,6 +398,7 @@ export function ConnectionDialog(): React.ReactElement {
       setForm(INITIAL_FORM);
       setError(null);
       setSubmitting(false);
+      setEditingProfile(null);
       return;
     }
     void loadSavedProfiles();
@@ -293,6 +406,18 @@ export function ConnectionDialog(): React.ReactElement {
     const prefill = useAppStore.getState().connectionDialogPrefill;
     if (!prefill) return;
     const inferred = inferType(prefill);
+    setEditingProfile(
+      prefill.connectionProfileId !== undefined &&
+        prefill.connectionProfileUpdatedAt !== undefined &&
+        inferred !== undefined
+        ? {
+            id: prefill.connectionProfileId,
+            updatedAt: prefill.connectionProfileUpdatedAt,
+            type: inferred,
+            hasCredential: false,
+          }
+        : null,
+    );
     setForm({
       ...INITIAL_FORM,
       ...(inferred !== undefined ? { type: inferred } : {}),
@@ -374,6 +499,17 @@ export function ConnectionDialog(): React.ReactElement {
       return;
     }
     await loadSavedProfiles();
+  };
+
+  const beginEditSavedProfile = (profile: SavedConnectionSummary): void => {
+    setError(null);
+    setEditingProfile({
+      id: profile.id,
+      updatedAt: profile.updatedAt,
+      type: profile.type,
+      hasCredential: profile.hasCredential,
+    });
+    setForm(formFromSavedProfile(profile));
   };
 
   const browseRttWorkspace = async (): Promise<void> => {
@@ -458,7 +594,10 @@ export function ConnectionDialog(): React.ReactElement {
       label,
       connectionType: 'rtt-log',
       state: result.data.state,
-      rttLog: { probeId: resolvedProbeId || config.root || 'rtt', channelIndex: resolvedChannelIndex },
+      rttLog: {
+        probeId: resolvedProbeId || config.root || 'rtt',
+        channelIndex: resolvedChannelIndex,
+      },
     });
     useAppStore.getState().setActive(result.data.sessionId);
     closeDialog();
@@ -468,6 +607,54 @@ export function ConnectionDialog(): React.ReactElement {
   const onSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError(null);
+    if (editingProfile !== null) {
+      const updateInput = buildProfileUpdate(form);
+      if (updateInput === null) {
+        setError(t('error.create.failed'));
+        return;
+      }
+      if (
+        editingProfile.type === 'ssh' &&
+        !editingProfile.hasCredential &&
+        updateInput.credentialAction === 'preserve'
+      ) {
+        setError(t('dialog.saved.credentialsRequired'));
+        return;
+      }
+      setSubmitting(true);
+      try {
+        const api = getLinkterm();
+        if (!api) {
+          setError(t('error.create.failed'));
+          return;
+        }
+        const result = await api.connections.updateAndOpen({
+          profileId: editingProfile.id,
+          expectedUpdatedAt: editingProfile.updatedAt,
+          label: form.label.trim() || defaultUpdateProfileLabel(updateInput.config),
+          config: updateInput.config,
+          ...(updateInput.credentialAction !== undefined
+            ? { credentialAction: updateInput.credentialAction }
+            : {}),
+        });
+        if (!result.success) {
+          setError(result.error.message || t('error.create.failed'));
+          return;
+        }
+        addCreatedSession(
+          result.data.sessionId,
+          result.data.state,
+          result.data.profile,
+          result.data.profile.label,
+          result.data.rttLog,
+        );
+        closeDialog();
+      } finally {
+        setForm((prev) => ({ ...prev, sshPassword: '', sshPrivateKey: '', sshPassphrase: '' }));
+        setSubmitting(false);
+      }
+      return;
+    }
     if (form.type === 'rtt-log') {
       setSubmitting(true);
       try {
@@ -540,9 +727,7 @@ export function ConnectionDialog(): React.ReactElement {
         <form onSubmit={onSubmit} className="space-y-3">
           {savedProfiles.length > 0 && (
             <section className="rounded-md border border-gray-800 bg-gray-900/60 p-3">
-              <p className="mb-2 text-sm font-medium text-gray-200">
-                {t('dialog.saved.title')}
-              </p>
+              <p className="mb-2 text-sm font-medium text-gray-200">{t('dialog.saved.title')}</p>
               <div className="space-y-2">
                 {savedProfiles.map((profile) => (
                   <div
@@ -554,6 +739,15 @@ export function ConnectionDialog(): React.ReactElement {
                       <p className="truncate text-xs text-gray-500">{describeProfile(profile)}</p>
                     </div>
                     <div className="flex shrink-0 gap-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={submitting}
+                        onClick={() => beginEditSavedProfile(profile)}
+                      >
+                        {t('dialog.saved.edit')}
+                      </Button>
                       <Button
                         type="button"
                         size="sm"
@@ -583,6 +777,7 @@ export function ConnectionDialog(): React.ReactElement {
           <FormField id="conn-type" label={t('dialog.type.label')}>
             <Select
               value={form.type}
+              disabled={editingProfile !== null}
               onValueChange={(v) => update('type', v as ConnectionType)}
             >
               <SelectTrigger id="conn-type" data-testid="conn-type-trigger">
@@ -633,12 +828,8 @@ export function ConnectionDialog(): React.ReactElement {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="normal">
-                        {t('dialog.serial.mode.normal')}
-                      </SelectItem>
-                      <SelectItem value="terminal">
-                        {t('dialog.serial.mode.terminal')}
-                      </SelectItem>
+                      <SelectItem value="normal">{t('dialog.serial.mode.normal')}</SelectItem>
+                      <SelectItem value="terminal">{t('dialog.serial.mode.terminal')}</SelectItem>
                     </SelectContent>
                   </Select>
                 </FormField>
@@ -658,7 +849,9 @@ export function ConnectionDialog(): React.ReactElement {
                       </SelectTrigger>
                       <SelectContent>
                         {DATA_BITS.map((bits) => (
-                          <SelectItem key={bits} value={bits}>{bits}</SelectItem>
+                          <SelectItem key={bits} value={bits}>
+                            {bits}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -673,7 +866,9 @@ export function ConnectionDialog(): React.ReactElement {
                       </SelectTrigger>
                       <SelectContent>
                         {STOP_BITS.map((bits) => (
-                          <SelectItem key={bits} value={bits}>{bits}</SelectItem>
+                          <SelectItem key={bits} value={bits}>
+                            {bits}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -688,7 +883,9 @@ export function ConnectionDialog(): React.ReactElement {
                       </SelectTrigger>
                       <SelectContent>
                         {PARITIES.map((parity) => (
-                          <SelectItem key={parity} value={parity}>{parity}</SelectItem>
+                          <SelectItem key={parity} value={parity}>
+                            {parity}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -760,12 +957,8 @@ export function ConnectionDialog(): React.ReactElement {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="password">
-                      {t('dialog.ssh.auth.password')}
-                    </SelectItem>
-                    <SelectItem value="privateKey">
-                      {t('dialog.ssh.auth.privateKey')}
-                    </SelectItem>
+                    <SelectItem value="password">{t('dialog.ssh.auth.password')}</SelectItem>
+                    <SelectItem value="privateKey">{t('dialog.ssh.auth.privateKey')}</SelectItem>
                   </SelectContent>
                 </Select>
               </FormField>
@@ -869,6 +1062,7 @@ export function ConnectionDialog(): React.ReactElement {
             <input
               type="checkbox"
               checked={form.saveProfile}
+              disabled={editingProfile !== null}
               onChange={(e) => update('saveProfile', e.target.checked)}
             />
             {t('dialog.saveProfile')}
@@ -877,16 +1071,15 @@ export function ConnectionDialog(): React.ReactElement {
           {error && <p className="text-sm text-red-400">{error}</p>}
 
           <DialogFooter className="pt-2">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={closeDialog}
-              disabled={submitting}
-            >
+            <Button type="button" variant="ghost" onClick={closeDialog} disabled={submitting}>
               {t('dialog.cancel')}
             </Button>
             <Button type="submit" disabled={submitting}>
-              {submitting ? t('dialog.creating') : t('dialog.create')}
+              {submitting
+                ? t('dialog.creating')
+                : editingProfile !== null
+                  ? t('dialog.saved.updateAndOpen')
+                  : t('dialog.create')}
             </Button>
           </DialogFooter>
         </form>

@@ -93,6 +93,7 @@ export function ControlProfilePanel({
     onOpenSerialConnection === undefined ? 'full' : 'choose',
   );
   const [saving, setSaving] = React.useState(false);
+  const [recoveringVcom, setRecoveringVcom] = React.useState(false);
   const [savedRecords, setSavedRecords] = React.useState<
     ReadonlyArray<SavedControlProfileRecordPayload>
   >([]);
@@ -200,7 +201,13 @@ export function ControlProfilePanel({
               rtt: rttProfile,
             }),
       };
-      const result = await api.controlProfile.save({ root: root.trim(), profile });
+      const result = await api.controlProfile.save({
+        root: root.trim(),
+        profile,
+        ...(repairRecord !== null
+          ? { recordId: repairRecord.id, expectedUpdatedAt: repairRecord.updatedAt }
+          : {}),
+      });
       if (result.success) {
         if (result.data.record) {
           setSavedRecords((records) => upsertRecord(records, result.data.record!));
@@ -256,6 +263,49 @@ export function ControlProfilePanel({
       classification.kind === 'stm32-order-code' ? (classification.message ?? null) : null,
     );
     void searchDeviceCatalog(value);
+  };
+
+  const recoverJlinkVcom = async (): Promise<void> => {
+    if (repairRecord === null) return;
+    const api = getLinkterm();
+    if (!api) {
+      setError(t('controlProfile.error.preloadUnavailable'));
+      return;
+    }
+    setRecoveringVcom(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await api.controlProfile.recoverJlinkVcom({
+        recordId: repairRecord.id,
+        expectedUpdatedAt: repairRecord.updatedAt,
+      });
+      if (!result.success) {
+        setError(result.error.message);
+        return;
+      }
+      setSavedRecords((records) => upsertRecord(records, result.data.record));
+      onRecordsChanged?.();
+      if (result.data.port !== undefined) setSerialPort(result.data.port);
+      if (result.data.sessionId !== undefined && result.data.sessionState !== undefined) {
+        addSession({
+          id: result.data.sessionId,
+          label: result.data.record.label,
+          connectionType: 'serial',
+          state: result.data.sessionState,
+        });
+        setActive(result.data.sessionId);
+      }
+      const messageKey =
+        result.data.status === 'power-cycle-required'
+          ? 'controlProfile.vcom.powerCycleRequired'
+          : 'controlProfile.vcom.recovered';
+      setMessage(
+        `${t(messageKey)}${result.data.firmwareUpdateObserved ? ` ${t('controlProfile.vcom.firmwareUpdated')}` : ''}`,
+      );
+    } finally {
+      setRecoveringVcom(false);
+    }
   };
 
   const selectCatalogDevice = (device: JLinkDeviceInfoPayload): void => {
@@ -368,10 +418,7 @@ export function ControlProfilePanel({
         </DialogHeader>
 
         {setupMode === 'choose' && onOpenSerialConnection !== undefined ? (
-          <div
-            data-testid="workspace-setup-chooser"
-            className="grid gap-3 py-2 sm:grid-cols-2"
-          >
+          <div data-testid="workspace-setup-chooser" className="grid gap-3 py-2 sm:grid-cols-2">
             <Button
               type="button"
               variant="secondary"
@@ -406,244 +453,273 @@ export function ControlProfilePanel({
           </div>
         ) : (
           <>
-        <div className="grid max-h-[65vh] gap-4 overflow-y-auto py-1 sm:grid-cols-2">
-          {savedRecords.length > 0 ? (
-            <section className="space-y-2 rounded-md border border-gray-800 bg-gray-900/60 p-3 sm:col-span-2">
-              <h3 className="text-sm font-medium text-gray-200">
-                {t('controlProfile.records.title')}
-              </h3>
-              <div className="space-y-2">
-                {savedRecords.map((record) => (
-                  <div
-                    key={record.id}
-                    className="flex items-center justify-between gap-3 rounded border border-gray-800 px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-gray-100">
-                        {record.label}
-                      </div>
-                      <div className="truncate text-xs text-gray-500">
-                        {record.source === 'ai'
-                          ? t('controlProfile.record.source.ai')
-                          : t('controlProfile.record.source.manual')}{' '}
-                        / {record.root}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => void openSavedRecord(record.id)}
-                        disabled={openingRecordId === record.id || deletingRecordId === record.id}
+            <div className="grid max-h-[65vh] gap-4 overflow-y-auto py-1 sm:grid-cols-2">
+              {savedRecords.length > 0 ? (
+                <section className="space-y-2 rounded-md border border-gray-800 bg-gray-900/60 p-3 sm:col-span-2">
+                  <h3 className="text-sm font-medium text-gray-200">
+                    {t('controlProfile.records.title')}
+                  </h3>
+                  <div className="space-y-2">
+                    {savedRecords.map((record) => (
+                      <div
+                        key={record.id}
+                        className="flex items-center justify-between gap-3 rounded border border-gray-800 px-3 py-2"
                       >
-                        {openingRecordId === record.id
-                          ? t('controlProfile.record.opening')
-                          : t('controlProfile.record.open')}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() => void deleteSavedRecord(record.id)}
-                        disabled={deletingRecordId !== null || openingRecordId === record.id}
-                      >
-                        {deletingRecordId === record.id
-                          ? t('controlProfile.record.deleting')
-                          : t('controlProfile.record.delete')}
-                      </Button>
-                    </div>
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-medium text-gray-100">
+                            {record.label}
+                          </div>
+                          <div className="truncate text-xs text-gray-500">
+                            {record.source === 'ai'
+                              ? t('controlProfile.record.source.ai')
+                              : t('controlProfile.record.source.manual')}{' '}
+                            / {record.root}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => void openSavedRecord(record.id)}
+                            disabled={
+                              openingRecordId === record.id || deletingRecordId === record.id
+                            }
+                          >
+                            {openingRecordId === record.id
+                              ? t('controlProfile.record.opening')
+                              : t('controlProfile.record.open')}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => void deleteSavedRecord(record.id)}
+                            disabled={deletingRecordId !== null || openingRecordId === record.id}
+                          >
+                            {deletingRecordId === record.id
+                              ? t('controlProfile.record.deleting')
+                              : t('controlProfile.record.delete')}
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </section>
-          ) : null}
+                </section>
+              ) : null}
 
-          <div className="space-y-2 sm:col-span-2">
-            <Label htmlFor="control-root">{t('controlProfile.workspaceRoot')}</Label>
-            <div className="flex gap-2">
-              <Input
-                id="control-root"
-                value={root}
-                onChange={(e) => setRoot(e.target.value)}
-                placeholder={t('controlProfile.workspaceRoot.placeholder')}
-              />
-              <Button type="button" variant="secondary" onClick={() => void browseWorkspace()}>
-                {t('controlProfile.browseWorkspace')}
-              </Button>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="control-observation">{t('controlProfile.observationChannel')}</Label>
-            <select
-              id="control-observation"
-              value={observationChannel}
-              onChange={(e) => setObservationChannel(e.target.value as ObservationChannel)}
-              className={SELECT_CLASS}
-            >
-              <option value="serial">{t('controlProfile.observation.serial')}</option>
-              <option value="rtt">{t('controlProfile.observation.rtt')}</option>
-            </select>
-          </div>
-
-          {observationChannel === 'serial' ? (
-            <>
-              <div className="space-y-2">
-                <Label>{t('controlProfile.serialPort')}</Label>
-                <SerialPortPicker value={serialPort} onChange={setSerialPort} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="control-baud">{t('controlProfile.baudRate')}</Label>
-                <BaudRateInput id="control-baud" value={baudRate} onChange={setBaudRate} />
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="control-root">{t('controlProfile.workspaceRoot')}</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="control-root"
+                    value={root}
+                    onChange={(e) => setRoot(e.target.value)}
+                    placeholder={t('controlProfile.workspaceRoot.placeholder')}
+                  />
+                  <Button type="button" variant="secondary" onClick={() => void browseWorkspace()}>
+                    {t('controlProfile.browseWorkspace')}
+                  </Button>
+                </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="control-serial-mode">{t('controlProfile.serialMode')}</Label>
+                <Label htmlFor="control-observation">
+                  {t('controlProfile.observationChannel')}
+                </Label>
                 <select
-                  id="control-serial-mode"
-                  value={serialMode}
-                  onChange={(e) => setSerialMode(e.target.value as 'normal' | 'terminal')}
+                  id="control-observation"
+                  value={observationChannel}
+                  onChange={(e) => setObservationChannel(e.target.value as ObservationChannel)}
                   className={SELECT_CLASS}
                 >
-                  <option value="terminal">{t('dialog.serial.mode.terminal')}</option>
-                  <option value="normal">{t('dialog.serial.mode.normal')}</option>
+                  <option value="serial">{t('controlProfile.observation.serial')}</option>
+                  <option value="rtt">{t('controlProfile.observation.rtt')}</option>
                 </select>
               </div>
-            </>
-          ) : null}
 
-          <div className="space-y-2">
-            <Label htmlFor="control-interface">{t('controlProfile.debugInterface')}</Label>
-            <select
-              id="control-interface"
-              value={debugInterface}
-              onChange={(e) => setDebugInterface(e.target.value as 'swd' | 'jtag')}
-              className={SELECT_CLASS}
-            >
-              <option value="swd">SWD</option>
-              <option value="jtag">JTAG</option>
-            </select>
-          </div>
+              {observationChannel === 'serial' ? (
+                <>
+                  <div className="space-y-2">
+                    <Label>{t('controlProfile.serialPort')}</Label>
+                    <SerialPortPicker value={serialPort} onChange={setSerialPort} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="control-baud">{t('controlProfile.baudRate')}</Label>
+                    <BaudRateInput id="control-baud" value={baudRate} onChange={setBaudRate} />
+                  </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="control-target">{t('controlProfile.target')}</Label>
-            <Input
-              id="control-target"
-              value={target}
-              onChange={(e) => updateTarget(e.target.value)}
-              placeholder={t('controlProfile.target.placeholder')}
-            />
-            {searchingDevices ? (
-              <p className="text-xs text-gray-400">{t('controlProfile.target.catalogSearching')}</p>
-            ) : null}
-            {deviceCatalogAvailable === false ? (
-              <p className="text-xs text-gray-400">
-                {t('controlProfile.target.catalogUnavailable')}
+                  <div className="space-y-2">
+                    <Label htmlFor="control-serial-mode">{t('controlProfile.serialMode')}</Label>
+                    <select
+                      id="control-serial-mode"
+                      value={serialMode}
+                      onChange={(e) => setSerialMode(e.target.value as 'normal' | 'terminal')}
+                      className={SELECT_CLASS}
+                    >
+                      <option value="terminal">{t('dialog.serial.mode.terminal')}</option>
+                      <option value="normal">{t('dialog.serial.mode.normal')}</option>
+                    </select>
+                  </div>
+                </>
+              ) : null}
+
+              <div className="space-y-2">
+                <Label htmlFor="control-interface">{t('controlProfile.debugInterface')}</Label>
+                <select
+                  id="control-interface"
+                  value={debugInterface}
+                  onChange={(e) => setDebugInterface(e.target.value as 'swd' | 'jtag')}
+                  className={SELECT_CLASS}
+                >
+                  <option value="swd">SWD</option>
+                  <option value="jtag">JTAG</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="control-target">{t('controlProfile.target')}</Label>
+                <Input
+                  id="control-target"
+                  value={target}
+                  onChange={(e) => updateTarget(e.target.value)}
+                  placeholder={t('controlProfile.target.placeholder')}
+                />
+                {searchingDevices ? (
+                  <p className="text-xs text-gray-400">
+                    {t('controlProfile.target.catalogSearching')}
+                  </p>
+                ) : null}
+                {deviceCatalogAvailable === false ? (
+                  <p className="text-xs text-gray-400">
+                    {t('controlProfile.target.catalogUnavailable')}
+                  </p>
+                ) : null}
+                {deviceOptions.length > 0 ? (
+                  <div className="max-h-36 overflow-y-auto rounded-md border border-gray-800 bg-gray-900">
+                    {deviceOptions.map((device) => (
+                      <button
+                        key={`${device.sourceFile}:${device.name}`}
+                        type="button"
+                        onClick={() => selectCatalogDevice(device)}
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs text-gray-100 hover:bg-gray-800"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">{device.name}</span>
+                          <span className="block truncate text-gray-500">
+                            {[device.vendor, device.core, ...(device.aliases ?? [])]
+                              .filter(Boolean)
+                              .join(' / ') || t('controlProfile.target.source')}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-gray-500">
+                          {t('controlProfile.target.source')}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {targetHint ? <p className="text-xs text-amber-300">{targetHint}</p> : null}
+                {showManualTargetWarning ? (
+                  <p className="text-xs text-amber-300">
+                    {t('controlProfile.target.manualWarning')}
+                  </p>
+                ) : null}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="control-speed">{t('controlProfile.jlinkSpeed')}</Label>
+                <select
+                  id="control-speed"
+                  value={speedKHz}
+                  onChange={(e) =>
+                    setSpeedKHz(e.target.value as (typeof JLINK_SPEED_OPTIONS)[number])
+                  }
+                  className={SELECT_CLASS}
+                >
+                  {JLINK_SPEED_OPTIONS.map((speed) => (
+                    <option key={speed} value={speed}>
+                      {speed === 'auto' ? t('controlProfile.jlinkSpeed.auto') : speed}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="control-binary">{t('controlProfile.firmwarePath')}</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="control-binary"
+                    value={binary}
+                    onChange={(e) => setBinary(e.target.value)}
+                    placeholder={t('controlProfile.firmwarePath.placeholder')}
+                  />
+                  <Button type="button" variant="secondary" onClick={() => void browseFirmware()}>
+                    {t('controlProfile.browseFirmware')}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="control-address">{t('controlProfile.flashBaseAddress')}</Label>
+                <Input
+                  id="control-address"
+                  value={baseAddress}
+                  onChange={(e) => setBaseAddress(e.target.value)}
+                  placeholder="0x08000000"
+                />
+              </div>
+
+              {observationChannel === 'rtt' ? (
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="control-rtt-control-block">
+                    {t('controlProfile.rttControlBlockAddress')}
+                  </Label>
+                  <Input
+                    id="control-rtt-control-block"
+                    value={rttControlBlockAddress}
+                    onChange={(e) => setRttControlBlockAddress(e.target.value)}
+                    placeholder="0x24005310"
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            {error ? (
+              <p
+                role="alert"
+                className="rounded border border-red-900 bg-red-950 px-3 py-2 text-sm text-red-100"
+              >
+                {error}
               </p>
             ) : null}
-            {deviceOptions.length > 0 ? (
-              <div className="max-h-36 overflow-y-auto rounded-md border border-gray-800 bg-gray-900">
-                {deviceOptions.map((device) => (
-                  <button
-                    key={`${device.sourceFile}:${device.name}`}
-                    type="button"
-                    onClick={() => selectCatalogDevice(device)}
-                    className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs text-gray-100 hover:bg-gray-800"
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate font-medium">{device.name}</span>
-                      <span className="block truncate text-gray-500">
-                        {[device.vendor, device.core, ...(device.aliases ?? [])]
-                          .filter(Boolean)
-                          .join(' / ') || t('controlProfile.target.source')}
-                      </span>
-                    </span>
-                    <span className="shrink-0 text-gray-500">
-                      {t('controlProfile.target.source')}
-                    </span>
-                  </button>
-                ))}
-              </div>
+            {message ? (
+              <p
+                role="status"
+                className="rounded border border-emerald-900 bg-emerald-950 px-3 py-2 text-sm text-emerald-100"
+              >
+                {message}
+              </p>
             ) : null}
-            {targetHint ? <p className="text-xs text-amber-300">{targetHint}</p> : null}
-            {showManualTargetWarning ? (
-              <p className="text-xs text-amber-300">{t('controlProfile.target.manualWarning')}</p>
-            ) : null}
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="control-speed">{t('controlProfile.jlinkSpeed')}</Label>
-            <select
-              id="control-speed"
-              value={speedKHz}
-              onChange={(e) => setSpeedKHz(e.target.value as (typeof JLINK_SPEED_OPTIONS)[number])}
-              className={SELECT_CLASS}
-            >
-              {JLINK_SPEED_OPTIONS.map((speed) => (
-                <option key={speed} value={speed}>
-                  {speed === 'auto' ? t('controlProfile.jlinkSpeed.auto') : speed}
-                </option>
-              ))}
-            </select>
-          </div>
 
-          <div className="space-y-2 sm:col-span-2">
-            <Label htmlFor="control-binary">{t('controlProfile.firmwarePath')}</Label>
-            <div className="flex gap-2">
-              <Input
-                id="control-binary"
-                value={binary}
-                onChange={(e) => setBinary(e.target.value)}
-                placeholder={t('controlProfile.firmwarePath.placeholder')}
-              />
-              <Button type="button" variant="secondary" onClick={() => void browseFirmware()}>
-                {t('controlProfile.browseFirmware')}
+            <DialogFooter>
+              {repairRecord?.profile.serial?.enabled === true &&
+              repairRecord.profile.jlink?.interface === 'swd' ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void recoverJlinkVcom()}
+                  disabled={saving || recoveringVcom}
+                >
+                  {recoveringVcom
+                    ? t('controlProfile.vcom.recovering')
+                    : t('controlProfile.vcom.recover')}
+                </Button>
+              ) : null}
+              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+                {t('controlProfile.close')}
               </Button>
-            </div>
-          </div>
-
-          <div className="space-y-2 sm:col-span-2">
-            <Label htmlFor="control-address">{t('controlProfile.flashBaseAddress')}</Label>
-            <Input
-              id="control-address"
-              value={baseAddress}
-              onChange={(e) => setBaseAddress(e.target.value)}
-              placeholder="0x08000000"
-            />
-          </div>
-
-          {observationChannel === 'rtt' ? (
-            <div className="space-y-2 sm:col-span-2">
-              <Label htmlFor="control-rtt-control-block">
-                {t('controlProfile.rttControlBlockAddress')}
-              </Label>
-              <Input
-                id="control-rtt-control-block"
-                value={rttControlBlockAddress}
-                onChange={(e) => setRttControlBlockAddress(e.target.value)}
-                placeholder="0x24005310"
-              />
-            </div>
-          ) : null}
-        </div>
-
-        {error ? (
-          <p role="alert" className="rounded border border-red-900 bg-red-950 px-3 py-2 text-sm text-red-100">
-            {error}
-          </p>
-        ) : null}
-        {message ? (
-          <p role="status" className="rounded border border-emerald-900 bg-emerald-950 px-3 py-2 text-sm text-emerald-100">
-            {message}
-          </p>
-        ) : null}
-
-        <DialogFooter>
-          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-            {t('controlProfile.close')}
-          </Button>
-          <Button type="button" onClick={() => void save()} disabled={saving}>
-            {saving ? t('controlProfile.saving') : t('controlProfile.save')}
-          </Button>
-        </DialogFooter>
+              <Button type="button" onClick={() => void save()} disabled={saving}>
+                {saving ? t('controlProfile.saving') : t('controlProfile.save')}
+              </Button>
+            </DialogFooter>
           </>
         )}
       </DialogContent>

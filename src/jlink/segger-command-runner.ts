@@ -7,11 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
 import { normalizeJLinkTargetName } from '../shared/jlink-target-name.js';
-import {
-  JLinkAbortedError,
-  JLinkInvalidStateError,
-  JLinkOperationError,
-} from './errors.js';
+import { JLinkAbortedError, JLinkInvalidStateError, JLinkOperationError } from './errors.js';
 import type {
   CommanderScriptResult,
   FlashProgressUpdate,
@@ -22,6 +18,8 @@ import type {
   RttChannelInfo,
   RttReadResult,
 } from './types.js';
+import type { ProbeSelector, VcomChangeResult, VcomInspection } from './vcom-types.js';
+import { parseSeggerVcomChange, parseSeggerVcomInspection } from './segger-vcom-control.js';
 
 /** Probe context required by SEGGER Commander commands. */
 export interface CommanderProbeContext {
@@ -105,16 +103,28 @@ export interface JLinkCommanderClient {
   connectTarget?(probe: CommanderProbeContext, signal?: AbortSignal): Promise<void>;
 
   /** Reboot the J-Link probe itself without opening a target connection. */
-  rebootProbe?(
-    opts?: JLinkRebootOptions,
+  rebootProbe?(opts?: JLinkRebootOptions, signal?: AbortSignal): Promise<CommanderScriptResult>;
+
+  /** Query the probe-level VCOM feature without opening a target connection. */
+  inspectVcom?(selector?: ProbeSelector, signal?: AbortSignal): Promise<VcomInspection>;
+
+  /** Explicitly request probe-level VCOM enable/disable. */
+  setVcomEnabled?(
+    selector: ProbeSelector | undefined,
+    enabled: boolean,
     signal?: AbortSignal,
-  ): Promise<CommanderScriptResult>;
+  ): Promise<VcomChangeResult>;
 
   /** Program a raw binary at an explicit address. */
   download(
     probe: CommanderProbeContext,
     binary: Buffer,
-    opts: { address: number; verify?: boolean; timeoutMs?: number; onProgress?: (update: FlashProgressUpdate) => void },
+    opts: {
+      address: number;
+      verify?: boolean;
+      timeoutMs?: number;
+      onProgress?: (update: FlashProgressUpdate) => void;
+    },
     signal?: AbortSignal,
   ): Promise<{ bytesWritten: number; verified: boolean }>;
 
@@ -122,18 +132,35 @@ export interface JLinkCommanderClient {
   verify(
     probe: CommanderProbeContext,
     binary: Buffer,
-    opts: { address: number; timeoutMs?: number; onProgress?: (update: FlashProgressUpdate) => void },
+    opts: {
+      address: number;
+      timeoutMs?: number;
+      onProgress?: (update: FlashProgressUpdate) => void;
+    },
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; mismatchAt?: number }>;
 
   /** Erase full flash or a bounded address range. */
-  eraseFlash(probe: CommanderProbeContext, opts?: { address?: number; length?: number }, signal?: AbortSignal): Promise<void>;
+  eraseFlash(
+    probe: CommanderProbeContext,
+    opts?: { address?: number; length?: number },
+    signal?: AbortSignal,
+  ): Promise<void>;
 
   /** Program flash bytes at an explicit address without an extra verify pass. */
-  writeFlash(probe: CommanderProbeContext, address: number, data: Buffer, signal?: AbortSignal): Promise<void>;
+  writeFlash(
+    probe: CommanderProbeContext,
+    address: number,
+    data: Buffer,
+    signal?: AbortSignal,
+  ): Promise<void>;
 
   /** Reset the target CPU; halt=true requests a halt immediately after reset. */
-  reset(probe: CommanderProbeContext, opts?: { halt?: boolean }, signal?: AbortSignal): Promise<void>;
+  reset(
+    probe: CommanderProbeContext,
+    opts?: { halt?: boolean },
+    signal?: AbortSignal,
+  ): Promise<void>;
 
   /** Halt the current target CPU execution. */
   halt(probe: CommanderProbeContext, signal?: AbortSignal): Promise<void>;
@@ -145,25 +172,52 @@ export interface JLinkCommanderClient {
   step(probe: CommanderProbeContext, signal?: AbortSignal): Promise<void>;
 
   /** Read one CPU register and return a structured numeric value. */
-  readRegister(probe: CommanderProbeContext, name: string, signal?: AbortSignal): Promise<RegisterValue>;
+  readRegister(
+    probe: CommanderProbeContext,
+    name: string,
+    signal?: AbortSignal,
+  ): Promise<RegisterValue>;
 
   /** Write one CPU register. */
-  writeRegister(probe: CommanderProbeContext, name: string, value: number, signal?: AbortSignal): Promise<void>;
+  writeRegister(
+    probe: CommanderProbeContext,
+    name: string,
+    value: number,
+    signal?: AbortSignal,
+  ): Promise<void>;
 
   /** List architecture-visible CPU registers as structured numeric values. */
   listRegisters(probe: CommanderProbeContext, signal?: AbortSignal): Promise<RegisterValue[]>;
 
   /** Read a contiguous target memory range as bytes. */
-  readMemory(probe: CommanderProbeContext, range: MemoryRange, signal?: AbortSignal): Promise<Buffer>;
+  readMemory(
+    probe: CommanderProbeContext,
+    range: MemoryRange,
+    signal?: AbortSignal,
+  ): Promise<Buffer>;
 
   /** Write bytes into target memory. */
-  writeMemory(probe: CommanderProbeContext, address: number, data: Buffer, signal?: AbortSignal): Promise<void>;
+  writeMemory(
+    probe: CommanderProbeContext,
+    address: number,
+    data: Buffer,
+    signal?: AbortSignal,
+  ): Promise<void>;
 
   /** Set a target breakpoint at an address. */
-  setBreakpoint(probe: CommanderProbeContext, address: number, kind?: 'sw' | 'hw', signal?: AbortSignal): Promise<void>;
+  setBreakpoint(
+    probe: CommanderProbeContext,
+    address: number,
+    kind?: 'sw' | 'hw',
+    signal?: AbortSignal,
+  ): Promise<void>;
 
   /** Clear a target breakpoint by address. */
-  clearBreakpoint(probe: CommanderProbeContext, address: number, signal?: AbortSignal): Promise<void>;
+  clearBreakpoint(
+    probe: CommanderProbeContext,
+    address: number,
+    signal?: AbortSignal,
+  ): Promise<void>;
 
   /** Run a LinkTerm-controlled Commander diagnostic script and return sanitized process output. */
   runScript(
@@ -247,7 +301,11 @@ export interface JLinkRttSession {
   readonly channels: RttChannelInfo[];
   read(channelIndex: number, maxBytes: number): Promise<RttReadResult>;
   write(channelIndex: number, data: Buffer): Promise<void>;
-  search(channelIndex: number, pattern: string, maxBytes: number): Promise<{ matchAt: number | null; preview: Buffer }>;
+  search(
+    channelIndex: number,
+    pattern: string,
+    maxBytes: number,
+  ): Promise<{ matchAt: number | null; preview: Buffer }>;
   clear(channelIndex: number): Promise<void>;
   close(): Promise<void>;
 }
@@ -313,14 +371,19 @@ function sanitizeProcessOutput(output: string): string {
 }
 
 function defaultRawFlashTimeoutMs(binaryLength: number): number {
-  return binaryLength >= LARGE_RAW_FLASH_THRESHOLD_BYTES ? LARGE_RAW_FLASH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+  return binaryLength >= LARGE_RAW_FLASH_THRESHOLD_BYTES
+    ? LARGE_RAW_FLASH_TIMEOUT_MS
+    : DEFAULT_TIMEOUT_MS;
 }
 
 function tail(value: string, maxChars: number): string {
   return value.length <= maxChars ? value : value.slice(value.length - maxChars);
 }
 
-function terminateProcessTree(child: ChildProcessByStdio<null, Readable, Readable>, signal: NodeJS.Signals): void {
+function terminateProcessTree(
+  child: ChildProcessByStdio<null, Readable, Readable>,
+  signal: NodeJS.Signals,
+): void {
   if (child.pid === undefined) return;
   if (process.platform === 'win32') {
     execFile(
@@ -447,7 +510,11 @@ export class NodeSeggerProcessRunner implements SeggerProcessRunner {
         if (settled) return;
         if (terminatingError !== undefined) {
           if (timeoutMessagePrefix !== undefined && terminatingError instanceof JLinkAbortedError) {
-            rejectOnce(new JLinkAbortedError(`${timeoutMessagePrefix}${formatOutputPreview(stdout, stderr)}`));
+            rejectOnce(
+              new JLinkAbortedError(
+                `${timeoutMessagePrefix}${formatOutputPreview(stdout, stderr)}`,
+              ),
+            );
             return;
           }
           rejectOnce(terminatingError);
@@ -612,9 +679,12 @@ export class NodeSeggerManagedProcessRunner implements SeggerManagedProcessRunne
         const preview = formatOutputPreview(output, '');
         const closeReason = signal === null ? `exit code ${exitCode}` : `signal ${signal}`;
         rejectOnce(
-          new JLinkOperationError(`${request.processName} exited before becoming ready (${closeReason})${preview}`, {
-            operation: 'runSeggerManagedProcess',
-          }),
+          new JLinkOperationError(
+            `${request.processName} exited before becoming ready (${closeReason})${preview}`,
+            {
+              operation: 'runSeggerManagedProcess',
+            },
+          ),
         );
       });
 
@@ -623,7 +693,9 @@ export class NodeSeggerManagedProcessRunner implements SeggerManagedProcessRunne
       timer = setTimeout(() => {
         terminate();
         rejectOnce(
-          new JLinkAbortedError(`${request.processName} timed out after ${timeoutMs}ms${formatOutputPreview(output, '')}`),
+          new JLinkAbortedError(
+            `${request.processName} timed out after ${timeoutMs}ms${formatOutputPreview(output, '')}`,
+          ),
         );
       }, timeoutMs);
       if (request.signal?.aborted) onAbort();
@@ -693,16 +765,23 @@ class SocketJLinkRttSession implements JLinkRttSession {
     assertRttChannel(channelIndex, 'down');
     await new Promise<void>((resolve, reject) => {
       this.#socket.write(data, (err) => {
-        if (err) reject(new JLinkOperationError('Failed to write to J-Link RTT telnet endpoint', {
-          operation: 'rttWrite',
-          underlying: err,
-        }));
+        if (err)
+          reject(
+            new JLinkOperationError('Failed to write to J-Link RTT telnet endpoint', {
+              operation: 'rttWrite',
+              underlying: err,
+            }),
+          );
         else resolve();
       });
     });
   }
 
-  async search(channelIndex: number, pattern: string, maxBytes: number): Promise<{ matchAt: number | null; preview: Buffer }> {
+  async search(
+    channelIndex: number,
+    pattern: string,
+    maxBytes: number,
+  ): Promise<{ matchAt: number | null; preview: Buffer }> {
     assertRttChannel(channelIndex, 'up');
     assertRttMaxBytes(maxBytes);
     const preview = this.#buffer.subarray(0, maxBytes);
@@ -748,7 +827,12 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
       if (target !== undefined && target.trim() !== '') {
         const targetSupported = commanderSupportsTarget(this.#commanderPath, target);
         if (targetSupported === true) {
-          return { available: true, commanderPath: this.#commanderPath, target, targetSupported: true };
+          return {
+            available: true,
+            commanderPath: this.#commanderPath,
+            target,
+            targetSupported: true,
+          };
         }
         return {
           available: true,
@@ -817,11 +901,36 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     });
   }
 
+  /** Query VCOM support/state through the dedicated probe-maintenance command path. */
+  async inspectVcom(selector: ProbeSelector = {}, signal?: AbortSignal): Promise<VcomInspection> {
+    const result = await this.#runVcomCommand(selector, 'vcom', signal);
+    return parseSeggerVcomInspection(result);
+  }
+
+  /** Enable or disable VCOM; the caller owns the required USB re-enumeration flow. */
+  async setVcomEnabled(
+    selector: ProbeSelector = {},
+    enabled: boolean,
+    signal?: AbortSignal,
+  ): Promise<VcomChangeResult> {
+    const result = await this.#runVcomCommand(
+      selector,
+      `vcom ${enabled ? 'enable' : 'disable'}`,
+      signal,
+    );
+    return parseSeggerVcomChange(result, enabled);
+  }
+
   /** Program a raw binary at an explicit flash address. */
   async download(
     probe: CommanderProbeContext,
     binary: Buffer,
-    opts: { address: number; verify?: boolean; timeoutMs?: number; onProgress?: (update: FlashProgressUpdate) => void },
+    opts: {
+      address: number;
+      verify?: boolean;
+      timeoutMs?: number;
+      onProgress?: (update: FlashProgressUpdate) => void;
+    },
     signal?: AbortSignal,
   ): Promise<{ bytesWritten: number; verified: boolean }> {
     if (signal?.aborted) throw new JLinkAbortedError();
@@ -835,9 +944,13 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
       bytesTotal: binary.byteLength,
     });
     await this.#withTempFlashFiles(binary, async (files) => {
-      const lines = [`loadbin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(opts.address)}`];
+      const lines = [
+        `loadbin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(opts.address)}`,
+      ];
       if (opts.verify === true) {
-        lines.push(`verifybin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(opts.address)}`);
+        lines.push(
+          `verifybin ${quoteCommanderPath(files.binaryPath)}, ${formatAddress(opts.address)}`,
+        );
       }
       progress.emit({
         phase: 'erasing',
@@ -871,12 +984,16 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
         signal,
       );
       if (!verifyResult.ok) {
-        const mismatch = verifyResult.mismatchAt === undefined
-          ? 'unknown'
-          : formatAddress(verifyResult.mismatchAt);
-        throw new JLinkOperationError(`J-Link flashDownload binary readback mismatch at ${mismatch}`, {
-          operation: 'flashDownload',
-        });
+        const mismatch =
+          verifyResult.mismatchAt === undefined
+            ? 'unknown'
+            : formatAddress(verifyResult.mismatchAt);
+        throw new JLinkOperationError(
+          `J-Link flashDownload binary readback mismatch at ${mismatch}`,
+          {
+            operation: 'flashDownload',
+          },
+        );
       }
     }
     progress.emit({
@@ -893,7 +1010,11 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
   async verify(
     probe: CommanderProbeContext,
     binary: Buffer,
-    opts: { address: number; timeoutMs?: number; onProgress?: (update: FlashProgressUpdate) => void },
+    opts: {
+      address: number;
+      timeoutMs?: number;
+      onProgress?: (update: FlashProgressUpdate) => void;
+    },
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; mismatchAt?: number }> {
     if (signal?.aborted) throw new JLinkAbortedError();
@@ -942,7 +1063,13 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     if (signal?.aborted) throw new JLinkAbortedError();
     const commanderPath = this.#requireCommanderPath();
     await this.#withTempCommandFile(async (file) => {
-      const result = await this.#runCommander(commanderPath, probe, file, [buildEraseCommand(opts)], signal);
+      const result = await this.#runCommander(
+        commanderPath,
+        probe,
+        file,
+        [buildEraseCommand(opts)],
+        signal,
+      );
       assertCommanderSuccess(result, probe, 'flashErase');
     });
   }
@@ -970,7 +1097,11 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
   }
 
   /** Reset the target CPU through SEGGER Commander. */
-  async reset(probe: CommanderProbeContext, opts?: { halt?: boolean }, signal?: AbortSignal): Promise<void> {
+  async reset(
+    probe: CommanderProbeContext,
+    opts?: { halt?: boolean },
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (signal?.aborted) throw new JLinkAbortedError();
     const commanderPath = this.#requireCommanderPath();
     await this.#withTempCommandFile(async (file) => {
@@ -1016,17 +1147,26 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
   }
 
   /** Read one target CPU register through SEGGER Commander. */
-  async readRegister(probe: CommanderProbeContext, name: string, signal?: AbortSignal): Promise<RegisterValue> {
+  async readRegister(
+    probe: CommanderProbeContext,
+    name: string,
+    signal?: AbortSignal,
+  ): Promise<RegisterValue> {
     if (signal?.aborted) throw new JLinkAbortedError();
     const commanderPath = this.#requireCommanderPath();
     const registerName = normalizeRegisterName(name);
     return this.#withTempCommandFile(async (file) => {
       const result = await this.#runCommander(commanderPath, probe, file, ['h', 'regs'], signal);
       assertCommanderSuccess(result, probe, 'registerRead');
-      const register = parseRegisterDump(`${result.stdout}\n${result.stderr}`).find((r) => r.name === registerName);
+      const register = parseRegisterDump(`${result.stdout}\n${result.stderr}`).find(
+        (r) => r.name === registerName,
+      );
       if (register === undefined) {
         throw new JLinkOperationError(
-          sanitizeOutput(`J-Link registerRead did not return ${registerName}: ${result.stdout}\n${result.stderr}`, probe),
+          sanitizeOutput(
+            `J-Link registerRead did not return ${registerName}: ${result.stdout}\n${result.stderr}`,
+            probe,
+          ),
           { operation: 'registerRead' },
         );
       }
@@ -1058,7 +1198,10 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
   }
 
   /** List target CPU registers through SEGGER Commander. */
-  async listRegisters(probe: CommanderProbeContext, signal?: AbortSignal): Promise<RegisterValue[]> {
+  async listRegisters(
+    probe: CommanderProbeContext,
+    signal?: AbortSignal,
+  ): Promise<RegisterValue[]> {
     if (signal?.aborted) throw new JLinkAbortedError();
     const commanderPath = this.#requireCommanderPath();
     return this.#withTempCommandFile(async (file) => {
@@ -1067,7 +1210,10 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
       const registers = parseRegisterDump(`${result.stdout}\n${result.stderr}`);
       if (registers.length === 0) {
         throw new JLinkOperationError(
-          sanitizeOutput(`J-Link registerList returned no registers: ${result.stdout}\n${result.stderr}`, probe),
+          sanitizeOutput(
+            `J-Link registerList returned no registers: ${result.stdout}\n${result.stderr}`,
+            probe,
+          ),
           { operation: 'registerList' },
         );
       }
@@ -1076,7 +1222,11 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
   }
 
   /** Read target memory bytes through SEGGER Commander. */
-  async readMemory(probe: CommanderProbeContext, range: MemoryRange, signal?: AbortSignal): Promise<Buffer> {
+  async readMemory(
+    probe: CommanderProbeContext,
+    range: MemoryRange,
+    signal?: AbortSignal,
+  ): Promise<Buffer> {
     if (signal?.aborted) throw new JLinkAbortedError();
     assertMemoryRange(range, 'memoryRead');
     const commanderPath = this.#requireCommanderPath();
@@ -1092,7 +1242,10 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
       const data = parseMemoryDump(`${result.stdout}\n${result.stderr}`);
       if (data.byteLength < range.length) {
         throw new JLinkOperationError(
-          sanitizeOutput(`J-Link memoryRead returned ${data.byteLength} bytes, expected ${range.length}`, probe),
+          sanitizeOutput(
+            `J-Link memoryRead returned ${data.byteLength} bytes, expected ${range.length}`,
+            probe,
+          ),
           { operation: 'memoryRead' },
         );
       }
@@ -1111,8 +1264,9 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     assertUint32(address, 'memoryWrite address');
     const commanderPath = this.#requireCommanderPath();
     await this.#withTempCommandFile(async (file) => {
-      const commands = Array.from(data, (byte, offset) =>
-        `w1 ${formatAddress(address + offset)}, ${formatByte(byte)}`,
+      const commands = Array.from(
+        data,
+        (byte, offset) => `w1 ${formatAddress(address + offset)}, ${formatByte(byte)}`,
       );
       const result = await this.#runCommander(commanderPath, probe, file, commands, signal);
       assertCommanderSuccess(result, probe, 'memoryWrite');
@@ -1130,18 +1284,34 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     assertUint32(address, 'breakpointSet address');
     const commanderPath = this.#requireCommanderPath();
     await this.#withTempCommandFile(async (file) => {
-      const result = await this.#runCommander(commanderPath, probe, file, [`SetBP ${formatAddress(address)}`], signal);
+      const result = await this.#runCommander(
+        commanderPath,
+        probe,
+        file,
+        [`SetBP ${formatAddress(address)}`],
+        signal,
+      );
       assertCommanderSuccess(result, probe, 'breakpointSet');
     });
   }
 
   /** Clear a target breakpoint through SEGGER Commander. */
-  async clearBreakpoint(probe: CommanderProbeContext, address: number, signal?: AbortSignal): Promise<void> {
+  async clearBreakpoint(
+    probe: CommanderProbeContext,
+    address: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (signal?.aborted) throw new JLinkAbortedError();
     assertUint32(address, 'breakpointClear address');
     const commanderPath = this.#requireCommanderPath();
     await this.#withTempCommandFile(async (file) => {
-      const result = await this.#runCommander(commanderPath, probe, file, [`ClrBP ${formatAddress(address)}`], signal);
+      const result = await this.#runCommander(
+        commanderPath,
+        probe,
+        file,
+        [`ClrBP ${formatAddress(address)}`],
+        signal,
+      );
       assertCommanderSuccess(result, probe, 'breakpointClear');
     });
   }
@@ -1157,7 +1327,14 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     const commanderPath = this.#requireCommanderPath();
     const safeCommands = normalizeDiagnosticScriptCommands(commands);
     return this.#withTempCommandFile(async (file) => {
-      const result = await this.#runCommander(commanderPath, probe, file, safeCommands, signal, opts?.timeoutMs);
+      const result = await this.#runCommander(
+        commanderPath,
+        probe,
+        file,
+        safeCommands,
+        signal,
+        opts?.timeoutMs,
+      );
       return sanitizeCommanderScriptResult(result, probe);
     });
   }
@@ -1174,7 +1351,10 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
   }
 
   /** Create temporary binary/script files, run an operation, then remove the directory. */
-  async #withTempFlashFiles<T>(binary: Buffer, fn: (files: TempFlashFiles) => Promise<T>): Promise<T> {
+  async #withTempFlashFiles<T>(
+    binary: Buffer,
+    fn: (files: TempFlashFiles) => Promise<T>,
+  ): Promise<T> {
     return this.#withTempCommandFile(async (file) => {
       const files = {
         ...file,
@@ -1186,11 +1366,16 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
   }
 
   /** Create temporary binary/script/readback files, run an operation, then remove the directory. */
-  async #withTempVerifyFiles<T>(binary: Buffer, fn: (files: TempVerifyFiles) => Promise<T>): Promise<T> {
-    return this.#withTempFlashFiles(binary, async (files) => fn({
-      ...files,
-      readbackPath: path.join(files.dir, 'readback.bin'),
-    }));
+  async #withTempVerifyFiles<T>(
+    binary: Buffer,
+    fn: (files: TempVerifyFiles) => Promise<T>,
+  ): Promise<T> {
+    return this.#withTempFlashFiles(binary, async (files) =>
+      fn({
+        ...files,
+        readbackPath: path.join(files.dir, 'readback.bin'),
+      }),
+    );
   }
 
   /** Create a temporary J-Link command file path, run an operation, then remove the directory. */
@@ -1217,7 +1402,12 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     timeoutMs?: number,
     onOutput?: (event: SeggerProcessOutputEvent) => void,
   ): Promise<SeggerProcessResult> {
-    const script = [...buildConnectionScriptLines(probe, commanderPath), ...commandLines, 'q', ''].join('\n');
+    const script = [
+      ...buildConnectionScriptLines(probe, commanderPath),
+      ...commandLines,
+      'q',
+      '',
+    ].join('\n');
     await writeFile(files.scriptPath, script, 'utf-8');
     try {
       return await this.#runner.run({
@@ -1231,6 +1421,30 @@ export class DefaultJLinkCommanderClient implements JLinkCommanderClient {
     } catch (err) {
       throw addCommanderTimeoutGuidance(err, commandLines);
     }
+  }
+
+  /** Execute one fixed VCOM maintenance command without target/device arguments. */
+  async #runVcomCommand(
+    selector: ProbeSelector,
+    command: 'vcom' | 'vcom enable' | 'vcom disable',
+    signal?: AbortSignal,
+  ): Promise<SeggerProcessResult> {
+    if (signal?.aborted) throw new JLinkAbortedError();
+    const commanderPath = this.#requireCommanderPath();
+    const serialNumber = selector.serialNumber?.trim();
+    return this.#withTempCommandFile(async (file) => {
+      await writeFile(file.scriptPath, `${command}\nq\n`, 'utf-8');
+      return this.#runner.run({
+        command: commanderPath,
+        args: buildCommanderProbeMaintenanceArgs(
+          file.scriptPath,
+          serialNumber !== '' ? serialNumber : undefined,
+        ),
+        signal,
+        timeoutMs: this.#defaultTimeoutMs,
+        maxOutputBytes: this.#maxOutputBytes,
+      });
+    });
   }
 }
 
@@ -1248,8 +1462,11 @@ export function resolveDefaultCommanderPath(): string | undefined {
   if (configured !== undefined && configured !== '') {
     return isTrustedCommanderPath(configured) ? configured : undefined;
   }
-  return buildDefaultCommanderCandidates(process.platform, process.env, defaultWindowsDriveRoots())
-    .find((candidate) => isTrustedCommanderPath(candidate));
+  return buildDefaultCommanderCandidates(
+    process.platform,
+    process.env,
+    defaultWindowsDriveRoots(),
+  ).find((candidate) => isTrustedCommanderPath(candidate));
 }
 
 /**
@@ -1347,9 +1564,15 @@ function listJLinkDeviceDatabaseFiles(root: string, commanderPath?: string): str
   return files.slice(0, DEVICE_DATABASE_SCAN_MAX_FILES);
 }
 
-function cachedInternalDeviceListPaths(toolPath: string | undefined): Array<{ cachePath: string; toolPath: string }> {
+function cachedInternalDeviceListPaths(
+  toolPath: string | undefined,
+): Array<{ cachePath: string; toolPath: string }> {
   if (toolPath === undefined) return [];
-  return uniqueStrings([toolPath, siblingCommanderPath(toolPath)].filter((candidate): candidate is string => candidate !== undefined))
+  return uniqueStrings(
+    [toolPath, siblingCommanderPath(toolPath)].filter(
+      (candidate): candidate is string => candidate !== undefined,
+    ),
+  )
     .filter((candidate) => existsSync(candidate))
     .map((candidate) => ({
       cachePath: cachedInternalDeviceListPath(candidate),
@@ -1405,7 +1628,11 @@ function collectXmlFiles(dir: string, files: string[]): void {
 }
 
 /** Build command-line arguments for J-Link Commander. */
-export function buildCommanderArgs(probe: CommanderProbeContext, scriptPath: string, commanderPath?: string): string[] {
+export function buildCommanderArgs(
+  probe: CommanderProbeContext,
+  scriptPath: string,
+  commanderPath?: string,
+): string[] {
   const target = normalizeDeviceName(probe.target, commanderPath);
   const args = [
     '-device',
@@ -1428,27 +1655,18 @@ export function buildCommanderArgs(probe: CommanderProbeContext, scriptPath: str
 }
 
 function buildCommanderProbeDetectArgs(scriptPath: string): string[] {
-  return [
-    '-ExitOnError',
-    '1',
-    '-NoGui',
-    '1',
-    '-CommandFile',
-    scriptPath,
-  ];
+  return ['-ExitOnError', '1', '-NoGui', '1', '-CommandFile', scriptPath];
 }
 
 function buildCommanderProbeMaintenanceArgs(scriptPath: string, serialNumber?: string): string[] {
-  const args = [
-    '-ExitOnError',
-    '1',
-    '-NoGui',
-    '1',
-    '-CommandFile',
-    scriptPath,
-  ];
+  const args = ['-ExitOnError', '1', '-NoGui', '1', '-CommandFile', scriptPath];
   if (serialNumber !== undefined) {
-    args.splice(args.length - 2, 0, '-SelectEmuBySN', safeCommanderToken(serialNumber, 'serialNumber'));
+    args.splice(
+      args.length - 2,
+      0,
+      '-SelectEmuBySN',
+      safeCommanderToken(serialNumber, 'serialNumber'),
+    );
   }
   return args;
 }
@@ -1464,7 +1682,9 @@ function normalizeJLinkRebootOptions(opts: JLinkRebootOptions): JLinkRebootOptio
   return {
     force: opts.force ?? true,
     ...(serialNumber !== undefined && serialNumber !== '' ? { serialNumber } : {}),
-    ...(opts.reconnectTimeoutMs !== undefined ? { reconnectTimeoutMs: opts.reconnectTimeoutMs } : {}),
+    ...(opts.reconnectTimeoutMs !== undefined
+      ? { reconnectTimeoutMs: opts.reconnectTimeoutMs }
+      : {}),
     ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
   };
 }
@@ -1478,7 +1698,8 @@ function buildProbeRebootCommand(opts: JLinkRebootOptions): string {
 
 function probeRebootProcessTimeoutMs(opts: JLinkRebootOptions, defaultTimeoutMs: number): number {
   if (opts.timeoutMs !== undefined) return opts.timeoutMs;
-  if (opts.reconnectTimeoutMs !== undefined) return Math.max(defaultTimeoutMs, opts.reconnectTimeoutMs + 5_000);
+  if (opts.reconnectTimeoutMs !== undefined)
+    return Math.max(defaultTimeoutMs, opts.reconnectTimeoutMs + 5_000);
   return defaultTimeoutMs;
 }
 
@@ -1493,10 +1714,13 @@ function assertPositiveTimeoutMs(value: number, operation: string): void {
 
 function assertAddress(address: number | undefined, operation: string): asserts address is number {
   if (address === undefined) {
-    throw new JLinkInvalidStateError(`${operation} requires an explicit address for raw binary input`, {
-      expected: 'address number',
-      actual: 'undefined',
-    });
+    throw new JLinkInvalidStateError(
+      `${operation} requires an explicit address for raw binary input`,
+      {
+        expected: 'address number',
+        actual: 'undefined',
+      },
+    );
   }
 }
 
@@ -1520,7 +1744,10 @@ function buildEraseCommand(opts?: { address?: number; length?: number }): string
   return `erase ${formatAddress(opts.address)}, ${formatAddress(endAddress)}`;
 }
 
-function buildConnectionScriptLines(probe: CommanderProbeContext, commanderPath?: string): string[] {
+function buildConnectionScriptLines(
+  probe: CommanderProbeContext,
+  commanderPath?: string,
+): string[] {
   const target = normalizeDeviceName(probe.target, commanderPath);
   return [
     `device ${safeCommanderToken(target, 'target')}`,
@@ -1563,7 +1790,15 @@ function safeCommanderToken(value: string, field: string): string {
 }
 
 const DIAGNOSTIC_SCRIPT_MAX_COMMANDS = 64;
-const CONTROLLED_CONNECTION_COMMANDS = new Set(['device', 'si', 'speed', 'connect', 'eoe', 'q', 'exit']);
+const CONTROLLED_CONNECTION_COMMANDS = new Set([
+  'device',
+  'si',
+  'speed',
+  'connect',
+  'eoe',
+  'q',
+  'exit',
+]);
 const FILE_BACKED_COMMANDS = new Set(['loadbin', 'verifybin', 'loadfile', 'savebin', 'savefile']);
 
 function normalizeDiagnosticScriptCommands(commands: string[]): string[] {
@@ -1580,10 +1815,13 @@ function normalizeDiagnosticScriptCommands(commands: string[]): string[] {
     if (command !== undefined) result.push(command);
   }
   if (result.length === 0) {
-    throw new JLinkInvalidStateError('J-Link Commander diagnostic script contains no runnable commands', {
-      expected: 'at least one non-connection command',
-      actual: 'empty script',
-    });
+    throw new JLinkInvalidStateError(
+      'J-Link Commander diagnostic script contains no runnable commands',
+      {
+        expected: 'at least one non-connection command',
+        actual: 'empty script',
+      },
+    );
   }
   return result;
 }
@@ -1599,9 +1837,12 @@ function normalizeDiagnosticScriptCommand(rawCommand: string): string | undefine
   const verb = command.split(/[\s,]+/u)[0]!.toLowerCase();
   if (CONTROLLED_CONNECTION_COMMANDS.has(verb)) return undefined;
   if (FILE_BACKED_COMMANDS.has(verb)) {
-    throw new JLinkOperationError('File-backed J-Link Commander commands are not accepted by diagnostic scripts', {
-      operation: 'buildJLinkScript',
-    });
+    throw new JLinkOperationError(
+      'File-backed J-Link Commander commands are not accepted by diagnostic scripts',
+      {
+        operation: 'buildJLinkScript',
+      },
+    );
   }
   if (isAllowedDiagnosticScriptCommand(command, verb)) return command;
   throw new JLinkInvalidStateError('Unsupported J-Link Commander diagnostic command', {
@@ -1612,9 +1853,13 @@ function normalizeDiagnosticScriptCommand(rawCommand: string): string | undefine
 
 function isAllowedDiagnosticScriptCommand(command: string, verb: string): boolean {
   if (/^(r|h|g|s|regs)$/iu.test(command)) return true;
-  if (verb === 'mem') return /^mem\s+0x[0-9a-fA-F]{1,8}\s*,\s*(?:0x[0-9a-fA-F]+|\d+)$/u.test(command);
+  if (verb === 'mem')
+    return /^mem\s+0x[0-9a-fA-F]{1,8}\s*,\s*(?:0x[0-9a-fA-F]+|\d+)$/u.test(command);
   if (verb === 'erase') {
-    return /^erase$/iu.test(command) || /^erase\s+0x[0-9a-fA-F]{1,8}\s*,\s*0x[0-9a-fA-F]{1,8}$/u.test(command);
+    return (
+      /^erase$/iu.test(command) ||
+      /^erase\s+0x[0-9a-fA-F]{1,8}\s*,\s*0x[0-9a-fA-F]{1,8}$/u.test(command)
+    );
   }
   if (/^w[124]$/u.test(verb)) {
     return /^w[124]\s+0x[0-9a-fA-F]{1,8}\s*,\s*0x[0-9a-fA-F]{1,8}$/iu.test(command);
@@ -1812,9 +2057,10 @@ function normalizeFlashProgressUpdate(
   update: FlashProgressUpdate,
   bytesTotal: number,
 ): FlashProgressUpdate {
-  const percent = update.percent === undefined
-    ? undefined
-    : Math.min(100, Math.max(0, Math.round(update.percent)));
+  const percent =
+    update.percent === undefined
+      ? undefined
+      : Math.min(100, Math.max(0, Math.round(update.percent)));
   return {
     phase: update.phase,
     message: update.message,
@@ -1834,7 +2080,9 @@ function addCommanderTimeoutGuidance(err: unknown, commandLines: string[]): unkn
 
 function hasTargetAccessCommand(commandLines: readonly string[]): boolean {
   return commandLines.some((line) =>
-    /^(?:connect|mem|loadbin|verifybin|savebin|loadfile|savefile|h|r|regs|erase|w[124]|wreg|setbp|clrbp)\b/i.test(line.trim()),
+    /^(?:connect|mem|loadbin|verifybin|savebin|loadfile|savefile|h|r|regs|erase|w[124]|wreg|setbp|clrbp)\b/i.test(
+      line.trim(),
+    ),
   );
 }
 
@@ -1866,7 +2114,11 @@ function parseMemoryDump(output: string): Buffer {
   return Buffer.from(bytes);
 }
 
-function firstMismatchAddress(expected: Buffer, actual: Buffer, baseAddress: number): number | undefined {
+function firstMismatchAddress(
+  expected: Buffer,
+  actual: Buffer,
+  baseAddress: number,
+): number | undefined {
   const length = Math.min(expected.byteLength, actual.byteLength);
   for (let offset = 0; offset < length; offset += 1) {
     if (expected[offset] !== actual[offset]) return baseAddress + offset;
@@ -1875,12 +2127,18 @@ function firstMismatchAddress(expected: Buffer, actual: Buffer, baseAddress: num
   return undefined;
 }
 
-async function readVerifyReadback(readbackPath: string, probe: CommanderProbeContext): Promise<Buffer> {
+async function readVerifyReadback(
+  readbackPath: string,
+  probe: CommanderProbeContext,
+): Promise<Buffer> {
   try {
     return await readFile(readbackPath);
   } catch (err) {
     throw new JLinkOperationError(
-      sanitizeOutput('J-Link flashVerify binary readback was not produced by Commander savebin', probe),
+      sanitizeOutput(
+        'J-Link flashVerify binary readback was not produced by Commander savebin',
+        probe,
+      ),
       {
         operation: 'flashVerify',
         underlying: err,
@@ -1903,11 +2161,18 @@ function assertPositiveVerifyEvidence(
   operation: string,
 ): void {
   const output = `${result.stdout}\n${result.stderr}`;
-  if (/verify\s+successful|verification\s+successful|contents\s+of\s+.*(?:match|identical)/i.test(output)) {
+  if (
+    /verify\s+successful|verification\s+successful|contents\s+of\s+.*(?:match|identical)/i.test(
+      output,
+    )
+  ) {
     return;
   }
   throw new JLinkOperationError(
-    sanitizeOutput(`J-Link ${operation} completed without positive verify evidence: ${output}`, probe),
+    sanitizeOutput(
+      `J-Link ${operation} completed without positive verify evidence: ${output}`,
+      probe,
+    ),
     { operation },
   );
 }
@@ -1916,17 +2181,18 @@ function assertProbeDetectSuccess(result: SeggerProcessResult): void {
   const output = `${result.stdout}\n${result.stderr}`;
   if (/no\s+emulators\s+found|no\s+j-link\s+device\s+found/i.test(output)) return;
   if (result.exitCode === 0 && !/script\s+processing\s+failed/i.test(output)) return;
-  throw new JLinkOperationError(sanitizeProcessOutput(`J-Link probeDetect failed: ${output}`).slice(0, 4000), {
-    operation: 'probeDetect',
-  });
+  throw new JLinkOperationError(
+    sanitizeProcessOutput(`J-Link probeDetect failed: ${output}`).slice(0, 4000),
+    {
+      operation: 'probeDetect',
+    },
+  );
 }
 
 function parseShowEmuListOutput(output: string): ProbeInfo[] {
   const probes: ProbeInfo[] = [];
   for (const line of output.split(/\r?\n/u)) {
-    const match = line.match(
-      /J-Link\[(\d+)\]:.*?\bSerial\s+number:\s*([^\s,]+)(?:,|\s|$)/iu,
-    );
+    const match = line.match(/J-Link\[(\d+)\]:.*?\bSerial\s+number:\s*([^\s,]+)(?:,|\s|$)/iu);
     if (match === null) continue;
     probes.push({
       probeId: `physical-${match[1]!}`,
@@ -1945,9 +2211,12 @@ function assertProbeRebootSuccess(result: SeggerProcessResult, serialNumber?: st
       output,
     );
   if (!failed) return;
-  throw new JLinkOperationError(sanitizeProbeRebootOutput(`J-Link jlinkReboot failed: ${output}`, serialNumber).slice(0, 4000), {
-    operation: 'jlinkReboot',
-  });
+  throw new JLinkOperationError(
+    sanitizeProbeRebootOutput(`J-Link jlinkReboot failed: ${output}`, serialNumber).slice(0, 4000),
+    {
+      operation: 'jlinkReboot',
+    },
+  );
 }
 
 function assertCommanderSuccess(
@@ -1995,7 +2264,10 @@ function sanitizeOutput(output: string, probe: CommanderProbeContext): string {
   return sanitized.slice(0, 4000);
 }
 
-function sanitizeProbeRebootResult(result: SeggerProcessResult, serialNumber?: string): CommanderScriptResult {
+function sanitizeProbeRebootResult(
+  result: SeggerProcessResult,
+  serialNumber?: string,
+): CommanderScriptResult {
   return {
     exitCode: result.exitCode,
     signal: result.signal,
@@ -2006,7 +2278,10 @@ function sanitizeProbeRebootResult(result: SeggerProcessResult, serialNumber?: s
 }
 
 function sanitizeProbeRebootOutput(output: string, serialNumber?: string): string {
-  let sanitized = sanitizeProcessOutput(output).replace(/(Serial\s+number:\s*)[^\s,]+/gi, '$1[redacted]');
+  let sanitized = sanitizeProcessOutput(output).replace(
+    /(Serial\s+number:\s*)[^\s,]+/gi,
+    '$1[redacted]',
+  );
   if (serialNumber !== undefined) {
     sanitized = sanitized.split(serialNumber).join('[redacted]');
   }
@@ -2034,7 +2309,12 @@ export class DefaultJLinkGdbServerClient implements JLinkGdbServerClient {
       if (target !== undefined && target.trim() !== '') {
         const targetSupported = commanderSupportsTarget(this.#gdbServerPath, target);
         if (targetSupported === true) {
-          return { available: true, gdbServerPath: this.#gdbServerPath, target, targetSupported: true };
+          return {
+            available: true,
+            gdbServerPath: this.#gdbServerPath,
+            target,
+            targetSupported: true,
+          };
         }
         return {
           available: true,
@@ -2113,8 +2393,11 @@ export function resolveDefaultGdbServerPath(): string | undefined {
   if (configured !== undefined && configured !== '') {
     return isTrustedCommanderPath(configured) ? configured : undefined;
   }
-  return buildDefaultGdbServerCandidates(process.platform, process.env, defaultWindowsDriveRoots())
-    .find((candidate) => isTrustedCommanderPath(candidate));
+  return buildDefaultGdbServerCandidates(
+    process.platform,
+    process.env,
+    defaultWindowsDriveRoots(),
+  ).find((candidate) => isTrustedCommanderPath(candidate));
 }
 
 /**
@@ -2156,10 +2439,14 @@ export function buildDefaultGdbServerCandidates(
   );
 }
 
-const GDB_SERVER_READY_PATTERN = /listening\s+on\s+tcp\/ip\s+port|gdb\s+server\s+listening\s+port|waiting\s+for\s+gdb\s+connection|gdb\s+server\s+is\s+running/i;
+const GDB_SERVER_READY_PATTERN =
+  /listening\s+on\s+tcp\/ip\s+port|gdb\s+server\s+listening\s+port|waiting\s+for\s+gdb\s+connection|gdb\s+server\s+is\s+running/i;
 const DEFAULT_RTT_TELNET_PORT = 19021;
 
-function buildGdbServerArgs(probe: CommanderProbeContext, opts: { host: string; port: number }): string[] {
+function buildGdbServerArgs(
+  probe: CommanderProbeContext,
+  opts: { host: string; port: number },
+): string[] {
   const target = normalizeJLinkTargetName(probe.target);
   const args = [
     '-device',
@@ -2227,5 +2514,7 @@ function sanitizeGdbServerError(err: unknown, probe: CommanderProbeContext): Err
       underlying: err,
     });
   }
-  return new JLinkOperationError(sanitizeOutput(String(err), probe), { operation: 'gdbServerStart' });
+  return new JLinkOperationError(sanitizeOutput(String(err), probe), {
+    operation: 'gdbServerStart',
+  });
 }

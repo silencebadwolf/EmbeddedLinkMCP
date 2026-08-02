@@ -14,6 +14,8 @@ import {
   type OperationRecorderProvider,
 } from '../../core/activity/operation-recorder.js';
 import { RuntimeReadinessService } from '../../core/readiness/runtime-readiness-service.js';
+import { findStableSerialIdentity } from '../../core/readiness/serial-identity.js';
+import { JLinkVcomRecoveryService } from '../../core/recovery/jlink-vcom-recovery-service.js';
 import { OperationAdmissionCoordinator } from '../../core/operation-admission/operation-admission-coordinator.js';
 import {
   createAgentIntegrationProvider,
@@ -84,6 +86,7 @@ import { registerActivityIpc } from './activity-ipc.js';
 import { registerAuditIpc } from './audit-ipc.js';
 import { registerReadinessIpc } from './readiness-ipc.js';
 import { registerFirstSignalIpc } from './first-signal-ipc.js';
+import { createAndOpenSession } from './session-open-helper.js';
 import {
   FirstSignalObservationService,
   type FirstSignalObservableSession,
@@ -208,7 +211,22 @@ export async function registerIpcHandlers(
     wslFiles: createWslAgentConfigFileBridge(),
     tokenEnvWriter: createCodexTokenEnvWriter(),
   });
-  const jlinkBackend: IJLinkBackend = new JLinkAdapter();
+  const jlinkAdapter = new JLinkAdapter();
+  const jlinkBackend: IJLinkBackend = jlinkAdapter;
+  const jlinkVcomRecoveryService = new JLinkVcomRecoveryService({
+    controlProfileManager,
+    recordManager: controlProfileRecordManager,
+    serialDiscovery,
+    jlinkBackend,
+    vcomControl: jlinkAdapter,
+    openSerial: async ({ port, baudRate, mode, label }) =>
+      createAndOpenSession(
+        sessionManager,
+        { type: 'serial', port, baudRate, mode },
+        label,
+        serialSessionCoordinator,
+      ),
+  });
   const jlinkDeviceCatalog = createJLinkDeviceCatalog();
   const activityHealth = new ActivityHealthMonitor();
   const operationLedger = new OperationLedger({ health: activityHealth });
@@ -346,6 +364,7 @@ export async function registerIpcHandlers(
     jlinkDeviceCatalog,
     undefined,
     serialSessionCoordinator,
+    async (portPath) => findStableSerialIdentity(portPath, await serialDiscovery.listPorts()),
   );
   const unregisterAgentIntegrations = registerAgentIntegrationsIpc(agentIntegrationManager);
   const unregisterControlProfile = registerControlProfileIpc(
@@ -359,6 +378,8 @@ export async function registerIpcHandlers(
       compensationCandidateService,
       onVerifiedDeployment,
       serialSessionCoordinator,
+      serialDiscovery,
+      jlinkVcomRecoveryService,
     },
   );
   const unregisterJLinkDeviceCatalog = registerJLinkDeviceCatalogIpc(jlinkDeviceCatalog);
@@ -367,7 +388,9 @@ export async function registerIpcHandlers(
     auditStore,
     isTrustedSender: (senderId) => {
       const win = options.getMainWindow?.();
-      return win !== undefined && win !== null && !win.isDestroyed() && win.webContents.id === senderId;
+      return (
+        win !== undefined && win !== null && !win.isDestroyed() && win.webContents.id === senderId
+      );
     },
   });
   const unregisterReadiness = registerReadinessIpc(runtimeReadinessService);
@@ -447,8 +470,7 @@ function isFirstSignalObservableSession(
   session: ReturnType<SessionManager['get']>,
 ): session is FirstSignalObservableSession {
   return (
-    session !== undefined &&
-    typeof (session as FirstSignalObservableSession).off === 'function'
+    session !== undefined && typeof (session as FirstSignalObservableSession).off === 'function'
   );
 }
 
@@ -484,6 +506,8 @@ function createRuntimeReadinessService(input: {
               label: record.label,
               portLabel: record.profile.serial?.port,
               baudRate: record.profile.serial?.baudRate,
+              hardwareIdentity: record.profile.serial?.hardwareIdentity,
+              parentIdentity: record.profile.serial?.parentIdentity,
             }));
           } catch {
             return [];

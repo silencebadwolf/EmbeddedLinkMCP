@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { resolveDeviceCandidates } from '@/core/readiness/device-candidate-resolver.js';
+import { deriveStableSerialIdentity } from '@/core/readiness/serial-identity.js';
 
 describe('DeviceCandidateResolver', () => {
+  it('derives only irreversible hashes from raw USB identity facts', () => {
+    const identity = deriveStableSerialIdentity({
+      path: 'COM12',
+      vendorId: '1366',
+      productId: '0105',
+      serialNumber: '123456789',
+    });
+
+    expect(identity.hardwareIdentity).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(identity.parentIdentity).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(JSON.stringify(identity)).not.toContain('123456789');
+  });
+
   it('returns no candidates for an empty serial scan', () => {
     expect(resolveDeviceCandidates({ serialPorts: [], savedProfiles: [] })).toEqual([]);
   });
@@ -30,23 +44,20 @@ describe('DeviceCandidateResolver', () => {
   });
 
   it('marks stable identity matches from a saved profile as exact', () => {
+    const port = {
+      path: 'COM7',
+      friendlyName: 'USB Serial Device',
+      vendorId: '0483',
+      productId: '5740',
+      serialNumber: 'ABC123',
+    };
     const candidates = resolveDeviceCandidates({
-      serialPorts: [
-        {
-          path: 'COM7',
-          friendlyName: 'USB Serial Device',
-          vendorId: '0483',
-          productId: '5740',
-          serialNumber: 'ABC123',
-        },
-      ],
+      serialPorts: [port],
       savedProfiles: [
         {
           id: 'profile_board_a',
           label: 'board-a',
-          serialNumber: 'ABC123',
-          vendorId: '0483',
-          productId: '5740',
+          ...deriveStableSerialIdentity(port),
           baudRate: 9_600,
         },
       ],
@@ -64,23 +75,20 @@ describe('DeviceCandidateResolver', () => {
   });
 
   it('marks profile/live conflicts as requiring confirmation', () => {
+    const port = {
+      path: 'COM7',
+      friendlyName: 'USB Serial Device',
+      vendorId: '0483',
+      productId: '5740',
+      serialNumber: 'ABC123',
+    };
     const candidates = resolveDeviceCandidates({
-      serialPorts: [
-        {
-          path: 'COM7',
-          friendlyName: 'USB Serial Device',
-          vendorId: '0483',
-          productId: '5740',
-          serialNumber: 'ABC123',
-        },
-      ],
+      serialPorts: [port],
       savedProfiles: [
         {
           id: 'profile_board_a',
           label: 'board-a',
-          serialNumber: 'ABC123',
-          vendorId: '0483',
-          productId: '5740',
+          ...deriveStableSerialIdentity(port),
           portLabel: 'COM3',
           baudRate: 115_200,
         },
@@ -91,8 +99,44 @@ describe('DeviceCandidateResolver', () => {
       confidence: 'likely',
       requiresUserConfirmation: true,
     });
-    expect(candidates[0]?.evidence.some((item) => item.summaryCode === 'readiness.profile.conflict'))
-      .toBe(true);
+    expect(
+      candidates[0]?.evidence.some((item) => item.summaryCode === 'readiness.profile.conflict'),
+    ).toBe(true);
+  });
+
+  it('matches a re-enumerated composite J-Link port by parent identity across PID changes', () => {
+    const oldPort = {
+      path: 'COM7',
+      vendorId: '1366',
+      productId: '0101',
+      serialNumber: '123456789',
+    };
+    const livePort = {
+      path: 'COM7',
+      friendlyName: 'JLink CDC UART Port',
+      vendorId: '1366',
+      productId: '0105',
+      serialNumber: '123456789',
+    };
+
+    const candidates = resolveDeviceCandidates({
+      serialPorts: [livePort],
+      savedProfiles: [
+        {
+          id: 'jlink_profile',
+          label: 'J-Link console',
+          portLabel: 'COM7',
+          baudRate: 115_200,
+          ...deriveStableSerialIdentity(oldPort),
+        },
+      ],
+    });
+
+    expect(candidates[0]).toMatchObject({
+      confidence: 'exact',
+      requiresUserConfirmation: false,
+      serial: { baudRate: 115_200 },
+    });
   });
 
   it('keeps same VID/PID multi-device candidates low-confidence without auto-submit hints', () => {
@@ -117,7 +161,10 @@ describe('DeviceCandidateResolver', () => {
     ];
 
     const first = resolveDeviceCandidates({ serialPorts: ports, savedProfiles: [] });
-    const second = resolveDeviceCandidates({ serialPorts: [...ports].reverse(), savedProfiles: [] });
+    const second = resolveDeviceCandidates({
+      serialPorts: [...ports].reverse(),
+      savedProfiles: [],
+    });
 
     expect(first.map((item) => item.id).sort()).toEqual(second.map((item) => item.id).sort());
   });

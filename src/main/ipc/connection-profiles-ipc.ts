@@ -7,7 +7,9 @@ import {
 } from '../../core/session/serial-session-coordinator.js';
 import {
   ConnectionProfileManager,
+  ConnectionProfileConflictError,
   ConnectionProfileNotFoundError,
+  ConnectionProfileTypeChangeError,
   CredentialDecryptFailedError,
   CredentialRequiredError,
   CredentialStorageUnavailableError,
@@ -23,7 +25,9 @@ import type {
   SaveConnectionProfileConfig,
   SavedConnectionOpenSuccess,
   SessionCreateRequestConfig,
+  UpdateConnectionProfileRequest,
 } from '../../shared/preload-api.js';
+import type { StableSerialIdentity } from '../../shared/types.js';
 import type { SessionId, SessionState } from '../../shared/types.js';
 import { createAndOpenSession } from './session-open-helper.js';
 import { openRttLogFromRequest, rttLogOpenErrorCodeOf } from './rtt-log-open-helper.js';
@@ -43,23 +47,62 @@ export function registerConnectionProfilesIpc(
   jlinkDeviceCatalog?: JLinkDeviceCatalog,
   hostPathResolver?: HostPathResolver,
   serialSessionCoordinator: SerialSessionCoordinator = new SerialSessionCoordinator(sessionManager),
+  serialIdentityLookup?: (portPath: string) => Promise<StableSerialIdentity | undefined>,
 ): () => void {
-  ipcMain.handle(IPC_CHANNELS.CONNECTIONS_LIST, async (): Promise<PreloadResult<ReadonlyArray<SavedConnectionSummary>>> => {
-    try {
-      return { success: true, data: await profileManager.list() };
-    } catch (err) {
-      return toIpcError(err);
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.CONNECTIONS_LIST,
+    async (): Promise<PreloadResult<ReadonlyArray<SavedConnectionSummary>>> => {
+      try {
+        return { success: true, data: await profileManager.list() };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.CONNECTIONS_SAVE_AND_OPEN,
     async (_event, raw: unknown): Promise<SaveAndOpenResult> => {
       try {
-        const input = parseSaveAndOpen(raw);
+        const input = await enrichSerialIdentity(parseSaveAndOpen(raw), serialIdentityLookup);
         const profile = await profileManager.save(input);
         const session = await openSavedConnectionConfig(input.config, {
           label: input.label,
+          sessionManager,
+          jlinkBackend,
+          controlProfileManager,
+          jlinkDeviceCatalog,
+          hostPathResolver,
+          serialSessionCoordinator,
+        });
+        return { success: true, data: { profile, ...session } };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONNECTIONS_UPDATE,
+    async (_event, raw: unknown): Promise<PreloadResult<SavedConnectionSummary>> => {
+      try {
+        const input = await enrichSerialIdentity(parseUpdate(raw), serialIdentityLookup);
+        return { success: true, data: await profileManager.update(input) };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CONNECTIONS_UPDATE_AND_OPEN,
+    async (_event, raw: unknown): Promise<OpenSavedResult> => {
+      try {
+        const input = await enrichSerialIdentity(parseUpdate(raw), serialIdentityLookup);
+        const profile = await profileManager.update(input);
+        const config = await profileManager.openConfig(profile.id);
+        const session = await openSavedConnectionConfig(config, {
+          label: profile.label,
           sessionManager,
           jlinkBackend,
           controlProfileManager,
@@ -113,9 +156,23 @@ export function registerConnectionProfilesIpc(
   return () => {
     ipcMain.removeHandler(IPC_CHANNELS.CONNECTIONS_LIST);
     ipcMain.removeHandler(IPC_CHANNELS.CONNECTIONS_SAVE_AND_OPEN);
+    ipcMain.removeHandler(IPC_CHANNELS.CONNECTIONS_UPDATE);
+    ipcMain.removeHandler(IPC_CHANNELS.CONNECTIONS_UPDATE_AND_OPEN);
     ipcMain.removeHandler(IPC_CHANNELS.CONNECTIONS_OPEN);
     ipcMain.removeHandler(IPC_CHANNELS.CONNECTIONS_DELETE);
   };
+}
+
+async function enrichSerialIdentity<
+  T extends { config: SaveConnectionProfileConfig | UpdateConnectionProfileRequest['config'] },
+>(
+  input: T,
+  lookup: ((portPath: string) => Promise<StableSerialIdentity | undefined>) | undefined,
+): Promise<T> {
+  if (input.config.type !== 'serial' || lookup === undefined) return input;
+  const identity = await lookup(input.config.port).catch(() => undefined);
+  if (identity === undefined) return input;
+  return { ...input, config: { ...input.config, ...identity } };
 }
 
 function parseSaveAndOpen(raw: unknown): {
@@ -137,12 +194,73 @@ function parseSaveAndOpen(raw: unknown): {
   };
 }
 
+function parseUpdate(raw: unknown): UpdateConnectionProfileRequest {
+  if (typeof raw !== 'object' || raw === null) throw new Error('Invalid payload');
+  const r = raw as {
+    profileId?: unknown;
+    expectedUpdatedAt?: unknown;
+    label?: unknown;
+    config?: unknown;
+    credentialAction?: unknown;
+  };
+  if (typeof r.profileId !== 'string' || r.profileId.length === 0) {
+    throw new Error('profileId is required');
+  }
+  if (typeof r.expectedUpdatedAt !== 'string' || Number.isNaN(Date.parse(r.expectedUpdatedAt))) {
+    throw new Error('expectedUpdatedAt must be an ISO timestamp');
+  }
+  if (typeof r.label !== 'string' || r.label.trim().length === 0) {
+    throw new Error('label is required');
+  }
+  const credentialAction = r.credentialAction ?? 'preserve';
+  if (!['preserve', 'replace', 'clear'].includes(String(credentialAction))) {
+    throw new Error('credentialAction is invalid');
+  }
+  const config = parseUpdateConfig(r.config, credentialAction === 'replace');
+  return {
+    profileId: r.profileId,
+    expectedUpdatedAt: r.expectedUpdatedAt,
+    label: r.label,
+    config,
+    credentialAction: credentialAction as UpdateConnectionProfileRequest['credentialAction'],
+  };
+}
+
+function parseUpdateConfig(
+  config: unknown,
+  replacingCredential: boolean,
+): UpdateConnectionProfileRequest['config'] {
+  if (
+    typeof config === 'object' &&
+    config !== null &&
+    (config as { type?: unknown }).type === 'ssh' &&
+    !replacingCredential
+  ) {
+    const parsed = savedConnectionConfigSchema.safeParse(config);
+    if (!parsed.success || parsed.data.type !== 'ssh') {
+      const message = parsed.success
+        ? 'config.type must be ssh'
+        : parsed.error.issues.map((issue) => issue.message).join('; ');
+      throw new Error(message);
+    }
+    return parsed.data;
+  }
+  const parsed = parseSavedConnectionConfig(config);
+  if (!parsed.success)
+    throw new Error(parsed.error.issues.map((issue) => issue.message).join('; '));
+  return parsed.data;
+}
+
 type ParseSavedConnectionConfigResult =
   | { success: true; data: SaveConnectionProfileConfig }
   | { success: false; error: { issues: Array<{ message: string }> } };
 
 function parseSavedConnectionConfig(config: unknown): ParseSavedConnectionConfigResult {
-  if (typeof config === 'object' && config !== null && (config as { type?: unknown }).type === 'rtt-log') {
+  if (
+    typeof config === 'object' &&
+    config !== null &&
+    (config as { type?: unknown }).type === 'rtt-log'
+  ) {
     const parsed = savedConnectionConfigSchema.safeParse(config);
     if (!parsed.success) return parsed;
     if (parsed.data.type !== 'rtt-log') {
@@ -166,7 +284,11 @@ async function openSavedConnectionConfig(
     hostPathResolver?: HostPathResolver;
     serialSessionCoordinator: SerialSessionCoordinator;
   },
-): Promise<{ sessionId: SessionId; state: SessionState; rttLog?: { probeId: string; channelIndex: number } }> {
+): Promise<{
+  sessionId: SessionId;
+  state: SessionState;
+  rttLog?: { probeId: string; channelIndex: number };
+}> {
   if (config.type !== 'rtt-log') {
     return createAndOpenSession(
       deps.sessionManager,
@@ -203,7 +325,8 @@ async function openSavedConnectionConfig(
 function parseProfileId(raw: unknown): string {
   if (typeof raw !== 'object' || raw === null) throw new Error('Invalid payload');
   const profileId = (raw as { profileId?: unknown }).profileId;
-  if (typeof profileId !== 'string' || profileId.length === 0) throw new Error('profileId is required');
+  if (typeof profileId !== 'string' || profileId.length === 0)
+    throw new Error('profileId is required');
   return profileId;
 }
 
@@ -233,6 +356,23 @@ function toIpcError<T>(err: unknown): PreloadResult<T> {
     return { success: false, error: { code: err.code, message: err.message } };
   }
   if (err instanceof ConnectionProfileNotFoundError) {
+    return { success: false, error: { code: err.code, message: err.message } };
+  }
+  if (err instanceof ConnectionProfileConflictError) {
+    return {
+      success: false,
+      error: {
+        code: err.code,
+        message: err.message,
+        details: {
+          profileId: err.profileId,
+          expectedUpdatedAt: err.expectedUpdatedAt,
+          actualUpdatedAt: err.actualUpdatedAt,
+        },
+      },
+    };
+  }
+  if (err instanceof ConnectionProfileTypeChangeError) {
     return { success: false, error: { code: err.code, message: err.message } };
   }
   const rttCode = rttLogOpenErrorCodeOf(err);

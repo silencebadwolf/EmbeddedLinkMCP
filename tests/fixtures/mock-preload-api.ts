@@ -66,9 +66,7 @@ export interface MockPreloadAPI {
     status?: RuntimeReadinessSnapshot['status'],
   ): RuntimeReadinessSnapshot;
   /** 构造确定性的 First Signal observation。 */
-  firstSignalObservation(
-    overrides?: Partial<FirstSignalObservation>,
-  ): FirstSignalObservation;
+  firstSignalObservation(overrides?: Partial<FirstSignalObservation>): FirstSignalObservation;
   /** 设置 readiness.get/subscribe 默认返回的当前 snapshot。 */
   setReadinessSnapshot(snapshot: RuntimeReadinessSnapshot): void;
   /** 设置 firstSignal.status/subscribe 默认返回的当前 observation。 */
@@ -135,6 +133,8 @@ export interface MockPreloadAPI {
     connections: {
       list: ReturnType<typeof vi.fn>;
       saveAndOpen: ReturnType<typeof vi.fn>;
+      update: ReturnType<typeof vi.fn>;
+      updateAndOpen: ReturnType<typeof vi.fn>;
       open: ReturnType<typeof vi.fn>;
       delete: ReturnType<typeof vi.fn>;
     };
@@ -155,6 +155,7 @@ export interface MockPreloadAPI {
       listRecords: ReturnType<typeof vi.fn>;
       openRecord: ReturnType<typeof vi.fn>;
       deleteRecord: ReturnType<typeof vi.fn>;
+      recoverJlinkVcom: ReturnType<typeof vi.fn>;
       runDownload: ReturnType<typeof vi.fn>;
       startDownload: ReturnType<typeof vi.fn>;
       startCompensationReflash: ReturnType<typeof vi.fn>;
@@ -258,13 +259,11 @@ function createFirstSignalObservation(
       : {}),
     ...(state === 'errored'
       ? {
-          error:
-            overrides.error ??
-            {
-              code: 'firstSignal.monitor_failed',
-              messageCode: 'firstSignal.error.monitorFailed',
-              stage: 'monitor',
-            },
+          error: overrides.error ?? {
+            code: 'firstSignal.monitor_failed',
+            messageCode: 'firstSignal.error.monitorFailed',
+            stage: 'monitor',
+          },
         }
       : {}),
     ...overrides,
@@ -284,7 +283,10 @@ export function createMockPreloadAPI(): MockPreloadAPI {
   const readinessListeners = new Set<(event: ReadinessEvent) => void>();
   const firstSignalListeners = new Set<(event: FirstSignalEvent) => void>();
   const firstSignalInvalidPayloadListeners = new Set<
-    (diagnostic: { readonly code: 'firstSignal.invalid_payload'; readonly severity: 'error' }) => void
+    (diagnostic: {
+      readonly code: 'firstSignal.invalid_payload';
+      readonly severity: 'error';
+    }) => void
   >();
   const uiPatchListeners = new Set<(patch: UiStatePatch) => void>();
   let currentReadinessSnapshot = createReadinessSnapshot();
@@ -420,6 +422,32 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       state: 'open' as const,
     }),
   );
+  const connectionUpdate = vi.fn(async () =>
+    okEmpty({
+      id: 'conn_test',
+      label: 'Saved connection',
+      type: 'serial',
+      config: { type: 'serial', port: 'COM1', baudRate: 115200, mode: 'terminal' },
+      hasCredential: false,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(1).toISOString(),
+    } satisfies SavedConnectionSummary),
+  );
+  const connectionUpdateAndOpen = vi.fn(async () =>
+    okEmpty({
+      profile: {
+        id: 'conn_test',
+        label: 'Saved connection',
+        type: 'serial',
+        config: { type: 'serial', port: 'COM1', baudRate: 115200, mode: 'terminal' },
+        hasCredential: false,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(1).toISOString(),
+      } satisfies SavedConnectionSummary,
+      sessionId: 'sess_test',
+      state: 'open' as const,
+    }),
+  );
   const connectionDelete = vi.fn(async () => okEmpty({ deleted: true as const }));
 
   const agentIntegrationList = vi.fn(
@@ -502,6 +530,13 @@ export function createMockPreloadAPI(): MockPreloadAPI {
     }),
   );
   const controlProfileDeleteRecord = vi.fn(async () => okEmpty({ deleted: true as const }));
+  const controlProfileRecoverJlinkVcom = vi.fn(async () =>
+    okEmpty({
+      status: 'power-cycle-required' as const,
+      record: defaultControlProfileRecord,
+      firmwareUpdateObserved: false,
+    }),
+  );
   const controlProfileRunDownload = vi.fn(
     async (): Promise<PreloadResult<ControlProfileDownloadResultPayload>> =>
       okEmpty({
@@ -667,6 +702,8 @@ export function createMockPreloadAPI(): MockPreloadAPI {
     connections: {
       list: connectionList,
       saveAndOpen: connectionSaveAndOpen,
+      update: connectionUpdate,
+      updateAndOpen: connectionUpdateAndOpen,
       open: connectionOpen,
       delete: connectionDelete,
     },
@@ -687,6 +724,7 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       listRecords: controlProfileListRecords,
       openRecord: controlProfileOpenRecord,
       deleteRecord: controlProfileDeleteRecord,
+      recoverJlinkVcom: controlProfileRecoverJlinkVcom,
       runDownload: controlProfileRunDownload,
       startDownload: controlProfileStartDownload,
       startCompensationReflash: controlProfileStartCompensationReflash,
@@ -792,6 +830,8 @@ export function createMockPreloadAPI(): MockPreloadAPI {
       connections: {
         list: connectionList,
         saveAndOpen: connectionSaveAndOpen,
+        update: connectionUpdate,
+        updateAndOpen: connectionUpdateAndOpen,
         open: connectionOpen,
         delete: connectionDelete,
       },
@@ -812,6 +852,7 @@ export function createMockPreloadAPI(): MockPreloadAPI {
         listRecords: controlProfileListRecords,
         openRecord: controlProfileOpenRecord,
         deleteRecord: controlProfileDeleteRecord,
+        recoverJlinkVcom: controlProfileRecoverJlinkVcom,
         runDownload: controlProfileRunDownload,
         startDownload: controlProfileStartDownload,
         startCompensationReflash: controlProfileStartCompensationReflash,

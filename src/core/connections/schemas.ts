@@ -13,6 +13,14 @@ const serialSavedConfigSchema = z
     rtscts: z.boolean().optional(),
     xon: z.boolean().optional(),
     xoff: z.boolean().optional(),
+    hardwareIdentity: z
+      .string()
+      .regex(/^sha256:[a-f0-9]{64}$/u)
+      .optional(),
+    parentIdentity: z
+      .string()
+      .regex(/^sha256:[a-f0-9]{64}$/u)
+      .optional(),
   })
   .strict();
 
@@ -48,7 +56,12 @@ const rttLogSavedConfigSchema = z
     root: z.string().min(1),
     channelIndex: z.number().int().nonnegative(),
     pollIntervalMs: z.number().int().min(10).max(10_000).optional(),
-    maxBytesPerRead: z.number().int().min(1).max(64 * 1024).optional(),
+    maxBytesPerRead: z
+      .number()
+      .int()
+      .min(1)
+      .max(64 * 1024)
+      .optional(),
   })
   .strict();
 
@@ -63,7 +76,10 @@ const encryptedCredentialSchema = z
   .object({
     provider: z.literal('electron-safeStorage'),
     version: z.literal(1),
-    ciphertextBase64: z.string().min(1).max(256 * 1024),
+    ciphertextBase64: z
+      .string()
+      .min(1)
+      .max(256 * 1024),
   })
   .strict();
 

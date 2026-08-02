@@ -2,6 +2,8 @@
 
 LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端 与 MCP 自动化平台，作为旧 Qt/C++ 终端的重写版本。它在单一运行时内同时服务四类用户：**桌面终端用户**（本地 Shell / SSH / 串口）、**嵌入式固件开发者**（终端模式 + sendAndWait + RTT/J-Link 工作流）、**AI Host / MCP 客户端**（通过生产运行时的 63 个 MCP 工具读写同一会话、抓取截图、烧录调试），以及**项目维护者**（pure-TS core、依赖注入式 transport、双向许可证校验）。
 
+更换 J-Link 后串口丢失或需要显式启用 VCOM 时，参见 [J-Link VCOM 串口恢复](docs/jlink-vcom-recovery.md)。
+
 - 包名：`linkterm-v2`
 - 版本：`0.1.0`
 - License：`UNLICENSED`（仓库私有，第三方依赖均已记录归因）

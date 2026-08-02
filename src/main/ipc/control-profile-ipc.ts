@@ -6,11 +6,18 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { electron } from '../electron-runtime.js';
 import { readCurrentControlProfileDeploymentEvidence } from './current-deployment-evidence.js';
+import { findStableSerialIdentity } from '../../core/readiness/serial-identity.js';
+import type { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
+import {
+  JLinkVcomRecoveryError,
+  type JLinkVcomRecoveryService,
+} from '../../core/recovery/jlink-vcom-recovery-service.js';
 import {
   ControlProfileAlreadyInitializedError,
   ControlProfileManager,
   ControlProfileNotFoundError,
   ControlProfileRecordManager,
+  ControlProfileRecordConflictError,
   ControlProfileRecordNotFoundError,
   ControlProfileSchemaVersionMismatchError,
   ControlProfileTooLargeError,
@@ -67,6 +74,8 @@ export interface RegisterControlProfileIpcOptions {
   compensationCandidateService?: CompensationCandidateService;
   onVerifiedDeployment?: (evidence: VerifiedDeploymentEvidence) => void;
   serialSessionCoordinator?: SerialSessionCoordinator;
+  serialDiscovery?: Pick<SerialDiscovery, 'listPorts'>;
+  jlinkVcomRecoveryService?: JLinkVcomRecoveryService;
 }
 
 export interface RunDownloadPayload {
@@ -99,12 +108,19 @@ export function registerControlProfileIpc(
       }>
     > => {
       try {
-        const { root, profile } = parseSavePayload(raw);
-        const saved = await manager.init(root, profile, { force: true });
+        const { root, profile, recordId, expectedUpdatedAt } = parseSavePayload(raw);
+        const profileWithIdentity = await enrichControlSerialIdentity(
+          profile,
+          recordId,
+          recordManager,
+          options.serialDiscovery,
+        );
+        const saved = await manager.init(root, profileWithIdentity, { force: true });
         const record = await recordManager?.save({
           root,
           source: 'manual',
           profile: saved,
+          ...(recordId !== undefined ? { recordId, expectedUpdatedAt } : {}),
         });
         return {
           success: true,
@@ -173,6 +189,21 @@ export function registerControlProfileIpc(
   );
 
   ipcMain.handle(
+    IPC_CHANNELS.CONTROL_PROFILE_RECOVER_JLINK_VCOM,
+    async (_event, raw: unknown): Promise<PreloadResult<unknown>> => {
+      try {
+        if (options.jlinkVcomRecoveryService === undefined) {
+          throw new Error('J-Link VCOM recovery is unavailable');
+        }
+        const input = parseRecordUpdateIdentity(raw);
+        return { success: true, data: await options.jlinkVcomRecoveryService.recover(input) };
+      } catch (err) {
+        return toIpcError(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
     IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD,
     async (event, raw: unknown): Promise<PreloadResult<ControlProfileDownloadResultPayload>> => {
       try {
@@ -180,16 +211,12 @@ export function registerControlProfileIpc(
           throw new Error('Control workflow runtime is unavailable');
         }
         const input = parseRunDownloadPayload(raw);
-        const data = await withControlProfileAdmission(
-          options,
-          'run',
-          input,
-          () =>
-            runControlWorkflow(
-              buildRunDownloadDeps(manager, options),
-              buildRunDownloadWorkflowInput(input),
-              { onVerifiedDeployment: options.onVerifiedDeployment },
-            ),
+        const data = await withControlProfileAdmission(options, 'run', input, () =>
+          runControlWorkflow(
+            buildRunDownloadDeps(manager, options),
+            buildRunDownloadWorkflowInput(input),
+            { onVerifiedDeployment: options.onVerifiedDeployment },
+          ),
         );
         return { success: true, data: data as ControlProfileDownloadResultPayload };
       } catch (err) {
@@ -206,26 +233,21 @@ export function registerControlProfileIpc(
           throw new Error('Control workflow runtime is unavailable');
         }
         const input = parseRunDownloadPayload(raw);
-        const job = await withControlProfileAdmission(
-          options,
-          'start',
-          input,
-          async () => {
-            const workflowInput = buildRunDownloadWorkflowInput(input);
-            const runnerDeps = buildRunDownloadDeps(manager, options);
-            const created = jobManager.create({ input: workflowInput, activityOrigin: 'human' });
-            void jobManager
-              .start(created.jobId, ({ signal, update }) =>
-                runControlWorkflow(runnerDeps, workflowInput, {
-                  signal,
-                  onUpdate: update,
-                  onVerifiedDeployment: options.onVerifiedDeployment,
-                }),
-              )
-              .catch(() => undefined);
-            return created;
-          },
-        );
+        const job = await withControlProfileAdmission(options, 'start', input, async () => {
+          const workflowInput = buildRunDownloadWorkflowInput(input);
+          const runnerDeps = buildRunDownloadDeps(manager, options);
+          const created = jobManager.create({ input: workflowInput, activityOrigin: 'human' });
+          void jobManager
+            .start(created.jobId, ({ signal, update }) =>
+              runControlWorkflow(runnerDeps, workflowInput, {
+                signal,
+                onUpdate: update,
+                onVerifiedDeployment: options.onVerifiedDeployment,
+              }),
+            )
+            .catch(() => undefined);
+          return created;
+        });
         return { success: true, data: toDownloadJobPayload(jobManager.getStatus(job.jobId)) };
       } catch (err) {
         return toIpcError(err);
@@ -261,26 +283,21 @@ export function registerControlProfileIpc(
           root: reflash.root,
           ...(payload.timeoutMs !== undefined ? { timeoutMs: payload.timeoutMs } : {}),
         };
-        const job = await withControlProfileAdmission(
-          options,
-          'start',
-          input,
-          async () => {
-            const workflowInput = buildRunDownloadWorkflowInput(input);
-            const runnerDeps = buildRunDownloadDeps(manager, options);
-            const created = jobManager.create({ input: workflowInput, activityOrigin: 'human' });
-            void jobManager
-              .start(created.jobId, ({ signal, update }) =>
-                runControlWorkflow(runnerDeps, workflowInput, {
-                  signal,
-                  onUpdate: update,
-                  onVerifiedDeployment: options.onVerifiedDeployment,
-                }),
-              )
-              .catch(() => undefined);
-            return created;
-          },
-        );
+        const job = await withControlProfileAdmission(options, 'start', input, async () => {
+          const workflowInput = buildRunDownloadWorkflowInput(input);
+          const runnerDeps = buildRunDownloadDeps(manager, options);
+          const created = jobManager.create({ input: workflowInput, activityOrigin: 'human' });
+          void jobManager
+            .start(created.jobId, ({ signal, update }) =>
+              runControlWorkflow(runnerDeps, workflowInput, {
+                signal,
+                onUpdate: update,
+                onVerifiedDeployment: options.onVerifiedDeployment,
+              }),
+            )
+            .catch(() => undefined);
+          return created;
+        });
         return { success: true, data: toDownloadJobPayload(jobManager.getStatus(job.jobId)) };
       } catch (err) {
         return toIpcError(err);
@@ -444,6 +461,7 @@ export function registerControlProfileIpc(
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_LIST);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_OPEN);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RECORDS_DELETE);
+    ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RECOVER_JLINK_VCOM);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_RUN_DOWNLOAD);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_START_COMPENSATION_REFLASH);
@@ -455,6 +473,41 @@ export function registerControlProfileIpc(
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_DISCONNECT_CHIP);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_PICK_WORKSPACE_ROOT);
     ipcMain.removeHandler(IPC_CHANNELS.CONTROL_PROFILE_PICK_FIRMWARE_FILE);
+  };
+}
+
+async function enrichControlSerialIdentity(
+  profile: ControlProfilePayload,
+  recordId: string | undefined,
+  recordManager: ControlProfileRecordManager | undefined,
+  serialDiscovery: Pick<SerialDiscovery, 'listPorts'> | undefined,
+): Promise<ControlProfilePayload> {
+  if (profile.serial?.port === undefined) return profile;
+  const liveIdentity =
+    serialDiscovery === undefined
+      ? undefined
+      : await serialDiscovery
+          .listPorts()
+          .then((ports) => findStableSerialIdentity(profile.serial!.port!, ports))
+          .catch(() => undefined);
+  let savedIdentity: { hardwareIdentity?: string; parentIdentity?: string } | undefined;
+  if (recordId !== undefined && recordManager !== undefined) {
+    const current = await recordManager.get(recordId).catch(() => undefined);
+    savedIdentity = current?.profile.serial;
+  }
+  const hardwareIdentity =
+    liveIdentity?.hardwareIdentity ??
+    savedIdentity?.hardwareIdentity ??
+    profile.serial.hardwareIdentity;
+  const parentIdentity =
+    liveIdentity?.parentIdentity ?? savedIdentity?.parentIdentity ?? profile.serial.parentIdentity;
+  return {
+    ...profile,
+    serial: {
+      ...profile.serial,
+      ...(hardwareIdentity !== undefined ? { hardwareIdentity } : {}),
+      ...(parentIdentity !== undefined ? { parentIdentity } : {}),
+    },
   };
 }
 
@@ -668,12 +721,35 @@ async function chooseFirmwareFile(): Promise<
  * @param raw IPC 原始 payload
  * @returns root 和已校验 profile
  */
-function parseSavePayload(raw: unknown): { root: string; profile: ControlProfilePayload } {
+function parseSavePayload(raw: unknown): {
+  root: string;
+  profile: ControlProfilePayload;
+  recordId?: string;
+  expectedUpdatedAt?: string;
+} {
   if (typeof raw !== 'object' || raw === null) throw new Error('Invalid payload');
-  const r = raw as { root?: unknown; profile?: unknown };
+  const r = raw as {
+    root?: unknown;
+    profile?: unknown;
+    recordId?: unknown;
+    expectedUpdatedAt?: unknown;
+  };
   if (typeof r.root !== 'string' || r.root.trim().length === 0) throw new Error('root is required');
   const profile = controlProfileBodySchema.parse(r.profile) as ControlProfilePayload;
-  return { root: r.root, profile };
+  const hasUpdateIdentity = r.recordId !== undefined || r.expectedUpdatedAt !== undefined;
+  if (!hasUpdateIdentity) return { root: r.root, profile };
+  if (typeof r.recordId !== 'string' || r.recordId.length === 0) {
+    throw new Error('recordId is required when updating a record');
+  }
+  if (typeof r.expectedUpdatedAt !== 'string' || Number.isNaN(Date.parse(r.expectedUpdatedAt))) {
+    throw new Error('expectedUpdatedAt must be an ISO timestamp when updating a record');
+  }
+  return {
+    root: r.root,
+    profile,
+    recordId: r.recordId,
+    expectedUpdatedAt: r.expectedUpdatedAt,
+  };
 }
 
 function profileFileToBody(profile: ControlProfileFilePayload): ControlProfilePayload {
@@ -705,6 +781,19 @@ function parseRecordIdPayload(raw: unknown): string {
   if (typeof recordId !== 'string' || recordId.length === 0)
     throw new Error('recordId is required');
   return recordId;
+}
+
+function parseRecordUpdateIdentity(raw: unknown): {
+  recordId: string;
+  expectedUpdatedAt: string;
+} {
+  if (typeof raw !== 'object' || raw === null) throw new Error('Invalid payload');
+  const recordId = parseRecordIdPayload(raw);
+  const expectedUpdatedAt = (raw as { expectedUpdatedAt?: unknown }).expectedUpdatedAt;
+  if (typeof expectedUpdatedAt !== 'string' || Number.isNaN(Date.parse(expectedUpdatedAt))) {
+    throw new Error('expectedUpdatedAt must be an ISO timestamp');
+  }
+  return { recordId, expectedUpdatedAt };
 }
 
 function parseRunDownloadPayload(raw: unknown): RunDownloadPayload {
@@ -793,6 +882,23 @@ function toIpcError<T>(err: unknown): PreloadResult<T> {
     return { success: false, error: { code: err.code, message: err.message } };
   }
   if (err instanceof ControlProfileRecordNotFoundError) {
+    return { success: false, error: { code: err.code, message: err.message } };
+  }
+  if (err instanceof ControlProfileRecordConflictError) {
+    return {
+      success: false,
+      error: {
+        code: err.code,
+        message: err.message,
+        details: {
+          recordId: err.recordId,
+          expectedUpdatedAt: err.expectedUpdatedAt,
+          actualUpdatedAt: err.actualUpdatedAt,
+        },
+      },
+    };
+  }
+  if (err instanceof JLinkVcomRecoveryError) {
     return { success: false, error: { code: err.code, message: err.message } };
   }
   if (err instanceof WorkspaceInvalidRootError) {

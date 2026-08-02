@@ -9,6 +9,9 @@ export interface ControlSerialProfile {
   port?: string;
   baudRate?: number;
   mode?: 'normal' | 'terminal';
+  /** Main 生成的不可逆 USB 身份摘要。 */
+  hardwareIdentity?: string;
+  parentIdentity?: string;
 }
 
 /** J-Link probe 连接配置；不保存序列号或凭据类字段。 */

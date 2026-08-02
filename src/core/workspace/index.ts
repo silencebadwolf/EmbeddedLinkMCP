@@ -110,6 +110,7 @@ export {
 
 export {
   ControlProfileRecordManager,
+  ControlProfileRecordConflictError,
   ControlProfileRecordNotFoundError,
   type ControlProfileRecordManagerOptions,
 } from './control-profile-record-manager.js';

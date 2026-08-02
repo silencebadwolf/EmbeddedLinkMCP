@@ -108,6 +108,12 @@ export interface SerialPortInfo {
   locationId?: string;
 }
 
+/** Main 从 USB 身份事实生成的不可逆摘要；不含原始序列号。 */
+export interface StableSerialIdentity {
+  hardwareIdentity?: string;
+  parentIdentity?: string;
+}
+
 /**
  * SSH 会话配置。
  *

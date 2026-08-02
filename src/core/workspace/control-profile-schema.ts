@@ -15,6 +15,14 @@ export const controlSerialProfileSchema = z
     port: z.string().min(1).max(256).optional(),
     baudRate: z.number().int().positive().max(10_000_000).optional(),
     mode: z.enum(['normal', 'terminal']).optional(),
+    hardwareIdentity: z
+      .string()
+      .regex(/^sha256:[a-f0-9]{64}$/u)
+      .optional(),
+    parentIdentity: z
+      .string()
+      .regex(/^sha256:[a-f0-9]{64}$/u)
+      .optional(),
   })
   .strict();
 

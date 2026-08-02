@@ -24,4 +24,7 @@ export interface SaveControlProfileRecordInput {
   source: ControlProfileRecordSource;
   profile: ControlProfile;
   label?: string;
+  /** 修复已有记录时指定；省略时继续按 root + profile 指纹创建/去重。 */
+  recordId?: string;
+  expectedUpdatedAt?: string;
 }

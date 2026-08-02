@@ -8,6 +8,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ConnectionDialog } from '../../../../src/renderer/components/ConnectionDialog.js';
 import { useAppStore } from '../../../../src/renderer/store/app-store.js';
 import { installMockPreload, type MockPreloadAPI } from '../../../fixtures/mock-preload-api.js';
+import type { SavedConnectionSummary } from '../../../../src/shared/preload-api.js';
 
 const resetStore = (): void => {
   useAppStore.setState({
@@ -150,8 +151,12 @@ describe('ConnectionDialog', () => {
 
     fireEvent.click(screen.getByTestId('conn-type-trigger'));
     fireEvent.click(await screen.findByRole('option', { name: 'RTT Log' }));
-    fireEvent.change(screen.getByLabelText('Label (optional)'), { target: { value: 'FNA1000 RTT' } });
-    fireEvent.change(screen.getByLabelText('Workspace root'), { target: { value: 'C:/work/FNA1000' } });
+    fireEvent.change(screen.getByLabelText('Label (optional)'), {
+      target: { value: 'FNA1000 RTT' },
+    });
+    fireEvent.change(screen.getByLabelText('Workspace root'), {
+      target: { value: 'C:/work/FNA1000' },
+    });
     fireEvent.click(screen.getByLabelText('Save as global connection'));
     fireEvent.click(screen.getByText('Create'));
 
@@ -239,6 +244,66 @@ describe('ConnectionDialog', () => {
     });
   });
 
+  it('edits a saved serial profile in place and opens the updated configuration', async () => {
+    const timestamp = new Date(0).toISOString();
+    const profile: SavedConnectionSummary = {
+      id: 'conn_serial',
+      label: 'Old J-Link',
+      type: 'serial',
+      config: {
+        type: 'serial',
+        port: '/dev/ttyUSB0',
+        baudRate: 115200,
+        mode: 'terminal',
+      },
+      hasCredential: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    mock.spies.connections.list.mockResolvedValueOnce({ success: true, data: [profile] });
+    mock.spies.connections.updateAndOpen.mockResolvedValueOnce({
+      success: true,
+      data: {
+        profile: {
+          ...profile,
+          label: 'New J-Link',
+          config: { ...profile.config, baudRate: 921600 },
+          updatedAt: new Date(1).toISOString(),
+        },
+        sessionId: 'sess_updated_serial',
+        state: 'open',
+      },
+    });
+
+    render(<ConnectionDialog />);
+    expect(await screen.findByText('Old J-Link')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Label (optional)'), {
+      target: { value: 'New J-Link' },
+    });
+    fireEvent.change(screen.getByLabelText('Baud Rate'), { target: { value: '921600' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save and open' }));
+
+    await waitFor(() =>
+      expect(mock.spies.connections.updateAndOpen).toHaveBeenCalledWith({
+        profileId: 'conn_serial',
+        expectedUpdatedAt: timestamp,
+        label: 'New J-Link',
+        config: expect.objectContaining({
+          type: 'serial',
+          port: '/dev/ttyUSB0',
+          baudRate: 921600,
+          mode: 'terminal',
+        }),
+      }),
+    );
+    expect(useAppStore.getState().sessions.get('sess_updated_serial')).toMatchObject({
+      connectionType: 'serial',
+      label: 'New J-Link',
+      state: 'open',
+    });
+  });
+
   it('validates RTT log target and channel before opening', async () => {
     render(<ConnectionDialog />);
 
@@ -253,7 +318,9 @@ describe('ConnectionDialog', () => {
     fireEvent.change(screen.getByLabelText('RTT channel'), { target: { value: '-1' } });
     fireEvent.click(screen.getByText('Create'));
 
-    expect(await screen.findByText('RTT channel must be a non-negative integer.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('RTT channel must be a non-negative integer.'),
+    ).toBeInTheDocument();
     expect(mock.spies.rttLog.open).not.toHaveBeenCalled();
   });
 
@@ -302,9 +369,7 @@ describe('ConnectionDialog', () => {
     render(<ConnectionDialog />);
     fireEvent.click(screen.getByText('Create'));
 
-    await waitFor(() =>
-      expect(screen.getByText('Failed to create session')).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText('Failed to create session')).toBeInTheDocument());
   });
 
   it('closes dialog when cancel button clicked', () => {

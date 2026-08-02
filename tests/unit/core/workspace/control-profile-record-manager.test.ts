@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   CONTROL_PROFILE_RECORDS_SCHEMA_VERSION,
+  ControlProfileRecordConflictError,
   ControlProfileRecordManager,
   type FsPrimitives,
 } from '@/core/workspace/index.js';
@@ -100,6 +101,72 @@ describe('ControlProfileRecordManager (real fs)', () => {
     expect(second.source).toBe('ai');
     expect(second.createdAt).toBe(first.createdAt);
     expect(await manager.list()).toHaveLength(1);
+  });
+
+  it('updates a changed repair profile by record id instead of creating a duplicate', async () => {
+    const manager = new ControlProfileRecordManager({ filePath });
+    const first = await manager.save({
+      root: 'C:/repo',
+      source: 'manual',
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0',
+        serial: { enabled: true, port: 'COM10', baudRate: 115200, mode: 'terminal' },
+      },
+    });
+
+    const updated = await manager.save({
+      recordId: first.id,
+      expectedUpdatedAt: first.updatedAt,
+      root: 'C:/repo',
+      source: 'manual',
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0',
+        serial: { enabled: true, port: 'COM12', baudRate: 115200, mode: 'terminal' },
+      },
+    });
+
+    expect(updated).toMatchObject({
+      id: first.id,
+      createdAt: first.createdAt,
+      profile: { serial: { port: 'COM12' } },
+    });
+    expect(updated.updatedAt).not.toBe(first.updatedAt);
+    await expect(manager.list()).resolves.toEqual([updated]);
+  });
+
+  it('rejects stale record-id repair updates', async () => {
+    const manager = new ControlProfileRecordManager({ filePath });
+    const first = await manager.save({
+      root: 'C:/repo',
+      source: 'manual',
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0',
+        serial: { enabled: true, port: 'COM10' },
+      },
+    });
+    await manager.save({
+      recordId: first.id,
+      expectedUpdatedAt: first.updatedAt,
+      root: 'C:/repo',
+      source: 'manual',
+      profile: {
+        schemaVersion: 'linkterm-control/1.0.0',
+        serial: { enabled: true, port: 'COM11' },
+      },
+    });
+
+    await expect(
+      manager.save({
+        recordId: first.id,
+        expectedUpdatedAt: first.updatedAt,
+        root: 'C:/repo',
+        source: 'manual',
+        profile: {
+          schemaVersion: 'linkterm-control/1.0.0',
+          serial: { enabled: true, port: 'COM12' },
+        },
+      }),
+    ).rejects.toBeInstanceOf(ControlProfileRecordConflictError);
   });
 
   it('keeps the newest 200 records when history grows', async () => {

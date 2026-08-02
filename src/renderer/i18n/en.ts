@@ -75,8 +75,7 @@ export const en = {
   'activity.details.calls': 'Call attempts',
   'activity.workflow.stepUnknown': 'Unknown workflow step',
   'activity.authorization.callerAcknowledged': 'Caller acknowledged',
-  'activity.authorization.clientAcknowledgedNotAuthorized':
-    'Client acknowledged, not authorized',
+  'activity.authorization.clientAcknowledgedNotAuthorized': 'Client acknowledged, not authorized',
   'activity.authorization.automationPolicy': 'Automation policy',
   'activity.authorization.approvalNotRequired': 'Auto-executed · observation only',
   'activity.authorization.aria.callerAcknowledged': 'Authorization: caller acknowledged',
@@ -95,7 +94,8 @@ export const en = {
   'workspace.kind.full': 'Full device workspace',
   'workspace.kind.serialOnly': 'Serial-only workspace',
   'workspace.new.title': 'New device workspace',
-  'workspace.new.description': 'Choose a serial-only connection or configure a full device workspace.',
+  'workspace.new.description':
+    'Choose a serial-only connection or configure a full device workspace.',
   'workspace.action.new': 'New device workspace',
   'workspace.action.open': 'Open workspace',
   'workspace.action.opening': 'Opening workspace…',
@@ -105,7 +105,8 @@ export const en = {
   'workspace.open.unavailable': 'This saved workspace is no longer available.',
   'workspace.delete.confirm': 'Delete this saved workspace? This does not close an open terminal.',
   'workspace.setup.serialOnly': 'Serial-only connection',
-  'workspace.setup.serialOnlyHint': 'Open a serial terminal now, or save it from the connection flow.',
+  'workspace.setup.serialOnlyHint':
+    'Open a serial terminal now, or save it from the connection flow.',
   'workspace.setup.full': 'Full device workspace',
   'workspace.setup.fullHint': 'Configure the device, links, and firmware.',
   'readiness.action.refresh': 'Refresh readiness',
@@ -270,11 +271,9 @@ export const en = {
   'firstSuccess.plan.parity': 'Parity',
   'firstSuccess.plan.source': 'Source',
   'firstSuccess.sideEffects.title': 'What this can do',
-  'firstSuccess.sideEffects.reservesPort':
-    'Reserves this serial port exclusively while connected.',
+  'firstSuccess.sideEffects.reservesPort': 'Reserves this serial port exclusively while connected.',
   'firstSuccess.sideEffects.noPayload': 'No payload will be sent when the port opens.',
-  'firstSuccess.sideEffects.controlLinesDefault':
-    'DTR/RTS: LinkTerm default serial open behavior.',
+  'firstSuccess.sideEffects.controlLinesDefault': 'DTR/RTS: LinkTerm default serial open behavior.',
   'firstSuccess.sideEffects.controlLinesUnknown':
     'DTR/RTS: Control-line behavior is not known yet.',
   'firstSuccess.sideEffects.mayReset': 'Opening this port may reset the board.',
@@ -342,6 +341,12 @@ export const en = {
   'controlProfile.rttLog.error.channelInvalid': 'RTT channel must be a non-negative integer.',
   'controlProfile.close': 'Close',
   'controlProfile.save': 'Save to workspace',
+  'controlProfile.vcom.recover': 'Recover J-Link serial',
+  'controlProfile.vcom.recovering': 'Recovering serial…',
+  'controlProfile.vcom.recovered': 'The J-Link serial port was identified, saved, and opened.',
+  'controlProfile.vcom.powerCycleRequired':
+    'VCOM is enabled. Power-cycle or reconnect J-Link, then recover again.',
+  'controlProfile.vcom.firmwareUpdated': 'Commander also updated the probe firmware.',
   'controlProfile.saving': 'Saving...',
   'controlProfile.saved': 'Saved:',
   'controlProfile.records.title': 'Saved control profiles',
@@ -423,6 +428,10 @@ export const en = {
   'dialog.saveProfile': 'Save as global connection',
   'dialog.saved.title': 'Saved connections',
   'dialog.saved.open': 'Open',
+  'dialog.saved.edit': 'Edit',
+  'dialog.saved.updateAndOpen': 'Save and open',
+  'dialog.saved.credentialsRequired':
+    'This SSH profile has no saved credential. Enter a new credential.',
   'dialog.saved.delete': 'Delete',
   // SSH fields
   'dialog.ssh.host': 'Host',

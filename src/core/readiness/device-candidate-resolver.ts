@@ -4,15 +4,15 @@ import {
   type DeviceCandidate,
   type ReadinessEvidence,
 } from '../../shared/readiness-contract.js';
+import { deriveStableSerialIdentity } from './serial-identity.js';
 
 export interface SavedSerialProfileHint {
   readonly id: string;
   readonly label: string;
   readonly portLabel?: string;
   readonly baudRate?: number;
-  readonly vendorId?: string;
-  readonly productId?: string;
-  readonly serialNumber?: string;
+  readonly hardwareIdentity?: string;
+  readonly parentIdentity?: string;
 }
 
 export interface DeviceCandidateResolverInput {
@@ -20,11 +20,16 @@ export interface DeviceCandidateResolverInput {
   readonly savedProfiles: readonly SavedSerialProfileHint[];
 }
 
-export function resolveDeviceCandidates(input: DeviceCandidateResolverInput): readonly DeviceCandidate[] {
+export function resolveDeviceCandidates(
+  input: DeviceCandidateResolverInput,
+): readonly DeviceCandidate[] {
   const identityCounts = countWeakIdentities(input.serialPorts);
+  const parentIdentityCounts = countParentIdentities(input.serialPorts);
   return Object.freeze(
     input.serialPorts.map((port) =>
-      DeviceCandidateSchema.parse(buildSerialCandidate(port, input.savedProfiles, identityCounts)),
+      DeviceCandidateSchema.parse(
+        buildSerialCandidate(port, input.savedProfiles, identityCounts, parentIdentityCounts),
+      ),
     ),
   );
 }
@@ -33,11 +38,14 @@ function buildSerialCandidate(
   port: SerialPortInfo,
   savedProfiles: readonly SavedSerialProfileHint[],
   identityCounts: ReadonlyMap<string, number>,
+  parentIdentityCounts: ReadonlyMap<string, number>,
 ): DeviceCandidate {
   const portLabel = safePortLabel(port.path);
-  const matchingProfile = findStableProfileMatch(port, savedProfiles);
-  const conflicts = matchingProfile?.portLabel !== undefined && matchingProfile.portLabel !== portLabel;
-  const ambiguousIdentity = weakIdentityKey(port) !== undefined && identityCounts.get(weakIdentityKey(port) ?? '') !== 1;
+  const matchingProfile = findStableProfileMatch(port, savedProfiles, parentIdentityCounts);
+  const conflicts =
+    matchingProfile?.portLabel !== undefined && matchingProfile.portLabel !== portLabel;
+  const ambiguousIdentity =
+    weakIdentityKey(port) !== undefined && identityCounts.get(weakIdentityKey(port) ?? '') !== 1;
   const confidence: DeviceCandidate['confidence'] =
     matchingProfile !== undefined && !conflicts
       ? 'exact'
@@ -106,16 +114,35 @@ function buildSerialCandidate(
 function findStableProfileMatch(
   port: SerialPortInfo,
   savedProfiles: readonly SavedSerialProfileHint[],
+  parentIdentityCounts: ReadonlyMap<string, number>,
 ): SavedSerialProfileHint | undefined {
-  if (port.serialNumber === undefined || port.vendorId === undefined || port.productId === undefined) {
+  const identity = deriveStableSerialIdentity(port);
+  if (identity.hardwareIdentity !== undefined) {
+    const strong = savedProfiles.find(
+      (profile) => profile.hardwareIdentity === identity.hardwareIdentity,
+    );
+    if (strong !== undefined) return strong;
+  }
+  if (
+    identity.parentIdentity === undefined ||
+    parentIdentityCounts.get(identity.parentIdentity) !== 1
+  ) {
     return undefined;
   }
-  return savedProfiles.find(
-    (profile) =>
-      profile.serialNumber === port.serialNumber &&
-      profile.vendorId === port.vendorId &&
-      profile.productId === port.productId,
+  const parentMatches = savedProfiles.filter(
+    (profile) => profile.parentIdentity === identity.parentIdentity,
   );
+  return parentMatches.length === 1 ? parentMatches[0] : undefined;
+}
+
+function countParentIdentities(ports: readonly SerialPortInfo[]): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const port of ports) {
+    const identity = deriveStableSerialIdentity(port).parentIdentity;
+    if (identity === undefined) continue;
+    counts.set(identity, (counts.get(identity) ?? 0) + 1);
+  }
+  return counts;
 }
 
 function countWeakIdentities(ports: readonly SerialPortInfo[]): ReadonlyMap<string, number> {
