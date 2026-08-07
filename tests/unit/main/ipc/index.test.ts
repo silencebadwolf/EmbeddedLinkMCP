@@ -8,6 +8,7 @@ const {
   buildTargetsMock,
   startHttpMock,
   readOrCreateSettingsMock,
+  writeSettingsMock,
   agentManagerCtorMock,
   tokenEnvWriterMock,
   safeStorageMock,
@@ -49,6 +50,7 @@ const {
     port: 57371,
     token: 'abcdefghijklmnopqrstuvwxyz1234567890_stable',
   })),
+  writeSettingsMock: vi.fn(async () => undefined),
   agentManagerCtorMock: vi.fn(),
   tokenEnvWriterMock: { writeTokenEnv: vi.fn() },
   safeStorageMock: {
@@ -119,6 +121,7 @@ vi.mock('../../../../src/mcp/runtime-metadata.js', async () => {
   return {
     ...actual,
     readOrCreateRuntimeHttpSettings: readOrCreateSettingsMock,
+    writeRuntimeHttpSettings: writeSettingsMock,
   };
 });
 
@@ -226,6 +229,39 @@ describe('registerIpcHandlers HTTP MCP wiring', () => {
     expect(agentManagerCtorMock).toHaveBeenCalledWith(
       expect.objectContaining({
         tokenEnvWriter: tokenEnvWriterMock,
+      }),
+    );
+    expect(writeSettingsMock).not.toHaveBeenCalled();
+
+    await context.dispose();
+  });
+
+  it('persists a fallback port and uses it for external agent targets', async () => {
+    startHttpMock.mockResolvedValueOnce({
+      url: 'http://127.0.0.1:58432/mcp',
+      token: 'abcdefghijklmnopqrstuvwxyz1234567890_stable',
+      port: 58432,
+      close: vi.fn(async () => undefined),
+    });
+    const { registerIpcHandlers } = await import('../../../../src/main/ipc/index.js');
+
+    const context = await registerIpcHandlers({ autoStartMcp: false });
+
+    expect(writeSettingsMock).toHaveBeenCalledWith(
+      'C:\\Users\\A\\AppData\\Roaming\\linkterm-v2\\mcp-http-settings.json',
+      {
+        schemaVersion: 'linkterm-mcp-http-settings/1.0.0',
+        host: '127.0.0.1',
+        port: 58432,
+        token: 'abcdefghijklmnopqrstuvwxyz1234567890_stable',
+      },
+    );
+    expect(buildTargetsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        httpTransport: {
+          url: 'http://localhost:58432/mcp',
+          bearerTokenEnvVar: 'LINKTERM_MCP_TOKEN',
+        },
       }),
     );
 

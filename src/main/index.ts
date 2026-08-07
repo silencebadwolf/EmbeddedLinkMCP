@@ -63,11 +63,7 @@ if (!singleInstanceLock && mcpStdioMode) {
         await stopProxyAndQuit();
       }
     })
-    .catch((err: unknown) => {
-      const message = err instanceof Error ? err.stack ?? err.message : String(err);
-      process.stderr.write(`${message}\n`);
-      app.quit();
-    });
+    .catch(handleStartupFailure);
 } else if (shouldQuitForMissingSingleInstanceLock({
   hasSingleInstanceLock: singleInstanceLock,
   isMcpStdioMode: mcpStdioMode,
@@ -82,26 +78,28 @@ if (!singleInstanceLock && mcpStdioMode) {
     });
   }
 
-  app.whenReady().then(async () => {
-    if (mcpStdioMode) {
-      installOwnerStdioShutdownHooks();
+  app.whenReady()
+    .then(async () => {
+      if (mcpStdioMode) {
+        installOwnerStdioShutdownHooks();
+        if (ownerStdioDisconnected) {
+          await stopOwnerStdioAfterDisconnect();
+          return;
+        }
+      }
+      context = await registerIpcHandlers({ getMainWindow });
       if (ownerStdioDisconnected) {
         await stopOwnerStdioAfterDisconnect();
         return;
       }
-    }
-    context = await registerIpcHandlers({ getMainWindow });
-    if (ownerStdioDisconnected) {
-      await stopOwnerStdioAfterDisconnect();
-      return;
-    }
-    if (shouldCreateMainWindow({
-      hasSingleInstanceLock: singleInstanceLock,
-      isMcpStdioMode: mcpStdioMode,
-    })) {
-      focusOrCreateMainWindow();
-    }
-  });
+      if (shouldCreateMainWindow({
+        hasSingleInstanceLock: singleInstanceLock,
+        isMcpStdioMode: mcpStdioMode,
+      })) {
+        focusOrCreateMainWindow();
+      }
+    })
+    .catch(handleStartupFailure);
 
   app.on('window-all-closed', () => {
     // macOS 习惯：所有窗口关闭后应用仍驻留 Dock，由用户显式 quit
@@ -132,6 +130,16 @@ if (!singleInstanceLock && mcpStdioMode) {
       focusOrCreateMainWindow();
     }
   });
+}
+
+/** Report a fatal startup error and terminate instead of retaining a headless lock owner. */
+function handleStartupFailure(err: unknown): void {
+  const message = err instanceof Error ? err.stack ?? err.message : String(err);
+  try {
+    process.stderr.write(`${message}\n`);
+  } finally {
+    app.exit(1);
+  }
 }
 
 /** Create the main window if needed, otherwise focus the existing one. */

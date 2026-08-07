@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createServer, type Server as HttpServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -20,6 +22,7 @@ function makeSerialDiscovery(): SerialDiscovery {
 describe('startMcpHttpRuntimeServer', () => {
   let root: string;
   let server: McpHttpRuntimeServer | null = null;
+  let occupiedServer: HttpServer | null = null;
   let client: Client | null = null;
   let transport: StreamableHTTPClientTransport | null = null;
 
@@ -31,10 +34,12 @@ describe('startMcpHttpRuntimeServer', () => {
     await client?.close().catch(() => undefined);
     await transport?.close().catch(() => undefined);
     await server?.close().catch(() => undefined);
+    await closeHttpServer(occupiedServer).catch(() => undefined);
     await rm(root, { recursive: true, force: true });
     client = null;
     transport = null;
     server = null;
+    occupiedServer = null;
   });
 
   it('serves MCP terminal tools over authenticated Streamable HTTP', async () => {
@@ -72,4 +77,46 @@ describe('startMcpHttpRuntimeServer', () => {
     expect(server.url).toBe(`http://127.0.0.1:${server.port}/mcp`);
     expect(server.token).toBe('abcdefghijklmnopqrstuvwxyz1234567890_stable');
   });
+
+  it('falls back to an available port when the requested port is already in use', async () => {
+    occupiedServer = createServer();
+    const occupiedPort = await listenOnAvailablePort(occupiedServer);
+    const metadataPath = path.join(root, 'mcp-runtime.json');
+
+    server = await startMcpHttpRuntimeServer({
+      sessionManager: new SessionManager(),
+      serialDiscovery: makeSerialDiscovery(),
+      metadataPath,
+      host: '127.0.0.1',
+      port: occupiedPort,
+      token: 'abcdefghijklmnopqrstuvwxyz1234567890_fallback',
+    });
+
+    expect(server.port).not.toBe(occupiedPort);
+    expect(server.url).toBe(`http://127.0.0.1:${server.port}/mcp`);
+    expect(JSON.parse(await readFile(metadataPath, 'utf-8'))).toMatchObject({
+      url: server.url,
+      token: 'abcdefghijklmnopqrstuvwxyz1234567890_fallback',
+    });
+  });
 });
+
+function listenOnAvailablePort(server: HttpServer): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve((server.address() as AddressInfo).port);
+    });
+  });
+}
+
+function closeHttpServer(server: HttpServer | null): Promise<void> {
+  if (!server?.listening) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    server.close((err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}

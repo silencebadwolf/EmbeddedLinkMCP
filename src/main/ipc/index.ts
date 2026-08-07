@@ -64,6 +64,7 @@ import {
   readOrCreateRuntimeHttpSettings,
   runtimeHttpSettingsPath,
   runtimeMetadataPath,
+  writeRuntimeHttpSettings,
 } from '../../mcp/runtime-metadata.js';
 import { ControlWorkflowJobManager } from '../../mcp/surfaces/control-workflow/job-manager.js';
 import type { CapturableWindow } from '../../mcp/surfaces/ui/types.js';
@@ -192,25 +193,9 @@ export async function registerIpcHandlers(
     secretCodec: new SafeStorageSecretCodec(),
   });
   const linkTermMcpLaunchConfig = buildLinkTermMcpLaunchConfig();
-  const httpSettings = await readOrCreateRuntimeHttpSettings(
-    runtimeHttpSettingsPath(app.getPath('userData')),
-  );
+  const httpSettingsPath = runtimeHttpSettingsPath(app.getPath('userData'));
+  const httpSettings = await readOrCreateRuntimeHttpSettings(httpSettingsPath);
   process.env.LINKTERM_MCP_TOKEN = httpSettings.token;
-  const agentIntegrationManager = new AgentIntegrationManager({
-    targets: await buildDefaultAgentIntegrationTargets({
-      appData: app.getPath('appData'),
-      appRoot: app.getAppPath(),
-      home: app.getPath('home'),
-      launchConfig: linkTermMcpLaunchConfig,
-      httpTransport: {
-        url: `http://localhost:${httpSettings.port}/mcp`,
-        bearerTokenEnvVar: 'LINKTERM_MCP_TOKEN',
-      },
-    }),
-    launchConfig: linkTermMcpLaunchConfig,
-    wslFiles: createWslAgentConfigFileBridge(),
-    tokenEnvWriter: createCodexTokenEnvWriter(),
-  });
   const jlinkAdapter = new JLinkAdapter();
   const jlinkBackend: IJLinkBackend = jlinkAdapter;
   const jlinkVcomRecoveryService = new JLinkVcomRecoveryService({
@@ -274,17 +259,6 @@ export async function registerIpcHandlers(
     artifactPaths: runtimeFreshnessArtifactPaths(),
   });
   const runtimeRestartScheduler = createElectronRuntimeRestartScheduler();
-  const runtimeReadinessService = createRuntimeReadinessService({
-    runtimeDiagnostics: ownerRuntimeDiagnostics,
-    serialDiscovery,
-    sessionManager,
-    controlProfileManager,
-    controlProfileRecordManager,
-    agentIntegrationManager,
-    jlinkBackend,
-    jlinkDeviceCatalog,
-    compensationCandidateService,
-  });
   const firstSignalObservationService = new FirstSignalObservationService({
     resolveSession: (sessionId) => {
       const session = sessionManager.get(sessionId);
@@ -343,8 +317,48 @@ export async function registerIpcHandlers(
     operationAdmissionCoordinator,
     onVerifiedDeployment,
     metadataPath,
+    host: httpSettings.host,
     port: httpSettings.port,
     token: httpSettings.token,
+  });
+
+  if (mcpHttpServer.port !== httpSettings.port) {
+    try {
+      await writeRuntimeHttpSettings(httpSettingsPath, {
+        ...httpSettings,
+        port: mcpHttpServer.port,
+      });
+    } catch (err) {
+      await mcpHttpServer.close().catch(() => undefined);
+      throw err;
+    }
+  }
+
+  const agentIntegrationManager = new AgentIntegrationManager({
+    targets: await buildDefaultAgentIntegrationTargets({
+      appData: app.getPath('appData'),
+      appRoot: app.getAppPath(),
+      home: app.getPath('home'),
+      launchConfig: linkTermMcpLaunchConfig,
+      httpTransport: {
+        url: `http://localhost:${mcpHttpServer.port}/mcp`,
+        bearerTokenEnvVar: 'LINKTERM_MCP_TOKEN',
+      },
+    }),
+    launchConfig: linkTermMcpLaunchConfig,
+    wslFiles: createWslAgentConfigFileBridge(),
+    tokenEnvWriter: createCodexTokenEnvWriter(),
+  });
+  const runtimeReadinessService = createRuntimeReadinessService({
+    runtimeDiagnostics: ownerRuntimeDiagnostics,
+    serialDiscovery,
+    sessionManager,
+    controlProfileManager,
+    controlProfileRecordManager,
+    agentIntegrationManager,
+    jlinkBackend,
+    jlinkDeviceCatalog,
+    compensationCandidateService,
   });
 
   const unregisterSerial = registerSerialIpc(serialDiscovery);

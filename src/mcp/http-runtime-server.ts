@@ -20,6 +20,7 @@ export interface McpHttpRuntimeServer {
 export interface StartMcpHttpRuntimeServerOptions extends Omit<CreateMcpServerOptions, 'transportFactory'> {
   metadataPath: string;
   host?: string;
+  /** Preferred port; an EADDRINUSE conflict falls back to an OS-assigned available port. */
   port?: number;
   token?: string;
 }
@@ -38,23 +39,21 @@ export async function startMcpHttpRuntimeServer(
 
   const activeMcpServers = new Set<LinkTermMcpServer>();
   const pendingStops = new Set<Promise<void>>();
-  const httpServer = createServer((req, res) => {
+  const requestListener = (req: IncomingMessage, res: ServerResponse): void => {
     void handleRequest(req, res, options, token, activeMcpServers, pendingStops);
-  });
+  };
+  const requestedPort = options.port ?? 0;
+  let httpServer = createServer(requestListener);
 
-  await new Promise<void>((resolve, reject) => {
-    const onError = (err: Error): void => {
-      httpServer.off('listening', onListening);
-      reject(err);
-    };
-    const onListening = (): void => {
-      httpServer.off('error', onError);
-      resolve();
-    };
-    httpServer.once('error', onError);
-    httpServer.once('listening', onListening);
-    httpServer.listen(options.port ?? 0, host);
-  });
+  try {
+    await listenHttpServer(httpServer, requestedPort, host);
+  } catch (err) {
+    if (requestedPort === 0 || !isAddressInUseError(err)) throw err;
+    // A persisted port is only a preference: keeping the desktop usable is more important than
+    // failing startup when another process or an ephemeral client temporarily owns that port.
+    httpServer = createServer(requestListener);
+    await listenHttpServer(httpServer, 0, host);
+  }
 
   const address = httpServer.address();
   if (!address || typeof address === 'string') {
@@ -195,4 +194,31 @@ function closeHttpServer(server: HttpServer): Promise<void> {
       else resolve();
     });
   });
+}
+
+/** Bind an HTTP server and surface asynchronous listen errors through a Promise. */
+function listenHttpServer(server: HttpServer, port: number, host: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (err: Error): void => {
+      server.off('listening', onListening);
+      reject(err);
+    };
+    const onListening = (): void => {
+      server.off('error', onError);
+      resolve();
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, host);
+  });
+}
+
+/** Return true only for the recoverable TCP port-conflict error. */
+function isAddressInUseError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code?: unknown }).code === 'EADDRINUSE'
+  );
 }
