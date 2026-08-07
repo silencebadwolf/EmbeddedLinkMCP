@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        感谢报告。安全漏洞不要使用此模板，请按 SECURITY.md 私密报告。提交前请删除凭据、客户数据、设备秘密与个人绝对路径。
+        感谢报告。安全漏洞不要使用此模板，请按 docs/open-source/community.md 的私密报告流程处理。提交前请删除凭据、客户数据、设备秘密与个人绝对路径。
   - type: input
     id: version
     attributes:

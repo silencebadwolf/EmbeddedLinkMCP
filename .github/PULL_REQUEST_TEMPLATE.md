@@ -19,5 +19,5 @@
 
 - [ ] 我没有提交密码、Token、私钥、客户数据、个人绝对路径或受限制的厂商文件。
 - [ ] 新增运行时依赖已同步更新 `third-party-manifest.json` 与 `licenses/`。
-- [ ] 我已阅读并同意 [LinkTerm CLA](../CLA.md)，并有权提交这些贡献。
+- [ ] 我已阅读并同意 [LinkTerm CLA](../docs/open-source/licensing.md)，并有权提交这些贡献。
 - [ ] 文档、测试和变更日志已按需要更新。

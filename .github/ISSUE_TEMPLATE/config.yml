@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 安全漏洞报告
-    url: https://gitee.com/wake_micro/link-mcp/blob/main/SECURITY.md
+    url: https://gitee.com/wake_micro/link-mcp/blob/main/docs/open-source/community.md
     about: 不要公开披露未修复漏洞；请先阅读私密报告流程。
   - name: 商业授权
-    url: https://gitee.com/wake_micro/link-mcp/blob/main/COMMERCIAL_LICENSE.md
+    url: https://gitee.com/wake_micro/link-mcp/blob/main/docs/open-source/licensing.md
     about: 闭源集成、私有化交付和商业支持请先阅读授权说明。

@@ -231,7 +231,7 @@ tests/
 
 ## 许可证与第三方合规
 
-项目自有代码按 [GNU AGPL v3 或更高版本](./LICENSE) 发布。你可以免费使用、修改、分发和商业使用，但分发修改版或通过网络向用户提供修改版服务时，必须履行 AGPL 的对应源码义务。希望闭源分发、嵌入专有产品或免除 AGPL 开源义务时，请参阅 [商业授权](./COMMERCIAL_LICENSE.md)。贡献代码需接受 [CLA](./CLA.md)，以维持双许可能力。
+项目自有代码按 [GNU AGPL v3 或更高版本](./LICENSE) 发布。你可以免费使用、修改、分发和商业使用，但分发修改版或通过网络向用户提供修改版服务时，必须履行 AGPL 的对应源码义务。闭源分发、嵌入专有产品或免除 AGPL 开源义务的授权路径见 [许可与商业授权](./docs/open-source/licensing.md)。贡献代码需接受其中的 CLA，以维持双许可能力。
 
 项目许可证不覆盖第三方依赖、商标或厂商工具；归因入口见 [NOTICE](./NOTICE)。
 
@@ -262,9 +262,9 @@ Coverage provider 不属于产品运行时。`third-party-manifest.json` 的独�
 
 ---
 
-## 贡献指南（维护者要点）
+## 协作与维护者要点
 
-外部贡献流程、开发环境与 PR 要求见 [CONTRIBUTING.md](./CONTRIBUTING.md)。行为、安全与支持边界分别见 [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)、[SECURITY.md](./SECURITY.md) 和 [SUPPORT.md](./SUPPORT.md)。
+外部贡献流程、开发环境、行为准则、安全报告与支持边界见 [社区与贡献](./docs/open-source/community.md)。项目治理、路线图与变更记录见 [治理、路线图与变更记录](./docs/open-source/project.md)。
 
 - **修改前先读 `DEVELOPMENT_PLAN.md`**：每个 Phase 的状态徽章（已完成 / 进行中 / 未开始）与「变更记录」子节是跨会话的事实来源；任何偏离原计划的决策都要写回该文件。
 - **新增运行时依赖** = 同一次提交里同时更新 `package.json`、`third-party-manifest.json`、`licenses/<name>.LICENSE`，并跑通 `pnpm run validate:licenses`。
@@ -286,7 +286,8 @@ Coverage provider 不属于产品运行时。`third-party-manifest.json` 的独�
 - [`DEVELOPMENT_PLAN.md`](./docs/DEVELOPMENT_PLAN.md) — 13 阶段计划与历史决策
 - [`CLAUDE.md`](./CLAUDE.md) — 给代码助手的工程边界与不变量摘要
 - [`docs/README.md`](./docs/README.md) — 文档导航与历史快照说明
-- [`ROADMAP.md`](./ROADMAP.md) — 开源发布与后续方向
-- [`CHANGELOG.md`](./CHANGELOG.md) — 面向版本的重要变更
+- [`docs/open-source/community.md`](./docs/open-source/community.md) — 贡献、安全、支持与行为准则
+- [`docs/open-source/licensing.md`](./docs/open-source/licensing.md) — AGPL、商业授权与 CLA
+- [`docs/open-source/project.md`](./docs/open-source/project.md) — 治理、路线图与变更记录
 - [`docs/RELEASING.md`](./docs/RELEASING.md) — 签名、SBOM、校验和与候选发布流程
 - [`docs/phase-decisions/`](./docs/phase-decisions/) — Phase 5 / 6 / 7 / 8 / 9 / 10 / 11 / 12 的 review 记录
