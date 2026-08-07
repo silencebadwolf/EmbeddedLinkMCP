@@ -1,6 +1,0 @@
-- [x] 1.1 Add OpenSpec requirements for stale-runtime recovery.
-- [x] 1.2 Add TDD coverage proving stale guard still blocks normal state-affecting tools.
-- [x] 1.3 Add TDD coverage proving `restart_mcp_runtime` can run while stale and requires confirmation.
-- [x] 1.4 Implement runtime-control MCP surface and Electron restart injection.
-- [x] 1.5 Update core tool diagnostics and recommended next actions.
-- [x] 2.1 Run targeted tests, build/lint checks, OpenSpec validation, and GitNexus detect_changes.

@@ -170,8 +170,8 @@ export interface CrashDiagnosis {
 /**
  * J-Link backend 抽象。
  *
- * 单一接口（不拆 sub-interface）：partial backend 类型正确语义未实现的 mock 漂移
- * 风险高（详见 docs/phase-decisions/Phase9.md Q&A）。所有方法异步；错误以 `JLinkError`
+ * 单一接口（不拆 sub-interface）：partial backend 类型正确但语义未实现的 mock 漂移
+ * 风险高；所有方法异步，错误以 `JLinkError`
  * 子类形式抛出，MCP 层 `translateJLinkError` 负责翻译。
  *
  * **不变量**：实现者在所有非 lifecycle 方法的入口必须先校验 probeId（不存在抛

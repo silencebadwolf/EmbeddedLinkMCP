@@ -74,4 +74,4 @@ LinkTerm 当前采用维护者主导的治理模式。维护者负责路线图�
 
 ## 历史说明
 
-`0.1.0` 之前的开发变更保留在 Git 历史、`docs/phase-decisions/` 和 `docs/engineering/` 中。首个正式公开版本发布时，将从 `[Unreleased]` 切出带日期的版本条目。
+`0.1.0` 之前的开发变更保留在 Git 历史和当前 `docs/engineering/` 审计记录中。首个正式公开版本发布时，将从 `[Unreleased]` 切出带日期的版本条目。

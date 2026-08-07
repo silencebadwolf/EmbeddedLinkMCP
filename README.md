@@ -15,7 +15,7 @@ LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端与 MCP 自动�
 
 ## 当前状态
 
-13 / 13 个计划实现阶段已经完成（详见 [`DEVELOPMENT_PLAN.md`](./docs/DEVELOPMENT_PLAN.md)）。公开正式版仍需完成真实硬件/UI 手工验收、依赖安全收口、官方产物签名和发布门禁；当前完成度以 [`project-completion-audit.md`](./docs/engineering/project-completion-audit.md) 为准。
+13 / 13 个计划实现阶段已经完成。公开正式版仍需完成真实硬件/UI 手工验收、依赖安全收口、官方产物签名和发布门禁；当前完成度以 [`project-completion-audit.md`](./docs/engineering/project-completion-audit.md) 为准。
 
 | 阶段                                                        | 状态   |
 | ----------------------------------------------------------- | ------ |
@@ -266,7 +266,7 @@ Coverage provider 不属于产品运行时。`third-party-manifest.json` 的独�
 
 外部贡献流程、开发环境、行为准则、安全报告与支持边界见 [社区与贡献](./docs/open-source/community.md)。项目治理、路线图与变更记录见 [治理、路线图与变更记录](./docs/open-source/project.md)。
 
-- **修改前先读 `DEVELOPMENT_PLAN.md`**：每个 Phase 的状态徽章（已完成 / 进行中 / 未开始）与「变更记录」子节是跨会话的事实来源；任何偏离原计划的决策都要写回该文件。
+- **修改前先读 `PROJECT_REQUIREMENTS.md`、`CLAUDE.md` 和相关规范**：这些是当前产品边界与工程约束的入口。
 - **新增运行时依赖** = 同一次提交里同时更新 `package.json`、`third-party-manifest.json`、`licenses/<name>.LICENSE`，并跑通 `pnpm run validate:licenses`。
 - **新增错误码（M5 双向同步模式）**：必须**同时**加入
   - `src/shared/error-codes.ts` 的 `ERROR_CODES` 常量；
@@ -276,18 +276,16 @@ Coverage provider 不属于产品运行时。`third-party-manifest.json` 的独�
 - **不得让 MCP 工具或 IPC handler 直接触碰 transport** —— 一切写入必须经 `SessionManager.write`。这是硬安全边界。
 - **不要在 `src/core/` 引入 `electron`、`serialport`、`ssh2`、`node-pty`**；只能通过 `*-{port,client}-like.ts` 接口与默认工厂消费。
 - **不要把 SSH 凭据放进 `SshSessionConfig` 持久结构** —— `credentials` 是 `session:create` IPC 的独立顶层字段，`buildSession()` 在 `await` 之前就会清空它。
-- **每个 phase 收尾时**：更新 `DEVELOPMENT_PLAN.md` 进度、补 JSDoc、确保 ESLint 与 Vitest 全绿。
+- **每次收尾时**：确认 ESLint 与 Vitest 全绿，必要时同步更新项目审计与发布说明。
 
 ---
 
 ## 关键参考文档
 
 - [`PROJECT_REQUIREMENTS.md`](./docs/PROJECT_REQUIREMENTS.md) — 权威需求规格
-- [`DEVELOPMENT_PLAN.md`](./docs/DEVELOPMENT_PLAN.md) — 13 阶段计划与历史决策
 - [`CLAUDE.md`](./CLAUDE.md) — 给代码助手的工程边界与不变量摘要
-- [`docs/README.md`](./docs/README.md) — 文档导航与历史快照说明
+- [`docs/README.md`](./docs/README.md) — 文档导航
 - [`docs/open-source/community.md`](./docs/open-source/community.md) — 贡献、安全、支持与行为准则
 - [`docs/open-source/licensing.md`](./docs/open-source/licensing.md) — AGPL、商业授权与 CLA
 - [`docs/open-source/project.md`](./docs/open-source/project.md) — 治理、路线图与变更记录
 - [`docs/RELEASING.md`](./docs/RELEASING.md) — 签名、SBOM、校验和与候选发布流程
-- [`docs/phase-decisions/`](./docs/phase-decisions/) — Phase 5 / 6 / 7 / 8 / 9 / 10 / 11 / 12 的 review 记录
