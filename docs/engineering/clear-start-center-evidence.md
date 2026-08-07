@@ -50,21 +50,21 @@
 
 ## Windows-first 人工观察
 
-- 大窗口（1920×1080）中文首屏：`C:\Users\Admin\AppData\Local\Temp\linkterm-home-final.png`。
-- 小窗口（900×650）中文首屏：`C:\Users\Admin\AppData\Local\Temp\linkterm-home-small-zh-final.png`。
-- 小窗口（900×650）英文首屏：`C:\Users\Admin\AppData\Local\Temp\linkterm-home-small-final.png`。
-- 旧版小窗口串口候选截图：`C:\Users\Admin\AppData\Local\Temp\linkterm-start-center-com-candidates.png`（已过时，不代表当前首页布局）。
-- 最终清理后的中文首页（仍无活动 Session）：`C:\Users\Admin\AppData\Local\Temp\linkterm-final-clean.png`。
-- 旧版 COM1 候选预填对话框：`C:\Users\Admin\AppData\Local\Temp\linkterm-candidate-prefill-dialog.png`（已过时，不代表当前入口）。
-- 英文 Activity Center 观察态：`C:\Users\Admin\AppData\Local\Temp\linkterm-activity-en-final.png`。
-- 安全本地 Shell 会话中的人工输入：`C:\Users\Admin\AppData\Local\Temp\linkterm-local-shell-human-input-ok.png`。
-- 本地 Shell 会话 + AI 只读活动观察抽屉：`C:\Users\Admin\AppData\Local\Temp\linkterm-local-shell-activity-open.png`。
+- 大窗口（1920×1080）中文首屏：`<local-temp>/linkterm-home-final.png`。
+- 小窗口（900×650）中文首屏：`<local-temp>/linkterm-home-small-zh-final.png`。
+- 小窗口（900×650）英文首屏：`<local-temp>/linkterm-home-small-final.png`。
+- 旧版小窗口串口候选截图：`<local-temp>/linkterm-start-center-com-candidates.png`（已过时，不代表当前首页布局）。
+- 最终清理后的中文首页（仍无活动 Session）：`<local-temp>/linkterm-final-clean.png`。
+- 旧版 COM1 候选预填对话框：`<local-temp>/linkterm-candidate-prefill-dialog.png`（已过时，不代表当前入口）。
+- 英文 Activity Center 观察态：`<local-temp>/linkterm-activity-en-final.png`。
+- 安全本地 Shell 会话中的人工输入：`<local-temp>/linkterm-local-shell-human-input-ok.png`。
+- 本地 Shell 会话 + AI 只读活动观察抽屉：`<local-temp>/linkterm-local-shell-activity-open.png`。
 - 当前自动化确认：已保存连接区域位于 Manual open 之前；小窗口布局使用可换行容器；首页不显示 COM 列表或独立手动串口区域；高级设备默认折叠；无活动 Session 时无控制配置侧栏和 `+ New`；Activity Center 默认关闭，打开后只显示活动/审计、导出和本地删除入口，不显示批准、暂停、接管或恢复控件。
 - Activity Center 打开后未创建 Session，也未改变 Start Center 的输入字段；自动化焦点测试进一步确认关闭抽屉会把焦点还给打开入口。
 - 使用本地 Shell 做了安全边界验证：人工命令能在 LinkTerm 会话内回显，打开 Activity Center 后仍能看到同一终端和 AI 只读活动；这证明共享 Renderer/Session 输入边界的可用性，但不等价于串口设备验收。
 - 自动化 `ai-human-coop` 与 `serial-manual-entry` 使用 FakeTransport/FakeSerialPort 验证同一 SessionManager/WriteQueue 边界，但不替代 Windows 上真实 COM 终端的人工验收。
 - 本轮没有连接 MCU、打开真实 COM 终端、发送串口 payload、烧录、擦除、复位或建立调试连接。因此“人工串口输入与 AI 同时操作”的真实设备证据仍待用户明确提供安全设备窗口后补做；此项不能以本地 Shell 截图或 0 findings 代替。
-- Windows 本机事实核对：全局连接文件存在于 `C:\Users\Admin\AppData\Roaming\linkterm-v2\connections.json`，当前包含 COM6/115200 与 RTT 配置；VS Code MCP 注入位于 `C:\Users\Admin\AppData\Roaming\Code\User\mcp.json`，Codex 注入位于 `C:\Users\Admin\.codex\config.toml`。本次没有读取或改写这些用户配置。
+- Windows 本机事实核对：全局连接文件存在于 `<user-data>/linkterm-v2/connections.json`，当前包含 COM6/115200 与 RTT 配置；VS Code MCP 注入位于 `<user-data>/Code/User/mcp.json`，Codex 注入位于 `<user-home>/.codex/config.toml`。本次没有读取或改写这些用户配置。
 - 入口修复后的 GitNexus upstream impact：`App`、`StartCenter`、`ConnectionProfileManager` 均 LOW；taint `explain` 对 App/StartCenter 返回 0 findings（工具 caveat 仍适用）。PDG 对 StartCenter返回控制依赖；App 的 PDG 查询因当前 dirty worktree 索引数据库未初始化而阻塞，未伪造结果。
 - 追加验证（2026-07-16 02:24）：`pnpm ci:check` 通过，160 个测试文件、1902 passed、17 skipped；lint、TypeScript/build、license 检查均通过。`openspec validate --strict` 和 GitNexus `detect_changes --scope all` 也已重新运行；detect_changes 仍报告累计 dirty worktree 的 63 files / 437 symbols / 74 processes / critical，不能单独归因于本次 UI change。
 - 追加验证（2026-07-16 15:40–15:42）：定向 renderer/串口协作测试 11 个文件、82 passed；`pnpm ci:check` 通过，160 个测试文件、1908 passed、17 skipped，lint、TypeScript/build、license 检查均通过；两个首页 OpenSpec change 均通过 strict validation。只读枚举发现 Windows `COM1` 与 `COM10 (JLink CDC UART Port)`，本轮未打开端口、未发送数据、未执行任何硬件副作用，因此真实 COM 人工输入 + AI 同时操作验收仍未完成。

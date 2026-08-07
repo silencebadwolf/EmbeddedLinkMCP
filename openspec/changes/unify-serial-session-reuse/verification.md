@@ -1,7 +1,7 @@
 # Verification Record
 
 Verified on 2026-07-20 in the Windows worktree at
-`C:\Users\Admin\Desktop\Code\link-terminal`.
+the repository root.
 
 ## Behavioral evidence
 

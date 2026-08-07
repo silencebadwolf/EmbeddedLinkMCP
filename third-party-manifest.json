@@ -1,10 +1,10 @@
 {
   "schemaVersion": "1.1.0",
-  "generatedAt": "2026-07-12",
+  "generatedAt": "2026-08-07",
   "dependencies": [
     {
       "name": "@modelcontextprotocol/sdk",
-      "version": "^1.29.0",
+      "version": "^1.30.0",
       "license": "MIT",
       "licenseFile": "licenses/modelcontextprotocol-sdk.LICENSE"
     },

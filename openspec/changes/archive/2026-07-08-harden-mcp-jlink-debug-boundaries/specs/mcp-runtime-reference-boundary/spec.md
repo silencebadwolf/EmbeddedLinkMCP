@@ -5,7 +5,7 @@ LinkTerm SHALL NOT require the local JLinkMCP reference repository or its `.unde
 
 #### Scenario: Packaged LinkTerm starts
 - **WHEN** LinkTerm runs from a packaged build or a clean user workspace
-- **THEN** MCP startup, status, runbook, debug, and workflow tools do not read `C:\\Users\\Admin\\Desktop\\Code\\reference-repos\\JLinkMCP`
+- **THEN** MCP startup, status, runbook, debug, and workflow tools do not read `<reference-repos>/JLinkMCP`
 - **AND** they do not depend on any reference-repository source file or generated graph
 
 #### Scenario: Design documentation references graph

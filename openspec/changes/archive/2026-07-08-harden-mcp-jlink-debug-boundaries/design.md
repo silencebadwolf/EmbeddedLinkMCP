@@ -4,7 +4,7 @@ LinkTerm v2 当前 13 个阶段已完成，MCP server 在 Electron main process 
 
 J-Link/debug 相关生产代码的关键边界是：MCP surface 只调用 `IJLinkBackend`；真实 SEGGER Commander / GDB server 进程控制集中在 `src/jlink/segger-command-runner.ts` 和 `JLinkAdapter` 内；高影响工具通过 `confirm=true` 门禁；错误通过 `JLinkError` → `ToolErrorCode` 翻译；二进制 payload 在 MCP 边界有 16 MiB cap。
 
-参考仓库 JLinkMCP（`C:\Users\Admin\Desktop\Code\reference-repos\JLinkMCP`，commit `53d9085028048b4c8b08adab5dbb8a575e3ad21b`）是一个无 LICENSE 的 Go `mcp-go` 最小 server。它可作为设计观察：简洁 MCP bootstrapping、stdio/SSE transport switch、SSE graceful shutdown、Commander script orchestration。但它直接在 tool handler 中创建临时 script 并执行 `JLinkExe`，使用 hardcoded nRF52/SWD/speed/raw text output；这些实现与 LinkTerm 安全边界冲突，不能复制或改写进 LinkTerm。
+参考仓库 JLinkMCP（`<reference-repos>/JLinkMCP`，commit `53d9085028048b4c8b08adab5dbb8a575e3ad21b`）是一个无 LICENSE 的 Go `mcp-go` 最小 server。它可作为设计观察：简洁 MCP bootstrapping、stdio/SSE transport switch、SSE graceful shutdown、Commander script orchestration。但它直接在 tool handler 中创建临时 script 并执行 `JLinkExe`，使用 hardcoded nRF52/SWD/speed/raw text output；这些实现与 LinkTerm 安全边界冲突，不能复制或改写进 LinkTerm。
 
 ## Goals / Non-Goals
 

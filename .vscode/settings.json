@@ -37,8 +37,5 @@
         "saveAll": true
       }
     ]
-  },
-  "jlinkMcp.jlink.device": "AT32F435VGT7",
-  "jlinkMcp.jlink.interface": "swd",
-  "jlinkMcp.jlink.speed": 4000
+  }
 }

@@ -33,7 +33,7 @@ Scope: Phase 5 only (`openspec/changes/add-human-approval`). This is not A+D com
 
 ## Fresh validation evidence
 
-Commands run from `C:\Users\Admin\Desktop\Code\link-terminal`:
+Commands run from the repository root:
 
 - `pnpm exec vitest run tests/unit/shared/approval-contract.test.ts tests/unit/core/approval tests/unit/main/ipc/approval-ipc.test.ts tests/unit/main/preload-approval.test.ts tests/unit/main/ipc/control-profile-ipc.test.ts tests/unit/main/ipc/control-profile-approval-gate.test.ts tests/unit/main/ipc/index.test.ts tests/unit/renderer/approval tests/unit/renderer/App.test.tsx tests/unit/renderer/activity tests/unit/fixtures/mock-preload-api.test.ts tests/unit/fixtures/mock-preload-api-approval.test.ts tests/integration/human-approval-mcp.test.ts tests/integration/high-impact-confirmation.test.ts`
   - Passed: 28 files / 215 tests.
@@ -148,7 +148,7 @@ Fresh GitNexus evidence:
     - Returned 0 results; this is consistent with GitNexus' current property/field flow limitation because the direct gate carries the id as `input.approvalId`.
   - `pdg_query({ mode: "flows", target: "toApprovalRequiredFailure", variable: "decision" })`
     - Returned 2 reaching-definition results proving the legacy `CONFIRMATION_REQUIRED` branch remains distinct from `APPROVAL_REQUIRED` in MCP result mapping.
-- `detect_changes({ repo: "link-mcp", scope: "compare", base_ref: "main", worktree: "C:\\Users\\Admin\\Desktop\\Code\\link-terminal" })`
+- `detect_changes({ repo: "link-mcp", scope: "compare", base_ref: "main", worktree: "<repo-root>" })`
   - Completed with CRITICAL aggregate risk.
   - Summary: 369 changed symbols / 55 changed files / 50 affected processes.
   - The affected process set spans the expected cumulative Phase 0-5 work, including control-profile IPC, approval projection/snapshot/resolve, renderer App/Activity/Approval UI, readiness/start center, first-success serial flows, runtime/debug MCP handlers, and license/CI characterization scripts.

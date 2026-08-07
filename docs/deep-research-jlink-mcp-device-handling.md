@@ -78,9 +78,9 @@ For RTT, it starts `JLinkGDBServerCL` with the configured device. That also forc
 
 | # | Source | Key Point |
 |---|--------|-----------|
-| 1 | [src/jlink/device-catalog.ts](/c:/Users/Admin/Desktop/Code/link-terminal/src/jlink/device-catalog.ts) | Current LinkTerm catalog parses local XML/AddOn databases, which may miss SEGGER built-in targets. |
-| 2 | [src/mcp/surfaces/control-workflow/workflow-runner.ts](/c:/Users/Admin/Desktop/Code/link-terminal/src/mcp/surfaces/control-workflow/workflow-runner.ts) | Current workflow can reject targets that are absent from XML catalog before actual J-Link attach. |
-| 3 | [src/main/ipc/rtt-log-session-ipc.ts](/c:/Users/Admin/Desktop/Code/link-terminal/src/main/ipc/rtt-log-session-ipc.ts) | RTT open path currently has catalog-backed target checks. |
+| 1 | [`src/jlink/device-catalog.ts`](../src/jlink/device-catalog.ts) | Current LinkTerm catalog parses local XML/AddOn databases, which may miss SEGGER built-in targets. |
+| 2 | [`src/mcp/surfaces/control-workflow/workflow-runner.ts`](../src/mcp/surfaces/control-workflow/workflow-runner.ts) | Current workflow can reject targets that are absent from XML catalog before actual J-Link attach. |
+| 3 | [`src/main/ipc/rtt-log-session-ipc.ts`](../src/main/ipc/rtt-log-session-ipc.ts) | RTT open path currently has catalog-backed target checks. |
 
 **Answer:**
 

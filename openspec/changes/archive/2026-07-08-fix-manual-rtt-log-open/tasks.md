@@ -24,7 +24,7 @@
 ## Real hardware evidence
 
 - 2026-07-03T08:52:36Z: restarted LinkTerm MCP runtime; `get_app_status` reported `code.fresh=true`, full 61-tool core set, and no stale artifacts.
-- Opened `/home/jianyin/code/FNA1000` RTT ch0 as App-visible session `sess_0dcb2b64-62e2-4e6a-b45c-ceb13e61c3c6`; managed GDB/RTT backend started and SEGGER RTT telnet banner appeared.
+- Opened `<workspace>/FNA1000` RTT ch0 as an App-visible session `sess_0dcb2b64-62e2-4e6a-b45c-ceb13e61c3c6`; managed GDB/RTT backend started and SEGGER RTT telnet banner appeared.
 - Sent `help\r\n` through `write_to_session`; transcript and screenshot showed the local RTT input in the App terminal.
 - Ran `cpu_reset(halt=false)` on probe `5bc40e3a-baef-41db-8dc7-d693680f52bc`; transcript still had no firmware-origin bytes after reset.
 - Called `diagnose_rtt_log_session` through the same MCP runtime; diagnosis was `target_input_unanswered` with `outboundWriteEvents=1`, `outboundBytes=6`, and `deviceBytesAfterLastWrite=0`.

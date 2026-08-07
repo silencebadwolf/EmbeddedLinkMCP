@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 
 NODE_WINGET_ID = "OpenJS.NodeJS.LTS"
-DEFAULT_NODE_MAJOR = 20
+DEFAULT_NODE_MAJOR = 22
 DEFAULT_PNPM_VERSION = "9.15.0"
 DEFAULT_ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
 BUILD_INPUT_FILES = [
@@ -210,12 +210,12 @@ def ensure_node(min_major: int, *, install: bool) -> None:
     """
     node_version = capture(["node", "--version"])
     node_major = parse_major(node_version)
-    if node_major is not None and node_major >= min_major:
+    if node_major is not None and (node_major == min_major or node_major >= 24):
         print(f"Node.js 已就绪: {node_version}")
         return
 
     if not install:
-        raise SetupError(f"需要 Node.js >= {min_major}，当前检测到: {node_version or '未安装'}")
+        raise SetupError(f"需要 Node.js {min_major}.x 或 >= 24，当前检测到: {node_version or '未安装'}")
 
     if not command_exists("winget"):
         raise SetupError("未找到 winget，无法自动安装 Node.js。请先安装 Node.js LTS 后重试。")
@@ -225,7 +225,7 @@ def ensure_node(min_major: int, *, install: bool) -> None:
 
     node_version = capture(["node", "--version"])
     node_major = parse_major(node_version)
-    if node_major is None or node_major < min_major:
+    if node_major is None or (node_major != min_major and node_major < 24):
         raise SetupError("Node.js 安装后仍不可用。请重开 VS Code/终端后再次运行此脚本。")
     print(f"Node.js 已就绪: {node_version}")
 

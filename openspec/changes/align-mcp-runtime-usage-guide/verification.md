@@ -1,7 +1,7 @@
 # Verification — align-mcp-runtime-usage-guide
 
 Date: 2026-07-21
-Worktree: `C:\Users\Admin\Desktop\Code\link-terminal`
+Worktree: repository root (Windows)
 Base and current committed HEAD: `3bbe374259e72ab9c22c51d684e0df85899b9f8f`
 
 ## Scope verified

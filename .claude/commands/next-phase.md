@@ -1,23 +1,21 @@
 ---
-description: 自动推进 DEVELOPMENT_PLAN.md 中的下一个未完成 Phase（仿 /feature-dev 7 阶段，全自动）
+description: 在当前用户明确授权范围内推进 DEVELOPMENT_PLAN.md 中的下一个 Phase
 ---
 
-# /next-phase — 自动推进下一个 Phase（仿 feature-dev 7 阶段工作流）
+# /next-phase — 在明确授权范围内推进下一个 Phase
 
-本命令为 LinkTerm v2 项目执行**全自动 Phase 推进**。结构对齐官方 `feature-dev` 插件的 7 阶段工作流（Discovery → Exploration → Clarifying → Architecture → Implementation → Review → Summary），但所有"等用户答"的决策点改成"自动选推荐项 + 决策记录"，使其可在 `/loop` 下无人值守循环。
+本命令为 LinkTerm v2 项目提供一套可审计的 Phase 工作流（Discovery → Exploration → Clarifying → Architecture → Implementation → Review → Summary）。它可以自动完成低风险探索和验证，但不会把一次调用解释为永久的代码、提交、发布或远程操作授权，也不会在 `/loop` 中无人值守循环。
 
-## 全自动授权（在执行本命令期间生效）
+## 权限边界
 
-用户已预先授权以下行为，无需再次询问：
+本命令不授予超出当前用户请求的权限。默认允许只读探索、运行本地验证，以及在用户明确指定范围内编辑文件；以下动作必须在当前对话中明确授权：
 
-1. 调用 `feature-dev:code-explorer` / `feature-dev:code-architect` / `feature-dev:code-reviewer` 子代理及实施类子代理（`backend-developer` / `frontend-developer` / `fullstack-developer` / `general-purpose`，按 Phase 性质择优）
-2. 创建/修改源代码、测试、配置文件
-3. 运行 `pnpm install`、`pnpm test`、`pnpm run lint`、`pnpm run build`、`pnpm run validate:licenses`
-4. 修改 `DEVELOPMENT_PLAN.md`、`CLAUDE.md`、`third-party-manifest.json`、`licenses/`
-5. 创建 `docs/phase-decisions/Phase{N}.md` 决策记录
-6. 执行 `git add`、`git commit`（**不要 push**，push 仍需用户授权）
+1. 修改源代码、测试、配置、依赖、许可证或治理文件；
+2. 删除文件、关闭进程、访问真实硬件或修改用户/系统配置；
+3. `git add`、`git commit`、创建 tag、发布产物或任何远程操作；
+4. 调用会改变外部状态的子代理、服务或自动化任务。
 
-凡是子代理或后续步骤要做选择，**一律选推荐项**（架构推荐选项默认为 "Pragmatic Balance"），把候选项与所选记入 `docs/phase-decisions/Phase{N}.md`。
+对不会改变公共契约、安全边界或外部状态的选择，可以采用推荐项并记录理由；涉及这些边界的歧义必须停下来向用户说明，而不是猜测。所有选择都应记入 `docs/phase-decisions/Phase{N}.md`。
 
 ---
 
@@ -33,7 +31,7 @@ description: 自动推进 DEVELOPMENT_PLAN.md 中的下一个未完成 Phase（�
 # Phase {N} 决策记录 — {TITLE}
 
 执行日期：{YYYY-MM-DD}
-执行模式：全自动（用户预先授权一律选推荐项）
+执行模式：按当前用户授权范围执行；高影响选择需记录并确认
 
 ## Phase 1: Discovery（目标摘要）
 
@@ -84,7 +82,7 @@ description: 自动推进 DEVELOPMENT_PLAN.md 中的下一个未完成 Phase（�
 - **自动选推荐项**（依据：CLAUDE.md 不变量 / explorer 发现的现有模式 / 用户在 DEVELOPMENT_PLAN.md 提到的偏好 / 安全边界）
 - 写明理由
 
-全部追加到 `Phase{N}.md` 的 "## Phase 3: Clarifying" 小节。**不要向用户反问**。
+全部追加到 `Phase{N}.md` 的 "## Phase 3: Clarifying" 小节。会造成公共契约、安全、数据或外部状态变化的歧义必须向用户说明。
 
 ## Step 4 — Architecture：并行 code-architect
 
@@ -115,7 +113,7 @@ description: 自动推进 DEVELOPMENT_PLAN.md 中的下一个未完成 Phase（�
 
 子代理 prompt 必须含：
 
-- **全自动指令**："不要反问任何问题，遇到选择一律选推荐项并把'问题/候选/选中/理由'追加到 `docs/phase-decisions/Phase{N}.md` 的 '## Phase 5: Implementation' 小节"
+- **实施边界**：只在当前用户明确授权范围内修改；低风险选择记录推荐项，高影响选择先报告并等待授权；把问题/候选/选中/理由追加到 `docs/phase-decisions/Phase{N}.md` 的 "## Phase 5: Implementation" 小节
 - 项目根目录绝对路径
 - 本 Phase 目标 + 完整交付物清单（从 `DEVELOPMENT_PLAN.md` 抄）
 - Step 4 选中的架构方案全文
@@ -179,7 +177,7 @@ description: 自动推进 DEVELOPMENT_PLAN.md 中的下一个未完成 Phase（�
 按现有 commit 风格（参考 `git log --oneline -5`）：
 
 ```bash
-git add -A   # 本命令授权使用 -A
+git add <明确属于本 Phase 的文件>
 git commit -m "$(cat <<'EOF'
 feat: Phase N — <简短描述>
 
@@ -188,18 +186,13 @@ EOF
 )"
 ```
 
-**不要 push**。
+只有用户明确要求推送时才执行 `git push`；不得使用 `git add -A`，不得把无关工作区改动带入提交。
 
-## Step 8 — 安排下一轮
+## Step 8 — 收口
 
 输出一行总结：`✅ Phase N 完成。下一个 Phase 即将启动…`
 
-调用 `ScheduleWakeup`：
-- `delaySeconds`: `60`
-- `prompt`: `/next-phase`
-- `reason`: `Phase N 完成，触发下一轮 /next-phase`
-
-如果是最后一个 Phase（执行后已无 ⬜/🟨）：**不要** ScheduleWakeup，输出 `🎉 全部 Phase 已完成` 并停止。
+不要自动安排唤醒、循环或下一轮外部任务。输出结果、剩余风险和下一步建议，等待用户再次调用本命令。
 
 ---
 

@@ -659,7 +659,7 @@ link-terminal-demo/
 - `mcp-session-roundtrip.test.ts` — 集成：MCP open→write→read 完整回路（用 LocalShellSession + FakePty）
 - `session-manager.test.ts` 扩展 — `createAndOpen` 成功广播 / 失败静默回滚
 
-### 新增依赖：`@modelcontextprotocol/sdk`@^1.29.0、`zod`@^4.4.3
+### 新增依赖：`@modelcontextprotocol/sdk`@^1.30.0、`zod`@^4.4.3
 
 ### 依赖阶段：Phase 1-3
 
@@ -1078,7 +1078,7 @@ OpenSpec change `add-rtt-log-terminal-session` 在现有 backend-owned RTT clien
 
 ## Phase 10: UI MCP 工具 ✅ 已完成（2026-06-14）
 
-完整决策记录：[`docs/phase-decisions/Phase10.md`](docs/phase-decisions/Phase10.md)
+完整决策记录：[`Phase 10 决策记录`](phase-decisions/Phase10.md)
 
 ### 实际交付物
 
@@ -1165,7 +1165,7 @@ OpenSpec change `add-rtt-log-terminal-session` 在现有 backend-owned RTT clien
 
 ### 关键架构决策
 
-- **Pragmatic 风格 → Minimal Changes**（0.5x 工作量、单文件）。详见 [docs/phase-decisions/Phase11.md](docs/phase-decisions/Phase11.md)
+- **Pragmatic 风格 → Minimal Changes**（0.5x 工作量、单文件）。详见 [Phase 11 决策记录](phase-decisions/Phase11.md)
 - **DI 纯函数 + 入口 main()**：`validateLicenses({ manifestPath, packageJsonPath, rootDir })` 导出便于测试，main() 仅做 path 拼装 + exit
 - **EXTRA_RUNTIME_DEPS allowlist**：仅 `['electron']`（在 devDeps 但运行时分发）；allowlist 项必须实际存在于 package.json 任一 dep 字段，防 stale
 - **版本严格字符串相等**：`manifest.version === package.json.dependencies[name]`，防 bump 后忘了重新审核 license
@@ -1257,7 +1257,7 @@ OpenSpec change `add-rtt-log-terminal-session` 在现有 backend-owned RTT clien
 
 ### 关键架构决策
 
-详见 [docs/phase-decisions/Phase12.md](docs/phase-decisions/Phase12.md)：
+详见 [Phase 12 决策记录](phase-decisions/Phase12.md)：
 
 - **Pragmatic Balance 风格**（2x 工作量；本 Phase 90% 是新增测试 + 1 个简单功能，跳过并行 3-architect）
 - **5 个高影响工具加 confirm 闸门**：`flash_download` / `flash_write` / `flash_erase` / `cpu_reset` / `gdb_server_start`

@@ -8,8 +8,17 @@ files:
   - package.json
   - node_modules/**/*.node
   - node_modules/**/prebuilds/**/*
-  - "!**/*.ldtmp"
-  - "!**/*.ldenc"
+  - '!**/*.ldtmp'
+  - '!**/*.ldenc'
+extraResources:
+  - from: LICENSE
+    to: LICENSE
+  - from: NOTICE
+    to: NOTICE
+  - from: third-party-manifest.json
+    to: third-party-manifest.json
+  - from: licenses
+    to: licenses
 extraMetadata:
   main: dist/main/main/index.js
 npmRebuild: false
@@ -22,6 +31,8 @@ win:
   target:
     - nsis
     - portable
+nsis:
+  license: LICENSE
 linux:
   target:
     - AppImage

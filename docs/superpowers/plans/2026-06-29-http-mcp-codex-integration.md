@@ -476,7 +476,7 @@ Add to `tests/unit/main/ipc/agent-integration-targets.test.ts`:
 it('builds Codex targets as HTTP-first when HTTP settings are provided', async () => {
   const targets = await buildDefaultAgentIntegrationTargets({
     appData: 'C:\\Users\\A\\AppData\\Roaming',
-    appRoot: 'C:\\Users\\Admin\\Desktop\\Code\\link-terminal',
+    appRoot: '<repo-root>',
     home: 'C:\\Users\\A',
     httpTransport: {
       url: 'http://localhost:57371/mcp',
@@ -485,9 +485,9 @@ it('builds Codex targets as HTTP-first when HTTP settings are provided', async (
     wslHomeDirs: async () => [
       {
         distroName: 'Ubuntu-24.04',
-        userName: 'jianyin',
-        homePath: '\\\\wsl.localhost\\Ubuntu-24.04\\home\\jianyin',
-        linuxHomePath: '/home/jianyin',
+        userName: '<wsl-user>',
+        homePath: '\\\\wsl.localhost\\Ubuntu-24.04\\home\\<wsl-user>',
+        linuxHomePath: '/home/<wsl-user>',
       },
     ],
   });
@@ -742,9 +742,9 @@ returns:
 
 Use the UI install button or call the IPC-backed manager from an integration harness.
 
-Expected Windows `C:\Users\Admin\.codex\config.toml` contains the HTTP `linkterm` block.
+Expected Windows `<user-home>/.codex/config.toml` contains the HTTP `linkterm` block.
 
-Expected WSL `/home/jianyin/.codex/config.toml` contains the same HTTP `linkterm` block.
+Expected WSL `/home/<wsl-user>/.codex/config.toml` contains the same HTTP `linkterm` block.
 
 - [ ] **Step 3: Verify Windows Codex parsing**
 

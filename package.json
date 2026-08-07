@@ -1,7 +1,17 @@
 {
   "name": "linkterm-v2",
   "version": "0.1.0",
+  "private": true,
   "description": "LinkTerm v2 — Electron/TypeScript desktop terminal & MCP automation platform",
+  "author": "LinkTerm contributors",
+  "homepage": "https://gitee.com/wake_micro/link-mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://gitee.com/wake_micro/link-mcp.git"
+  },
+  "bugs": {
+    "url": "https://gitee.com/wake_micro/link-mcp/issues"
+  },
   "type": "module",
   "main": "dist/main/main/index.js",
   "scripts": {
@@ -20,12 +30,14 @@
     "lint": "eslint src/ tests/",
     "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\"",
     "validate:licenses": "tsx scripts/validate-licenses.ts",
+    "sbom": "node scripts/generate-sbom.mjs",
+    "release:checksums": "node scripts/generate-checksums.mjs",
     "ci:check": "pnpm run lint && pnpm run build && pnpm run test && pnpm run validate:licenses",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "pack": "pnpm run build && electron-builder --dir",
+    "dist": "pnpm run build && electron-builder"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@radix-ui/react-dialog": "^1.1.16",
     "@radix-ui/react-label": "^2.1.9",
     "@radix-ui/react-select": "^2.3.0",
@@ -91,5 +103,5 @@
     }
   },
   "packageManager": "pnpm@9.15.0",
-  "license": "UNLICENSED"
+  "license": "AGPL-3.0-or-later"
 }
