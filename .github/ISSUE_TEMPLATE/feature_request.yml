@@ -1,0 +1,31 @@
+name: 功能建议
+description: 提议新的能力或体验改进
+title: '[Feature] '
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 描述用户场景与当前痛点，不要只描述实现方式
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 可包含交互、MCP 契约、兼容性或替代方案
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 风险与影响
+      description: 是否影响硬件操作、安全边界、公共 API、持久格式或现有工作流
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: 参与意愿
+      options:
+        - label: 我愿意在维护者确认方向后提交实现。

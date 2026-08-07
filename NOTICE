@@ -1,0 +1,18 @@
+LinkTerm v2
+Copyright (C) 2026 LinkTerm contributors
+
+The project-owned source code is available under the GNU Affero General
+Public License, version 3 or (at your option) any later version
+(AGPL-3.0-or-later). See LICENSE.
+
+Alternative commercial licenses may be available for proprietary use.
+See COMMERCIAL_LICENSE.md. A commercial license covers only material the
+licensor has the right to license.
+
+Third-party components retain their respective copyrights and licenses.
+The reviewed runtime dependency records are in third-party-manifest.json,
+with corresponding license texts under licenses/. Electron and native
+runtime components may also display or install additional upstream notices.
+
+LinkTerm is not affiliated with or endorsed by SEGGER Microcontroller GmbH.
+J-Link and related names may be trademarks of their respective owners.

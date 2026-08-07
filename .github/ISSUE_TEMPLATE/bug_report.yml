@@ -1,0 +1,52 @@
+name: Bug 报告
+description: 报告可复现的 LinkTerm 缺陷
+title: '[Bug] '
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢报告。安全漏洞不要使用此模板，请按 SECURITY.md 私密报告。提交前请删除凭据、客户数据、设备秘密与个人绝对路径。
+  - type: input
+    id: version
+    attributes:
+      label: LinkTerm 版本或提交
+      placeholder: 例如 0.1.0 / 01f450d
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 环境
+      description: 操作系统、架构、Node/pnpm，以及相关 J-Link/串口/SSH 版本
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 提供最小、稳定、经过脱敏的步骤
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为与脱敏日志
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交确认
+      options:
+        - label: 我已搜索现有 Issue，未发现相同问题。
+          required: true
+        - label: 这不是未修复的安全漏洞，且内容中不含秘密或客户数据。
+          required: true

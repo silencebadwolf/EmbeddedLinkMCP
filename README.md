@@ -1,12 +1,13 @@
 # LinkTerm v2
 
-LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端 与 MCP 自动化平台，作为旧 Qt/C++ 终端的重写版本。它在单一运行时内同时服务四类用户：**桌面终端用户**（本地 Shell / SSH / 串口）、**嵌入式固件开发者**（终端模式 + sendAndWait + RTT/J-Link 工作流）、**AI Host / MCP 客户端**（通过生产运行时的 63 个 MCP 工具读写同一会话、抓取截图、烧录调试），以及**项目维护者**（pure-TS core、依赖注入式 transport、双向许可证校验）。
+LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端与 MCP 自动化平台，作为旧 Qt/C++ 终端的重写版本。它在单一运行时内同时服务四类用户：**桌面终端用户**（本地 Shell / SSH / 串口）、**嵌入式固件开发者**（终端模式 + sendAndWait + RTT/J-Link 工作流）、**AI Host / MCP 客户端**（通过生产运行时的 63 个 MCP 工具读写同一会话、抓取截图、烧录调试），以及**项目维护者**（pure-TS core、依赖注入式 transport、双向许可证校验）。
 
 更换 J-Link 后串口丢失或需要显式启用 VCOM 时，参见 [J-Link VCOM 串口恢复](docs/jlink-vcom-recovery.md)。
 
 - 包名：`linkterm-v2`
 - 版本：`0.1.0`
-- License：`UNLICENSED`（仓库私有，第三方依赖均已记录归因）
+- License：`AGPL-3.0-or-later`；闭源/专有使用可购买商业许可证
+- 官方仓库：<https://gitee.com/wake_micro/link-mcp>
 - 包管理器：`pnpm@9.15.0`（必需，**不能用 npm/yarn**）
 - Node：`^22.13.0 || >=24.0.0`（CI 验证 Node.js 22.13.0 下界）
 
@@ -14,7 +15,7 @@ LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端 与 MCP 自动
 
 ## 当前状态
 
-13 / 13 Phase 全部完成（详见 [`DEVELOPMENT_PLAN.md`](./docs/DEVELOPMENT_PLAN.md)）。
+13 / 13 个计划实现阶段已经完成（详见 [`DEVELOPMENT_PLAN.md`](./docs/DEVELOPMENT_PLAN.md)）。公开正式版仍需完成真实硬件/UI 手工验收、依赖安全收口、官方产物签名和发布门禁；当前完成度以 [`project-completion-audit.md`](./docs/engineering/project-completion-audit.md) 为准。
 
 | 阶段                                                        | 状态   |
 | ----------------------------------------------------------- | ------ |
@@ -182,8 +183,8 @@ pnpm start              # 另起 Electron
 | `pnpm run ci:check`                 | 串行执行 lint、build、全量 test、license validation                 |
 | `pnpm start`                        | 启动已构建的 Electron 应用                                          |
 | `pnpm run dev`                      | Vite dev server（仅 renderer）                                      |
-| `pnpm run pack`                     | `electron-builder --dir`（不打安装包）                              |
-| `pnpm run dist`                     | `electron-builder` 生成发布产物（按 `electron-builder.yml`）        |
+| `pnpm run pack`                     | 先完整构建，再执行 `electron-builder --dir`（不打安装包）           |
+| `pnpm run dist`                     | 先完整构建，再按 `electron-builder.yml` 生成发布产物                |
 
 ---
 
@@ -228,7 +229,13 @@ tests/
 
 ---
 
-## License 合规
+## 许可证与第三方合规
+
+项目自有代码按 [GNU AGPL v3 或更高版本](./LICENSE) 发布。你可以免费使用、修改、分发和商业使用，但分发修改版或通过网络向用户提供修改版服务时，必须履行 AGPL 的对应源码义务。希望闭源分发、嵌入专有产品或免除 AGPL 开源义务时，请参阅 [商业授权](./COMMERCIAL_LICENSE.md)。贡献代码需接受 [CLA](./CLA.md)，以维持双许可能力。
+
+项目许可证不覆盖第三方依赖、商标或厂商工具；归因入口见 [NOTICE](./NOTICE)。
+
+### 第三方依赖门禁
 
 每个**运行时**第三方依赖必须同时存在于：
 
@@ -257,6 +264,8 @@ Coverage provider 不属于产品运行时。`third-party-manifest.json` 的独�
 
 ## 贡献指南（维护者要点）
 
+外部贡献流程、开发环境与 PR 要求见 [CONTRIBUTING.md](./CONTRIBUTING.md)。行为、安全与支持边界分别见 [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)、[SECURITY.md](./SECURITY.md) 和 [SUPPORT.md](./SUPPORT.md)。
+
 - **修改前先读 `DEVELOPMENT_PLAN.md`**：每个 Phase 的状态徽章（已完成 / 进行中 / 未开始）与「变更记录」子节是跨会话的事实来源；任何偏离原计划的决策都要写回该文件。
 - **新增运行时依赖** = 同一次提交里同时更新 `package.json`、`third-party-manifest.json`、`licenses/<name>.LICENSE`，并跑通 `pnpm run validate:licenses`。
 - **新增错误码（M5 双向同步模式）**：必须**同时**加入
@@ -276,4 +285,8 @@ Coverage provider 不属于产品运行时。`third-party-manifest.json` 的独�
 - [`PROJECT_REQUIREMENTS.md`](./docs/PROJECT_REQUIREMENTS.md) — 权威需求规格
 - [`DEVELOPMENT_PLAN.md`](./docs/DEVELOPMENT_PLAN.md) — 13 阶段计划与历史决策
 - [`CLAUDE.md`](./CLAUDE.md) — 给代码助手的工程边界与不变量摘要
+- [`docs/README.md`](./docs/README.md) — 文档导航与历史快照说明
+- [`ROADMAP.md`](./ROADMAP.md) — 开源发布与后续方向
+- [`CHANGELOG.md`](./CHANGELOG.md) — 面向版本的重要变更
+- [`docs/RELEASING.md`](./docs/RELEASING.md) — 签名、SBOM、校验和与候选发布流程
 - [`docs/phase-decisions/`](./docs/phase-decisions/) — Phase 5 / 6 / 7 / 8 / 9 / 10 / 11 / 12 的 review 记录
