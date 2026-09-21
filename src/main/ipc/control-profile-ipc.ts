@@ -5,13 +5,13 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { electron } from '../electron-runtime.js';
-import { readCurrentControlProfileDeploymentEvidence } from './current-deployment-evidence.js';
-import { findStableSerialIdentity } from '../../core/readiness/serial-identity.js';
-import type { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
+import { readCurrentControlProfileDeploymentEvidence } from '@linkterm/runtime/services/current-deployment-evidence';
+import { findStableSerialIdentity } from '@linkterm/runtime/core/readiness/serial-identity';
+import type { SerialDiscovery } from '@linkterm/runtime/transports/serial/serial-discovery';
 import {
   JLinkVcomRecoveryError,
   type JLinkVcomRecoveryService,
-} from '../../core/recovery/jlink-vcom-recovery-service.js';
+} from '@linkterm/runtime/core/recovery/jlink-vcom-recovery-service';
 import {
   ControlProfileAlreadyInitializedError,
   ControlProfileManager,
@@ -24,31 +24,31 @@ import {
   WorkspaceInvalidRootError,
   controlProfileBodySchema,
   controlProfilePath,
-} from '../../core/workspace/index.js';
+} from '@linkterm/runtime/core/workspace/index';
 import {
   decodeFirmwareImageByPath,
   isSelfDescribingFirmwareImagePath,
-} from '../../core/workspace/firmware-image.js';
+} from '@linkterm/runtime/core/workspace/firmware-image';
 import {
   ControlProfileChipConfigError,
   connectControlProfileChip,
-} from '../../core/workspace/control-profile-chip.js';
-import { formatHexAddress } from '../../core/workspace/intel-hex.js';
-import { JLinkError } from '../../jlink/errors.js';
-import type { IJLinkBackend, JLinkDeviceCatalog } from '../../jlink/index.js';
+} from '@linkterm/runtime/core/workspace/control-profile-chip';
+import { formatHexAddress } from '@linkterm/runtime/core/workspace/intel-hex';
+import { JLinkError } from '@linkterm/runtime/jlink/errors';
+import type { IJLinkBackend, JLinkDeviceCatalog } from '@linkterm/runtime/jlink/index';
 import {
   CompensationCandidateService,
   type VerifiedDeploymentEvidence,
-} from '../../core/compensation/index.js';
-import type { SessionManager } from '../../core/session/session-manager.js';
-import { defaultOpenSerial } from '../../mcp/surfaces/control-profile/tools.js';
-import { ControlWorkflowJobManager } from '../../mcp/surfaces/control-workflow/job-manager.js';
-import type { ControlWorkflowJobSnapshot } from '../../mcp/surfaces/control-workflow/job-manager.js';
-import type { RunControlWorkflowInput } from '../../mcp/surfaces/control-workflow/schemas.js';
-import { runControlWorkflow } from '../../mcp/surfaces/control-workflow/workflow-runner.js';
-import { ToolError } from '../../mcp/registry.js';
-import type { OperationAdmissionCoordinator } from '../../core/operation-admission/operation-admission-coordinator.js';
-import type { SerialSessionCoordinator } from '../../core/session/serial-session-coordinator.js';
+} from '@linkterm/runtime/core/compensation/index';
+import type { SessionManager } from '@linkterm/runtime/core/session/session-manager';
+import { defaultOpenSerial } from '@linkterm/mcp/surfaces/control-profile/tools';
+import { ControlWorkflowJobManager } from '@linkterm/mcp/surfaces/control-workflow/job-manager';
+import type { ControlWorkflowJobSnapshot } from '@linkterm/mcp/surfaces/control-workflow/job-manager';
+import type { RunControlWorkflowInput } from '@linkterm/mcp/surfaces/control-workflow/schemas';
+import { runControlWorkflow } from '@linkterm/mcp/surfaces/control-workflow/workflow-runner';
+import { ToolError } from '@linkterm/mcp/registry';
+import type { OperationAdmissionCoordinator } from '@linkterm/runtime/core/operation-admission/operation-admission-coordinator';
+import type { SerialSessionCoordinator } from '@linkterm/runtime/core/session/serial-session-coordinator';
 import { ERROR_CODES } from '../../shared/error-codes.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type {

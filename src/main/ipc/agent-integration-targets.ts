@@ -6,8 +6,8 @@ import { promisify } from 'node:util';
 import type {
   AgentIntegrationTarget,
   LinkTermMcpLaunchConfig,
-} from '../../core/agent-integrations/index.js';
-import { buildWslInteropLaunchConfig } from '../../core/agent-integrations/index.js';
+} from '@linkterm/runtime/core/agent-integrations/index';
+import { buildWslInteropLaunchConfig } from '@linkterm/runtime/core/agent-integrations/index';
 
 const execFileAsync = promisify(execFile);
 

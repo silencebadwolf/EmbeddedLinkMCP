@@ -18,19 +18,19 @@
  */
 
 import { electron } from '../electron-runtime.js';
-import type { SessionManager } from '../../core/session/session-manager.js';
+import type { SessionManager } from '@linkterm/runtime/core/session/session-manager';
 import {
   SerialSessionConflictError,
   SerialSessionCoordinator,
-} from '../../core/session/serial-session-coordinator.js';
+} from '@linkterm/runtime/core/session/serial-session-coordinator';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type { SessionId, SessionState } from '../../shared/types.js';
 import type {
   SessionCreateRequestConfig,
   PreloadResult,
 } from '../../shared/preload-api.js';
-import { openSessionInputSchema } from '../../mcp/surfaces/terminal/schemas.js';
-import { createAndOpenSession } from './session-open-helper.js';
+import { openSessionInputSchema } from '@linkterm/mcp/surfaces/terminal/schemas';
+import { createAndOpenSession } from '@linkterm/runtime/services/session-open';
 
 const { ipcMain } = electron;
 

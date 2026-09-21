@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ActivityHealthMonitor } from '../../../../src/core/activity/activity-health.js';
-import { OperationLedger } from '../../../../src/core/activity/operation-ledger.js';
-import { OperationRecorder } from '../../../../src/core/activity/operation-recorder.js';
+import { ActivityHealthMonitor } from '@linkterm/runtime/core/activity/activity-health';
+import { OperationLedger } from '@linkterm/runtime/core/activity/operation-ledger';
+import { OperationRecorder } from '@linkterm/runtime/core/activity/operation-recorder';
 import type {
   ActivityCursor,
   ActivityEventView,

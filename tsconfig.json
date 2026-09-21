@@ -4,13 +4,27 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": [
+        "./src/*"
+      ]
     }
   },
   "files": [],
   "references": [
-    { "path": "./packages/contracts" },
-    { "path": "./tsconfig.main.json" },
-    { "path": "./tsconfig.renderer.json" }
+    {
+      "path": "./packages/contracts"
+    },
+    {
+      "path": "./packages/runtime"
+    },
+    {
+      "path": "./packages/mcp"
+    },
+    {
+      "path": "./tsconfig.main.json"
+    },
+    {
+      "path": "./tsconfig.renderer.json"
+    }
   ]
 }

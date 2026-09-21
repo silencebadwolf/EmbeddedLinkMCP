@@ -8,6 +8,12 @@ importers:
 
   .:
     dependencies:
+      '@linkterm/runtime':
+        specifier: workspace:*
+        version: link:packages/runtime
+      '@linkterm/mcp':
+        specifier: workspace:*
+        version: link:packages/mcp
       '@linkterm/contracts':
         specifier: workspace:*
         version: link:packages/contracts
@@ -138,6 +144,33 @@ importers:
 
   packages/contracts:
     dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  packages/runtime:
+    dependencies:
+      '@linkterm/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+      ssh2:
+        specifier: ^1.16.0
+        version: 1.17.0
+
+  packages/mcp:
+    dependencies:
+      '@linkterm/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@linkterm/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.30.0
+        version: 1.30.0(zod@4.4.3)
       zod:
         specifier: ^4.4.3
         version: 4.4.3

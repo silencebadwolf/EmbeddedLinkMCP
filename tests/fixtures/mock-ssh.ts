@@ -5,7 +5,7 @@ import type {
   SshClientLike,
   SshConnectOptions,
   SshShellOptions,
-} from '@/transports/ssh/ssh-client-like.js';
+} from '@linkterm/runtime/transports/ssh/ssh-client-like';
 
 export interface FakeSshBehavior {
   /** connect 后多少微任务后 emit 'ready'；省略 = 立刻 ready。 */

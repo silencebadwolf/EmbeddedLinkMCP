@@ -22,9 +22,9 @@ import {
   shouldCreateMainWindow,
   shouldQuitForMissingSingleInstanceLock,
 } from './startup-mode.js';
-import { runtimeMetadataPath } from '../mcp/runtime-metadata.js';
-import { startMcpStdioProxy, type McpStdioProxy } from '../mcp/stdio-proxy.js';
-import { waitForHealthyRuntimeMetadata } from '../mcp/electron-runtime-launcher-core.js';
+import { runtimeMetadataPath } from '@linkterm/mcp/runtime-metadata';
+import { startMcpStdioProxy, type McpStdioProxy } from '@linkterm/mcp/stdio-proxy';
+import { waitForHealthyRuntimeMetadata } from '@linkterm/mcp/electron-runtime-launcher-core';
 
 const { app } = electron;
 

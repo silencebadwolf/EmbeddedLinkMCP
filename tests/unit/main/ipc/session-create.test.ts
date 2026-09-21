@@ -41,8 +41,8 @@ vi.mock('node-pty', () => ({
 vi.mock('serialport', () => ({ SerialPort: class {} }));
 vi.mock('ssh2', () => ({ Client: class {} }));
 
-import { SessionManager } from '../../../../src/core/session/session-manager.js';
-import { SessionBase } from '../../../../src/core/session/session-base.js';
+import { SessionManager } from '@linkterm/runtime/core/session/session-manager';
+import { SessionBase } from '@linkterm/runtime/core/session/session-base';
 import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
 import type { SessionId } from '../../../../src/shared/types.js';
 import type { registerSessionCreate as RegisterSessionCreate } from '../../../../src/main/ipc/session-create-handler.js';

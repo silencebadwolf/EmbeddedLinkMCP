@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { readCurrentControlProfileDeploymentEvidence } from '../../../../src/main/ipc/current-deployment-evidence.js';
-import type { ControlProfileManager } from '../../../../src/core/workspace/index.js';
+import { readCurrentControlProfileDeploymentEvidence } from '@linkterm/runtime/services/current-deployment-evidence';
+import type { ControlProfileManager } from '@linkterm/runtime/core/workspace/index';
 
 describe('readCurrentControlProfileDeploymentEvidence', () => {
   it('does not read firmware through a workspace symlink that resolves outside the workspace', async () => {

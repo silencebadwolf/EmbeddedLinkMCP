@@ -30,13 +30,13 @@ import type {
   RttChannelInfo,
   RttReadResult,
   SnapshotResult,
-} from '@/jlink/types.js';
+} from '@linkterm/runtime/jlink/types';
 import {
   JLinkAbortedError,
   JLinkError,
   JLinkInvalidStateError,
   ProbeNotFoundError,
-} from '@/jlink/errors.js';
+} from '@linkterm/runtime/jlink/errors';
 
 interface CallRecord {
   method: string;

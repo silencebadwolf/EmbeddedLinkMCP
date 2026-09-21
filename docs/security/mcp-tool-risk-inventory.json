@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0.0",
   "authority": "review-data-only",
-  "sourcePattern": "src/**/*.{ts,tsx}",
+  "sourcePattern": "{src,apps/*/src,packages/*/src}/**/*.{ts,tsx}",
   "tools": [
     {
       "name": "activate_control_profile",

@@ -75,6 +75,61 @@ its compatibility re-export and test callers. `src/shared/index.ts` likewise had
 indexed callers and is retained unchanged. Full local analysis is in the ignored
 `.linkterm/impact-p1.json`. HIGH/CRITICAL findings were reported before edits.
 
+## P2 — Runtime and MCP separation (in progress)
+
+- Moved workflow execution, background job management, firmware checks and shared
+  operation errors out of the MCP layer. Compatibility exports preserve error
+  identity and existing callers. Core / transport / J-Link modules no longer
+  import MCP modules; an architecture test enforces this boundary.
+- Checked 92 targets before this extraction: 21 CRITICAL, 40 HIGH, 6 MEDIUM and
+  25 LOW, with no unknown or partial results. `ToolError` has 72 direct references;
+  `runControlWorkflow` is called by desktop control-profile IPC and MCP workflow
+  tools. HIGH/CRITICAL risks were reported before editing.
+- Full quality gate passed: 171 test files / 2027 tests, build and licenses.
+  Renderer JS and CSS hashes remain identical to the baseline.
+- Migrated 150 backend modules into `packages/runtime` and `packages/mcp`, with
+  explicit compiled ESM / declaration exports, workspace dependencies and TypeScript
+  references. Relocated 85 unit test files into their owning packages. Root tests
+  retain desktop adapters and cross-package integration checks.
+- Added `createRuntime` with injected data directory, credential codec, native
+  serial / PTY bindings, agent statuses and runtime diagnostics. Runtime no longer
+  imports Electron, MCP or native serial / PTY packages. The desktop host supplies
+  these factories; physical native installation isolation remains a P7 task.
+- Desktop IPC and its direct / HTTP MCP adapters now receive the same runtime.
+  Initialization failure rolls back registered handlers, protocol endpoints and
+  runtime resources. Disposal is idempotent, rejects new sessions / jobs, waits
+  for in-flight session opens and job cancellation, then releases sessions,
+  managed RTT / GDB resources and audit storage.
+- Preserved legacy desktop MCP executable entry paths and error object identity.
+  The standalone stdio composition remains in the temporary desktop host until
+  the independent Node host is introduced.
+- Added compiled-export boundary tests, Node runtime lifecycle failure injection,
+  and a two-client MCP integration test proving shared native factories, sessions,
+  write queues, jobs, activity capture and all 63 existing tools.
+- Full quality gate passed: 174 test files / 2034 tests, lint, build and licenses.
+  Hidden Electron startup with an isolated profile passed after migration. Renderer
+  JS and CSS hashes still match the baseline. All application / package build outputs
+  were then removed and rebuilt from source; hidden Electron startup passed again.
+- Pre-move impact calls covered 973 file / function / class targets, plus specific
+  modified session and workflow methods. This index produced anomalous call edges
+  and UNKNOWN results; those outputs were not treated as reliable exact caller
+  counts. An AST reference inventory supplemented every target, including executable
+  entries, unused compatibility exports and Vitest-discovered files. Confirmed
+  production edges include main -> `registerIpcHandlers`; desktop session-open and
+  MCP terminal / control-profile tools -> `buildSession`; and desktop / HTTP / stdio
+  composition -> `createMcpServer`. HIGH / CRITICAL findings were reported. A full
+  index rebuild replaces the incremental index before the next phase.
+- Full graph rebuild completed and restored plausible direct caller edges (desktop
+  composition -> runtime factory). Pre-commit `detect_changes(scope=all)` covered
+  303 files / 261 changed symbols / 58 affected flows without truncation; changed
+  files and flow names match runtime composition, session / job lifecycle, workflow
+  errors, MCP callers and their tests. Comparison with `main` reports 347 files /
+  1066 symbols / 58 flows; its symbol list is capped at 1000, so both phase-local
+  reports and the complete Git file diff were used for cumulative scope review.
+- Remaining shared service extraction: control-profile, connection, audit/export,
+  readiness subscription and related UI orchestration still live in desktop IPC.
+  These must move behind runtime services before Web feature parity is complete.
+
 ## Remaining phases
 
 - P2: runtime and MCP packages with injected host services.

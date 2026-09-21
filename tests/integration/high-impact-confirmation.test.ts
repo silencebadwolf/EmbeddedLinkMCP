@@ -7,11 +7,11 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SessionManager } from '@/core/session/session-manager.js';
-import { SerialDiscovery } from '@/transports/serial/serial-discovery.js';
-import { createMcpServer } from '@/mcp/index.js';
-import { MAX_BASE64_INPUT_LEN } from '@/mcp/limits.js';
-import type { LinkTermMcpServer } from '@/mcp/server.js';
+import { SessionManager } from '@linkterm/runtime/core/session/session-manager';
+import { SerialDiscovery } from '@linkterm/runtime/transports/serial/serial-discovery';
+import { createMcpServer } from '@linkterm/mcp/index';
+import { MAX_BASE64_INPUT_LEN } from '@linkterm/mcp/limits';
+import type { LinkTermMcpServer } from '@linkterm/mcp/server';
 import { createInMemoryMcpTransportPair } from '../fixtures/mock-mcp-transport.js';
 import { FakeJLinkBackend } from '../fixtures/fake-jlink-backend.js';
 

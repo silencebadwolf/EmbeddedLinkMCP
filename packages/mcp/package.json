@@ -1,0 +1,199 @@
+{
+  "name": "@linkterm/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./electron-runtime-launcher-core": {
+      "types": "./dist/electron-runtime-launcher-core.d.ts",
+      "import": "./dist/electron-runtime-launcher-core.js"
+    },
+    "./electron-runtime-launcher": {
+      "types": "./dist/electron-runtime-launcher.d.ts",
+      "import": "./dist/electron-runtime-launcher.js"
+    },
+    "./firmware-image-guidance": {
+      "types": "./dist/firmware-image-guidance.d.ts",
+      "import": "./dist/firmware-image-guidance.js"
+    },
+    "./http-runtime-server": {
+      "types": "./dist/http-runtime-server.d.ts",
+      "import": "./dist/http-runtime-server.js"
+    },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./limits": {
+      "types": "./dist/limits.d.ts",
+      "import": "./dist/limits.js"
+    },
+    "./registry": {
+      "types": "./dist/registry.d.ts",
+      "import": "./dist/registry.js"
+    },
+    "./runtime-diagnostics": {
+      "types": "./dist/runtime-diagnostics.d.ts",
+      "import": "./dist/runtime-diagnostics.js"
+    },
+    "./runtime-metadata": {
+      "types": "./dist/runtime-metadata.d.ts",
+      "import": "./dist/runtime-metadata.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
+    },
+    "./stdio-proxy": {
+      "types": "./dist/stdio-proxy.d.ts",
+      "import": "./dist/stdio-proxy.js"
+    },
+    "./surfaces/agent-runbook/runbook": {
+      "types": "./dist/surfaces/agent-runbook/runbook.d.ts",
+      "import": "./dist/surfaces/agent-runbook/runbook.js"
+    },
+    "./surfaces/agent-runbook/schemas": {
+      "types": "./dist/surfaces/agent-runbook/schemas.d.ts",
+      "import": "./dist/surfaces/agent-runbook/schemas.js"
+    },
+    "./surfaces/agent-runbook/tools": {
+      "types": "./dist/surfaces/agent-runbook/tools.d.ts",
+      "import": "./dist/surfaces/agent-runbook/tools.js"
+    },
+    "./surfaces/control-profile/schemas": {
+      "types": "./dist/surfaces/control-profile/schemas.d.ts",
+      "import": "./dist/surfaces/control-profile/schemas.js"
+    },
+    "./surfaces/control-profile/tools": {
+      "types": "./dist/surfaces/control-profile/tools.d.ts",
+      "import": "./dist/surfaces/control-profile/tools.js"
+    },
+    "./surfaces/control-workflow/job-manager": {
+      "types": "./dist/surfaces/control-workflow/job-manager.d.ts",
+      "import": "./dist/surfaces/control-workflow/job-manager.js"
+    },
+    "./surfaces/control-workflow/schemas": {
+      "types": "./dist/surfaces/control-workflow/schemas.d.ts",
+      "import": "./dist/surfaces/control-workflow/schemas.js"
+    },
+    "./surfaces/control-workflow/tools": {
+      "types": "./dist/surfaces/control-workflow/tools.d.ts",
+      "import": "./dist/surfaces/control-workflow/tools.js"
+    },
+    "./surfaces/control-workflow/types": {
+      "types": "./dist/surfaces/control-workflow/types.d.ts",
+      "import": "./dist/surfaces/control-workflow/types.js"
+    },
+    "./surfaces/control-workflow/workflow-runner": {
+      "types": "./dist/surfaces/control-workflow/workflow-runner.d.ts",
+      "import": "./dist/surfaces/control-workflow/workflow-runner.js"
+    },
+    "./surfaces/debug/binary-codec": {
+      "types": "./dist/surfaces/debug/binary-codec.d.ts",
+      "import": "./dist/surfaces/debug/binary-codec.js"
+    },
+    "./surfaces/debug/error-translate": {
+      "types": "./dist/surfaces/debug/error-translate.d.ts",
+      "import": "./dist/surfaces/debug/error-translate.js"
+    },
+    "./surfaces/debug/firmware-sanity": {
+      "types": "./dist/surfaces/debug/firmware-sanity.d.ts",
+      "import": "./dist/surfaces/debug/firmware-sanity.js"
+    },
+    "./surfaces/debug/schemas": {
+      "types": "./dist/surfaces/debug/schemas.d.ts",
+      "import": "./dist/surfaces/debug/schemas.js"
+    },
+    "./surfaces/debug/tools-binary": {
+      "types": "./dist/surfaces/debug/tools-binary.d.ts",
+      "import": "./dist/surfaces/debug/tools-binary.js"
+    },
+    "./surfaces/debug/tools": {
+      "types": "./dist/surfaces/debug/tools.d.ts",
+      "import": "./dist/surfaces/debug/tools.js"
+    },
+    "./surfaces/jlink-device-catalog/schemas": {
+      "types": "./dist/surfaces/jlink-device-catalog/schemas.d.ts",
+      "import": "./dist/surfaces/jlink-device-catalog/schemas.js"
+    },
+    "./surfaces/jlink-device-catalog/tools": {
+      "types": "./dist/surfaces/jlink-device-catalog/tools.d.ts",
+      "import": "./dist/surfaces/jlink-device-catalog/tools.js"
+    },
+    "./surfaces/rtt-log-session/schemas": {
+      "types": "./dist/surfaces/rtt-log-session/schemas.d.ts",
+      "import": "./dist/surfaces/rtt-log-session/schemas.js"
+    },
+    "./surfaces/rtt-log-session/tools": {
+      "types": "./dist/surfaces/rtt-log-session/tools.d.ts",
+      "import": "./dist/surfaces/rtt-log-session/tools.js"
+    },
+    "./surfaces/runtime-control/schemas": {
+      "types": "./dist/surfaces/runtime-control/schemas.d.ts",
+      "import": "./dist/surfaces/runtime-control/schemas.js"
+    },
+    "./surfaces/runtime-control/tools": {
+      "types": "./dist/surfaces/runtime-control/tools.d.ts",
+      "import": "./dist/surfaces/runtime-control/tools.js"
+    },
+    "./surfaces/terminal/schemas": {
+      "types": "./dist/surfaces/terminal/schemas.d.ts",
+      "import": "./dist/surfaces/terminal/schemas.js"
+    },
+    "./surfaces/terminal/tools": {
+      "types": "./dist/surfaces/terminal/tools.d.ts",
+      "import": "./dist/surfaces/terminal/tools.js"
+    },
+    "./surfaces/ui/schemas": {
+      "types": "./dist/surfaces/ui/schemas.d.ts",
+      "import": "./dist/surfaces/ui/schemas.js"
+    },
+    "./surfaces/ui/tools": {
+      "types": "./dist/surfaces/ui/tools.d.ts",
+      "import": "./dist/surfaces/ui/tools.js"
+    },
+    "./surfaces/ui/types": {
+      "types": "./dist/surfaces/ui/types.d.ts",
+      "import": "./dist/surfaces/ui/types.js"
+    },
+    "./surfaces/workspace/schemas": {
+      "types": "./dist/surfaces/workspace/schemas.d.ts",
+      "import": "./dist/surfaces/workspace/schemas.js"
+    },
+    "./surfaces/workspace/tools": {
+      "types": "./dist/surfaces/workspace/tools.d.ts",
+      "import": "./dist/surfaces/workspace/tools.js"
+    },
+    "./tool-set": {
+      "types": "./dist/tool-set.d.ts",
+      "import": "./dist/tool-set.js"
+    },
+    "./transport": {
+      "types": "./dist/transport.d.ts",
+      "import": "./dist/transport.js"
+    },
+    "./versioning/version-check": {
+      "types": "./dist/versioning/version-check.d.ts",
+      "import": "./dist/versioning/version-check.js"
+    },
+    "./index": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b --watch",
+    "test": "pnpm run build && vitest run --root ../.. packages/mcp/tests"
+  },
+  "dependencies": {
+    "@linkterm/contracts": "workspace:*",
+    "@linkterm/runtime": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
+  }
+}

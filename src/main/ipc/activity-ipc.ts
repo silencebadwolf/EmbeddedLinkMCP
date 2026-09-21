@@ -8,7 +8,7 @@ import {
 import type {
   OperationLedger,
   ValidatedActivityCursor,
-} from '../../core/activity/operation-ledger.js';
+} from '@linkterm/runtime/core/activity/operation-ledger';
 import type { PreloadResult } from '../../shared/preload-api.js';
 
 const { ipcMain } = electron;

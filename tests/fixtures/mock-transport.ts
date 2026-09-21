@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { ITransport } from '@/transports/types.js';
+import type { ITransport } from '@linkterm/runtime/transports/types';
 
 export interface MockTransportOptions {
   /** open() 时是否立即抛错。 */

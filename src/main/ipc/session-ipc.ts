@@ -1,10 +1,10 @@
 import { electron } from '../electron-runtime.js';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
-import type { SessionManager } from '../../core/session/session-manager.js';
-import type { TranscriptEvent } from '../../core/transcript/types.js';
+import type { SessionManager } from '@linkterm/runtime/core/session/session-manager';
+import type { TranscriptEvent } from '@linkterm/runtime/core/transcript/types';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
-import { WriteQueueFullError } from '../../core/write-queue/types.js';
-import { SessionNotOpenError, SessionNotFoundError, SessionNotWritableError } from '../../core/session/types.js';
+import { WriteQueueFullError } from '@linkterm/runtime/core/write-queue/types';
+import { SessionNotOpenError, SessionNotFoundError, SessionNotWritableError } from '@linkterm/runtime/core/session/types';
 import type { SessionId, SessionLifecycleEvent, SessionState, SessionSummary } from '../../shared/types.js';
 import {
   serializeTranscriptEvent,
@@ -15,8 +15,8 @@ import type {
   PreloadFail,
 } from '../../shared/preload-api.js';
 import { ERROR_CODES } from '../../shared/error-codes.js';
-import { decodeDataPayload } from '../../mcp/surfaces/terminal/schemas.js';
-import { MAX_BASE64_INPUT_LEN, MAX_BINARY_BYTES } from '../../mcp/limits.js';
+import { decodeDataPayload } from '@linkterm/mcp/surfaces/terminal/schemas';
+import { MAX_BASE64_INPUT_LEN, MAX_BINARY_BYTES } from '@linkterm/mcp/limits';
 
 const { BrowserWindow, ipcMain } = electron;
 

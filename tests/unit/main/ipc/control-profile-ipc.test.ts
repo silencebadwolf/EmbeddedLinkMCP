@@ -50,10 +50,10 @@ globalThis.__linktermElectronMock = electronMock;
 vi.mock('electron', () => ({ default: electronMock, ...electronMock }));
 vi.mock('node:child_process', () => ({ execFile: execFileMock }));
 vi.mock('node:fs/promises', () => ({ readFile: readFileMock, readdir: readdirMock }));
-vi.mock('../../../../src/mcp/surfaces/control-workflow/workflow-runner.js', () => ({
+vi.mock('@linkterm/mcp/surfaces/control-workflow/workflow-runner', () => ({
   runControlWorkflow: runControlWorkflowMock,
 }));
-vi.mock('../../../../src/main/ipc/current-deployment-evidence.js', () => ({
+vi.mock('@linkterm/runtime/services/current-deployment-evidence', () => ({
   readCurrentControlProfileDeploymentEvidence: readCurrentDeploymentEvidenceMock,
 }));
 
@@ -61,8 +61,8 @@ import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
 import type {
   ControlProfileManager,
   ControlProfileRecordManager,
-} from '../../../../src/core/workspace/index.js';
-import { OperationAdmissionCoordinator } from '../../../../src/core/operation-admission/operation-admission-coordinator.js';
+} from '@linkterm/runtime/core/workspace/index';
+import { OperationAdmissionCoordinator } from '@linkterm/runtime/core/operation-admission/operation-admission-coordinator';
 import type { registerControlProfileIpc as RegisterControlProfileIpc } from '../../../../src/main/ipc/control-profile-ipc.js';
 
 let registerControlProfileIpc: typeof RegisterControlProfileIpc;
@@ -1083,7 +1083,7 @@ describe('registerControlProfileIpc', () => {
   });
 
   it('returns a failed IPC result when target access has no positive hardware evidence', async () => {
-    const { JLinkOperationError } = await import('../../../../src/jlink/errors.js');
+    const { JLinkOperationError } = await import('@linkterm/runtime/jlink/errors');
     const manager = {
       load: vi.fn(async () => ({
         schemaVersion: 'linkterm-control/1.0.0' as const,

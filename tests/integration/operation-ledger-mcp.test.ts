@@ -5,16 +5,16 @@ import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { ActivityHealthMonitor } from '../../src/core/activity/activity-health.js';
-import { OperationLedger } from '../../src/core/activity/operation-ledger.js';
-import { OperationRecorder } from '../../src/core/activity/operation-recorder.js';
-import { SessionManager } from '../../src/core/session/session-manager.js';
-import { createMcpServer, type LinkTermMcpServer } from '../../src/mcp/index.js';
+import { ActivityHealthMonitor } from '@linkterm/runtime/core/activity/activity-health';
+import { OperationLedger } from '@linkterm/runtime/core/activity/operation-ledger';
+import { OperationRecorder } from '@linkterm/runtime/core/activity/operation-recorder';
+import { SessionManager } from '@linkterm/runtime/core/session/session-manager';
+import { createMcpServer, type LinkTermMcpServer } from '@linkterm/mcp/index';
 import {
   startMcpHttpRuntimeServer,
   type McpHttpRuntimeServer,
-} from '../../src/mcp/http-runtime-server.js';
-import type { SerialDiscovery } from '../../src/transports/serial/serial-discovery.js';
+} from '@linkterm/mcp/http-runtime-server';
+import type { SerialDiscovery } from '@linkterm/runtime/transports/serial/serial-discovery';
 
 function makeSerialDiscovery(): SerialDiscovery {
   return {

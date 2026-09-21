@@ -10,7 +10,7 @@ import {
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import { ERROR_CODES } from '../../shared/error-codes.js';
 import type { PreloadResult } from '../../shared/preload-api.js';
-import type { AuditStore } from '../../core/activity/audit-store.js';
+import type { AuditStore } from '@linkterm/runtime/core/activity/audit-store';
 
 const { ipcMain } = electron;
 

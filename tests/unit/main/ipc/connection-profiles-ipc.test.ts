@@ -26,11 +26,11 @@ vi.mock('electron', () => ({ default: electronMock, ...electronMock }));
 import {
   ConnectionProfileManager,
   type SecretCodec,
-} from '../../../../src/core/connections/index.js';
-import { SessionManager } from '../../../../src/core/session/session-manager.js';
-import { SerialSessionCoordinator } from '../../../../src/core/session/serial-session-coordinator.js';
-import { SessionBase } from '../../../../src/core/session/session-base.js';
-import { ControlProfileManager } from '../../../../src/core/workspace/control-profile-manager.js';
+} from '@linkterm/runtime/core/connections/index';
+import { SessionManager } from '@linkterm/runtime/core/session/session-manager';
+import { SerialSessionCoordinator } from '@linkterm/runtime/core/session/serial-session-coordinator';
+import { SessionBase } from '@linkterm/runtime/core/session/session-base';
+import { ControlProfileManager } from '@linkterm/runtime/core/workspace/control-profile-manager';
 import type { registerConnectionProfilesIpc as RegisterConnectionProfilesIpc } from '../../../../src/main/ipc/connection-profiles-ipc.js';
 import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
 import { FakeJLinkBackend } from '../../../fixtures/fake-jlink-backend.js';

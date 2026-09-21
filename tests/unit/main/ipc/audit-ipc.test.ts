@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AuditStore } from '../../../../src/core/activity/audit-store.js';
+import { AuditStore } from '@linkterm/runtime/core/activity/audit-store';
 import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
 
 const { handlers, ipcMainMock } = vi.hoisted(() => {

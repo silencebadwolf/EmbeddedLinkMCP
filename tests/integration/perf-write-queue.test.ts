@@ -14,11 +14,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { SessionBase } from '@/core/session/session-base.js';
-import { SessionManager } from '@/core/session/session-manager.js';
+import { SessionBase } from '@linkterm/runtime/core/session/session-base';
+import { SessionManager } from '@linkterm/runtime/core/session/session-manager';
 import type { SessionId } from '@/shared/types.js';
-import { WriteQueue } from '@/core/write-queue/write-queue.js';
-import { WriteQueueFullError } from '@/core/write-queue/types.js';
+import { WriteQueue } from '@linkterm/runtime/core/write-queue/write-queue';
+import { WriteQueueFullError } from '@linkterm/runtime/core/write-queue/types';
 import { MockTransport } from '../fixtures/mock-transport.js';
 
 class TestSession extends SessionBase {

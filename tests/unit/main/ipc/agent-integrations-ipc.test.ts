@@ -23,7 +23,7 @@ globalThis.__linktermElectronMock = electronMock;
 vi.mock('electron', () => ({ default: electronMock, ...electronMock }));
 
 import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
-import type { AgentIntegrationManager } from '../../../../src/core/agent-integrations/index.js';
+import type { AgentIntegrationManager } from '@linkterm/runtime/core/agent-integrations/index';
 import type { registerAgentIntegrationsIpc as RegisterAgentIntegrationsIpc } from '../../../../src/main/ipc/agent-integrations-ipc.js';
 
 let registerAgentIntegrationsIpc: typeof RegisterAgentIntegrationsIpc;

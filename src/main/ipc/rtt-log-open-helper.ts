@@ -1,13 +1,13 @@
-import { openRttLogSession } from '../../core/session/rtt-log-session-open.js';
+import { openRttLogSession } from '@linkterm/runtime/core/session/rtt-log-session-open';
 import {
   prepareProfileRttLogTarget,
   ProfileRttLogTargetError,
-} from '../../core/session/rtt-log-profile-target.js';
-import type { SessionManager } from '../../core/session/session-manager.js';
-import type { ControlProfileManager, HostPathResolver } from '../../core/workspace/index.js';
-import { JLinkError } from '../../jlink/errors.js';
-import type { IJLinkBackend } from '../../jlink/types.js';
-import type { JLinkDeviceCatalog } from '../../jlink/device-catalog.js';
+} from '@linkterm/runtime/core/session/rtt-log-profile-target';
+import type { SessionManager } from '@linkterm/runtime/core/session/session-manager';
+import type { ControlProfileManager, HostPathResolver } from '@linkterm/runtime/core/workspace/index';
+import { JLinkError } from '@linkterm/runtime/jlink/errors';
+import type { IJLinkBackend } from '@linkterm/runtime/jlink/types';
+import type { JLinkDeviceCatalog } from '@linkterm/runtime/jlink/device-catalog';
 import { ERROR_CODES, type ErrorCode } from '../../shared/error-codes.js';
 import type {
   RttLogOpenRequestPayload,

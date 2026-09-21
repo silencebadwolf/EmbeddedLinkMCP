@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { SessionBase } from '@/core/session/session-base.js';
-import { SessionManager } from '@/core/session/session-manager.js';
-import type { ISession } from '@/core/session/types.js';
-import { SessionNotOpenError } from '@/core/session/types.js';
-import type { TranscriptEvent } from '@/core/transcript/types.js';
+import { SessionBase } from '@linkterm/runtime/core/session/session-base';
+import { SessionManager } from '@linkterm/runtime/core/session/session-manager';
+import type { ISession } from '@linkterm/runtime/core/session/types';
+import { SessionNotOpenError } from '@linkterm/runtime/core/session/types';
+import type { TranscriptEvent } from '@linkterm/runtime/core/transcript/types';
 import type { SessionId } from '@/shared/types.js';
 import { MockTransport } from '../fixtures/mock-transport.js';
 

@@ -1,10 +1,10 @@
 import { electron } from '../electron-runtime.js';
-import type { ControlProfileManager, HostPathResolver } from '../../core/workspace/index.js';
-import type { SessionManager } from '../../core/session/session-manager.js';
+import type { ControlProfileManager, HostPathResolver } from '@linkterm/runtime/core/workspace/index';
+import type { SessionManager } from '@linkterm/runtime/core/session/session-manager';
 import {
   SerialSessionConflictError,
   SerialSessionCoordinator,
-} from '../../core/session/serial-session-coordinator.js';
+} from '@linkterm/runtime/core/session/serial-session-coordinator';
 import {
   ConnectionProfileManager,
   ConnectionProfileConflictError,
@@ -15,10 +15,10 @@ import {
   CredentialStorageUnavailableError,
   savedConnectionConfigSchema,
   type SavedConnectionSummary,
-} from '../../core/connections/index.js';
-import { openSessionInputSchema } from '../../mcp/surfaces/terminal/schemas.js';
-import type { IJLinkBackend } from '../../jlink/types.js';
-import type { JLinkDeviceCatalog } from '../../jlink/device-catalog.js';
+} from '@linkterm/runtime/core/connections/index';
+import { openSessionInputSchema } from '@linkterm/mcp/surfaces/terminal/schemas';
+import type { IJLinkBackend } from '@linkterm/runtime/jlink/types';
+import type { JLinkDeviceCatalog } from '@linkterm/runtime/jlink/device-catalog';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type {
   PreloadResult,
@@ -29,7 +29,7 @@ import type {
 } from '../../shared/preload-api.js';
 import type { StableSerialIdentity } from '../../shared/types.js';
 import type { SessionId, SessionState } from '../../shared/types.js';
-import { createAndOpenSession } from './session-open-helper.js';
+import { createAndOpenSession } from '@linkterm/runtime/services/session-open';
 import { openRttLogFromRequest, rttLogOpenErrorCodeOf } from './rtt-log-open-helper.js';
 
 const { ipcMain } = electron;

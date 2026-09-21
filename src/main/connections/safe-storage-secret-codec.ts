@@ -1,5 +1,5 @@
 import { electron } from '../electron-runtime.js';
-import type { SecretCodec } from '../../core/connections/index.js';
+import type { SecretCodec } from '@linkterm/runtime/core/connections/index';
 
 const { safeStorage } = electron;
 

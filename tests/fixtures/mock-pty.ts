@@ -4,7 +4,7 @@ import type {
   PtyFactory,
   PtyLike,
   PtySpawnOptions,
-} from '@/transports/local-shell/pty-like.js';
+} from '@linkterm/runtime/transports/local-shell/pty-like';
 
 export interface FakePtyBehavior {
   /** spawn() 时同步抛错，模拟"shell 不存在"等不可恢复故障。 */

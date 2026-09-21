@@ -1,7 +1,7 @@
 import { electron } from '../electron-runtime.js';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type { SerialPortInfo } from '../../shared/types.js';
-import type { SerialDiscovery } from '../../transports/serial/serial-discovery.js';
+import type { SerialDiscovery } from '@linkterm/runtime/transports/serial/serial-discovery';
 import type { PreloadResult } from '../../shared/preload-api.js';
 import { ERROR_CODES } from '../../shared/error-codes.js';
 

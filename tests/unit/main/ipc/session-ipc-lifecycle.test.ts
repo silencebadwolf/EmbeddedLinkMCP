@@ -2,12 +2,12 @@
 
 import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ISession, SessionWriteOptions } from '../../../../src/core/session/types.js';
-import { SessionManager } from '../../../../src/core/session/session-manager.js';
-import type { ReadResult, SequenceCursor, TranscriptEvent } from '../../../../src/core/transcript/types.js';
+import type { ISession, SessionWriteOptions } from '@linkterm/runtime/core/session/types';
+import { SessionManager } from '@linkterm/runtime/core/session/session-manager';
+import type { ReadResult, SequenceCursor, TranscriptEvent } from '@linkterm/runtime/core/transcript/types';
 import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
 import type { Origin, SessionId, SessionState } from '../../../../src/shared/types.js';
-import { MAX_BASE64_INPUT_LEN } from '../../../../src/mcp/limits.js';
+import { MAX_BASE64_INPUT_LEN } from '@linkterm/mcp/limits';
 
 const { handlers, ipcMainMock, browserWindowMock, windows } = vi.hoisted(() => {
   const map = new Map<string, (event: unknown, payload: unknown) => unknown>();

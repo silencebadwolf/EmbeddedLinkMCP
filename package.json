@@ -15,19 +15,19 @@
   "type": "module",
   "main": "dist/main/main/index.js",
   "scripts": {
-    "dev": "pnpm run build:contracts && vite",
+    "dev": "pnpm run build:packages && vite",
     "build:contracts": "pnpm --filter @linkterm/contracts build",
     "build": "tsc -b && vite build",
     "build:main": "tsc -b tsconfig.main.json",
-    "build:renderer": "pnpm run build:contracts && vite build",
+    "build:renderer": "pnpm run build:packages && vite build",
     "build:all": "pnpm run build:main && pnpm run build:renderer",
     "start": "node scripts/start-electron.mjs .",
     "doctor:wsl": "node scripts/doctor-wsl.mjs",
     "doctor:jlink": "node scripts/doctor-jlink.mjs",
     "pretest": "node scripts/doctor-wsl.mjs",
-    "test": "pnpm run build:contracts && vitest run",
-    "test:coverage": "node scripts/doctor-wsl.mjs && pnpm run build:contracts && vitest run --coverage",
-    "test:watch": "pnpm run build:contracts && vitest",
+    "test": "pnpm run build:packages && vitest run",
+    "test:coverage": "node scripts/doctor-wsl.mjs && pnpm run build:packages && vitest run --coverage",
+    "test:watch": "pnpm run build:packages && vitest",
     "lint": "eslint src/ packages/ tests/",
     "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\"",
     "validate:licenses": "tsx scripts/validate-licenses.ts",
@@ -35,7 +35,8 @@
     "release:checksums": "node scripts/generate-checksums.mjs",
     "ci:check": "pnpm run lint && pnpm run build && pnpm run test && pnpm run validate:licenses",
     "pack": "pnpm run build && electron-builder --dir",
-    "dist": "pnpm run build && electron-builder"
+    "dist": "pnpm run build && electron-builder",
+    "build:packages": "tsc -b packages/contracts packages/runtime packages/mcp"
   },
   "dependencies": {
     "@linkterm/contracts": "workspace:*",
@@ -56,7 +57,9 @@
     "ssh2": "^1.16.0",
     "tailwind-merge": "^3.6.0",
     "zod": "^4.4.3",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.14",
+    "@linkterm/runtime": "workspace:*",
+    "@linkterm/mcp": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.1",

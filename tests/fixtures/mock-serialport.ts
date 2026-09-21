@@ -3,7 +3,7 @@ import type {
   SerialPortFactory,
   SerialPortLike,
   SerialPortOpenOptions,
-} from '@/transports/serial/serial-port-like.js';
+} from '@linkterm/runtime/transports/serial/serial-port-like';
 
 export interface FakeSerialPortBehavior {
   /** open() 回调时使用的错误；省略则成功打开。 */

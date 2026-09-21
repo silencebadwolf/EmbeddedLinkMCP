@@ -1,8 +1,8 @@
 import { electron } from '../electron-runtime.js';
-import type { SessionManager } from '../../core/session/session-manager.js';
-import type { ControlProfileManager, HostPathResolver } from '../../core/workspace/index.js';
-import type { IJLinkBackend } from '../../jlink/types.js';
-import type { JLinkDeviceCatalog } from '../../jlink/device-catalog.js';
+import type { SessionManager } from '@linkterm/runtime/core/session/session-manager';
+import type { ControlProfileManager, HostPathResolver } from '@linkterm/runtime/core/workspace/index';
+import type { IJLinkBackend } from '@linkterm/runtime/jlink/types';
+import type { JLinkDeviceCatalog } from '@linkterm/runtime/jlink/device-catalog';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type {
   PreloadFail,

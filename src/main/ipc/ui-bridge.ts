@@ -1,4 +1,4 @@
-import type { UiStoreBridge } from '../../mcp/surfaces/ui/types.js';
+import type { UiStoreBridge } from '@linkterm/mcp/surfaces/ui/types';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type { UiStatePatch } from '../../shared/preload-api.js';
 

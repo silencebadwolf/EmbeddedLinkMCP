@@ -15,7 +15,7 @@ const electronMock = { app: {}, ipcMain: ipcMainMock };
 globalThis.__linktermElectronMock = electronMock;
 vi.mock('electron', () => ({ default: electronMock, ...electronMock }));
 
-import type { JLinkDeviceCatalog } from '../../../../src/jlink/device-catalog.js';
+import type { JLinkDeviceCatalog } from '@linkterm/runtime/jlink/device-catalog';
 import type { registerJLinkDeviceCatalogIpc as RegisterJLinkDeviceCatalogIpc } from '../../../../src/main/ipc/jlink-device-catalog-ipc.js';
 import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
 

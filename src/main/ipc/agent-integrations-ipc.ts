@@ -6,8 +6,8 @@ import type {
   AgentIntegrationStatus,
   AgentIntegrationTargetId,
   AgentIntegrationManager,
-} from '../../core/agent-integrations/index.js';
-import { AgentConfigInvalidJsonError, AgentIntegrationTargetNotFoundError } from '../../core/agent-integrations/index.js';
+} from '@linkterm/runtime/core/agent-integrations/index';
+import { AgentConfigInvalidJsonError, AgentIntegrationTargetNotFoundError } from '@linkterm/runtime/core/agent-integrations/index';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type { PreloadResult } from '../../shared/preload-api.js';
 

@@ -1,4 +1,4 @@
-import type { JLinkDeviceCatalog, JLinkDeviceSearchRequest } from '../../jlink/device-catalog.js';
+import type { JLinkDeviceCatalog, JLinkDeviceSearchRequest } from '@linkterm/runtime/jlink/device-catalog';
 import { IPC_CHANNELS } from '../../shared/ipc-protocol.js';
 import type {
   JLinkDeviceInfoPayload,

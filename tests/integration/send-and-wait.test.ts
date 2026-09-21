@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { LocalShellSession } from '@/transports/local-shell/index.js';
-import { SessionManager } from '@/core/session/session-manager.js';
-import { sendAndWait } from '@/core/terminal-rules/send-and-wait.js';
+import { LocalShellSession } from '@linkterm/runtime/transports/local-shell/index';
+import { SessionManager } from '@linkterm/runtime/core/session/session-manager';
+import { sendAndWait } from '@linkterm/runtime/core/terminal-rules/send-and-wait';
 import type { SessionId } from '@/shared/types.js';
 import { createMockPtyFactory } from '../fixtures/mock-pty.js';
 

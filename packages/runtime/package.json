@@ -1,0 +1,458 @@
+{
+  "name": "@linkterm/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./core/activity/activity-event": {
+      "types": "./dist/core/activity/activity-event.d.ts",
+      "import": "./dist/core/activity/activity-event.js"
+    },
+    "./core/activity/activity-health": {
+      "types": "./dist/core/activity/activity-health.d.ts",
+      "import": "./dist/core/activity/activity-health.js"
+    },
+    "./core/activity/audit-redactor": {
+      "types": "./dist/core/activity/audit-redactor.d.ts",
+      "import": "./dist/core/activity/audit-redactor.js"
+    },
+    "./core/activity/audit-store": {
+      "types": "./dist/core/activity/audit-store.d.ts",
+      "import": "./dist/core/activity/audit-store.js"
+    },
+    "./core/activity/index": {
+      "types": "./dist/core/activity/index.d.ts",
+      "import": "./dist/core/activity/index.js"
+    },
+    "./core/activity/operation-ledger": {
+      "types": "./dist/core/activity/operation-ledger.d.ts",
+      "import": "./dist/core/activity/operation-ledger.js"
+    },
+    "./core/activity/operation-recorder": {
+      "types": "./dist/core/activity/operation-recorder.d.ts",
+      "import": "./dist/core/activity/operation-recorder.js"
+    },
+    "./core/activity/operation-sensitivity": {
+      "types": "./dist/core/activity/operation-sensitivity.d.ts",
+      "import": "./dist/core/activity/operation-sensitivity.js"
+    },
+    "./core/activity/operation-state": {
+      "types": "./dist/core/activity/operation-state.d.ts",
+      "import": "./dist/core/activity/operation-state.js"
+    },
+    "./core/activity/risk-policy": {
+      "types": "./dist/core/activity/risk-policy.d.ts",
+      "import": "./dist/core/activity/risk-policy.js"
+    },
+    "./core/activity/safe-observation-value": {
+      "types": "./dist/core/activity/safe-observation-value.d.ts",
+      "import": "./dist/core/activity/safe-observation-value.js"
+    },
+    "./core/agent-integrations/agent-integration-manager": {
+      "types": "./dist/core/agent-integrations/agent-integration-manager.d.ts",
+      "import": "./dist/core/agent-integrations/agent-integration-manager.js"
+    },
+    "./core/agent-integrations/index": {
+      "types": "./dist/core/agent-integrations/index.d.ts",
+      "import": "./dist/core/agent-integrations/index.js"
+    },
+    "./core/agent-integrations/launch-config": {
+      "types": "./dist/core/agent-integrations/launch-config.d.ts",
+      "import": "./dist/core/agent-integrations/launch-config.js"
+    },
+    "./core/agent-integrations/types": {
+      "types": "./dist/core/agent-integrations/types.d.ts",
+      "import": "./dist/core/agent-integrations/types.js"
+    },
+    "./core/compensation/compensation-candidate-service": {
+      "types": "./dist/core/compensation/compensation-candidate-service.d.ts",
+      "import": "./dist/core/compensation/compensation-candidate-service.js"
+    },
+    "./core/compensation/index": {
+      "types": "./dist/core/compensation/index.d.ts",
+      "import": "./dist/core/compensation/index.js"
+    },
+    "./core/connections/connection-profile-manager": {
+      "types": "./dist/core/connections/connection-profile-manager.d.ts",
+      "import": "./dist/core/connections/connection-profile-manager.js"
+    },
+    "./core/connections/index": {
+      "types": "./dist/core/connections/index.d.ts",
+      "import": "./dist/core/connections/index.js"
+    },
+    "./core/connections/schemas": {
+      "types": "./dist/core/connections/schemas.d.ts",
+      "import": "./dist/core/connections/schemas.js"
+    },
+    "./core/connections/types": {
+      "types": "./dist/core/connections/types.d.ts",
+      "import": "./dist/core/connections/types.js"
+    },
+    "./core/control-workflow/input": {
+      "types": "./dist/core/control-workflow/input.d.ts",
+      "import": "./dist/core/control-workflow/input.js"
+    },
+    "./core/control-workflow/job-manager": {
+      "types": "./dist/core/control-workflow/job-manager.d.ts",
+      "import": "./dist/core/control-workflow/job-manager.js"
+    },
+    "./core/control-workflow/types": {
+      "types": "./dist/core/control-workflow/types.d.ts",
+      "import": "./dist/core/control-workflow/types.js"
+    },
+    "./core/control-workflow/workflow-runner": {
+      "types": "./dist/core/control-workflow/workflow-runner.d.ts",
+      "import": "./dist/core/control-workflow/workflow-runner.js"
+    },
+    "./core/errors": {
+      "types": "./dist/core/errors.d.ts",
+      "import": "./dist/core/errors.js"
+    },
+    "./core/index": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./core/operation-admission/operation-admission-coordinator": {
+      "types": "./dist/core/operation-admission/operation-admission-coordinator.d.ts",
+      "import": "./dist/core/operation-admission/operation-admission-coordinator.js"
+    },
+    "./core/readiness/device-candidate-resolver": {
+      "types": "./dist/core/readiness/device-candidate-resolver.d.ts",
+      "import": "./dist/core/readiness/device-candidate-resolver.js"
+    },
+    "./core/readiness/readiness-preferences": {
+      "types": "./dist/core/readiness/readiness-preferences.d.ts",
+      "import": "./dist/core/readiness/readiness-preferences.js"
+    },
+    "./core/readiness/readiness-providers": {
+      "types": "./dist/core/readiness/readiness-providers.d.ts",
+      "import": "./dist/core/readiness/readiness-providers.js"
+    },
+    "./core/readiness/runtime-readiness-service": {
+      "types": "./dist/core/readiness/runtime-readiness-service.d.ts",
+      "import": "./dist/core/readiness/runtime-readiness-service.js"
+    },
+    "./core/readiness/serial-connection-draft": {
+      "types": "./dist/core/readiness/serial-connection-draft.d.ts",
+      "import": "./dist/core/readiness/serial-connection-draft.js"
+    },
+    "./core/readiness/serial-identity": {
+      "types": "./dist/core/readiness/serial-identity.d.ts",
+      "import": "./dist/core/readiness/serial-identity.js"
+    },
+    "./core/recovery/jlink-vcom-recovery-service": {
+      "types": "./dist/core/recovery/jlink-vcom-recovery-service.d.ts",
+      "import": "./dist/core/recovery/jlink-vcom-recovery-service.js"
+    },
+    "./core/session/factory": {
+      "types": "./dist/core/session/factory.d.ts",
+      "import": "./dist/core/session/factory.js"
+    },
+    "./core/session/first-signal-observation/first-signal-observation-service": {
+      "types": "./dist/core/session/first-signal-observation/first-signal-observation-service.d.ts",
+      "import": "./dist/core/session/first-signal-observation/first-signal-observation-service.js"
+    },
+    "./core/session/first-signal-observation/first-signal-state": {
+      "types": "./dist/core/session/first-signal-observation/first-signal-state.d.ts",
+      "import": "./dist/core/session/first-signal-observation/first-signal-state.js"
+    },
+    "./core/session/index": {
+      "types": "./dist/core/session/index.d.ts",
+      "import": "./dist/core/session/index.js"
+    },
+    "./core/session/rtt-log-diagnostics": {
+      "types": "./dist/core/session/rtt-log-diagnostics.d.ts",
+      "import": "./dist/core/session/rtt-log-diagnostics.js"
+    },
+    "./core/session/rtt-log-profile-target": {
+      "types": "./dist/core/session/rtt-log-profile-target.d.ts",
+      "import": "./dist/core/session/rtt-log-profile-target.js"
+    },
+    "./core/session/rtt-log-session-open": {
+      "types": "./dist/core/session/rtt-log-session-open.d.ts",
+      "import": "./dist/core/session/rtt-log-session-open.js"
+    },
+    "./core/session/rtt-log-session": {
+      "types": "./dist/core/session/rtt-log-session.d.ts",
+      "import": "./dist/core/session/rtt-log-session.js"
+    },
+    "./core/session/serial-session-coordinator": {
+      "types": "./dist/core/session/serial-session-coordinator.d.ts",
+      "import": "./dist/core/session/serial-session-coordinator.js"
+    },
+    "./core/session/session-base": {
+      "types": "./dist/core/session/session-base.d.ts",
+      "import": "./dist/core/session/session-base.js"
+    },
+    "./core/session/session-manager": {
+      "types": "./dist/core/session/session-manager.d.ts",
+      "import": "./dist/core/session/session-manager.js"
+    },
+    "./core/session/types": {
+      "types": "./dist/core/session/types.d.ts",
+      "import": "./dist/core/session/types.js"
+    },
+    "./core/terminal-rules/completion-detector": {
+      "types": "./dist/core/terminal-rules/completion-detector.d.ts",
+      "import": "./dist/core/terminal-rules/completion-detector.js"
+    },
+    "./core/terminal-rules/echo-handler": {
+      "types": "./dist/core/terminal-rules/echo-handler.d.ts",
+      "import": "./dist/core/terminal-rules/echo-handler.js"
+    },
+    "./core/terminal-rules/index": {
+      "types": "./dist/core/terminal-rules/index.d.ts",
+      "import": "./dist/core/terminal-rules/index.js"
+    },
+    "./core/terminal-rules/rules": {
+      "types": "./dist/core/terminal-rules/rules.d.ts",
+      "import": "./dist/core/terminal-rules/rules.js"
+    },
+    "./core/terminal-rules/send-and-wait": {
+      "types": "./dist/core/terminal-rules/send-and-wait.d.ts",
+      "import": "./dist/core/terminal-rules/send-and-wait.js"
+    },
+    "./core/terminal-rules/types": {
+      "types": "./dist/core/terminal-rules/types.d.ts",
+      "import": "./dist/core/terminal-rules/types.js"
+    },
+    "./core/transcript/index": {
+      "types": "./dist/core/transcript/index.d.ts",
+      "import": "./dist/core/transcript/index.js"
+    },
+    "./core/transcript/transcript-buffer": {
+      "types": "./dist/core/transcript/transcript-buffer.d.ts",
+      "import": "./dist/core/transcript/transcript-buffer.js"
+    },
+    "./core/transcript/types": {
+      "types": "./dist/core/transcript/types.d.ts",
+      "import": "./dist/core/transcript/types.js"
+    },
+    "./core/workspace/config-schema": {
+      "types": "./dist/core/workspace/config-schema.d.ts",
+      "import": "./dist/core/workspace/config-schema.js"
+    },
+    "./core/workspace/conflict-detect": {
+      "types": "./dist/core/workspace/conflict-detect.d.ts",
+      "import": "./dist/core/workspace/conflict-detect.js"
+    },
+    "./core/workspace/control-profile-answer-parser": {
+      "types": "./dist/core/workspace/control-profile-answer-parser.d.ts",
+      "import": "./dist/core/workspace/control-profile-answer-parser.js"
+    },
+    "./core/workspace/control-profile-chip": {
+      "types": "./dist/core/workspace/control-profile-chip.d.ts",
+      "import": "./dist/core/workspace/control-profile-chip.js"
+    },
+    "./core/workspace/control-profile-manager": {
+      "types": "./dist/core/workspace/control-profile-manager.d.ts",
+      "import": "./dist/core/workspace/control-profile-manager.js"
+    },
+    "./core/workspace/control-profile-record-manager": {
+      "types": "./dist/core/workspace/control-profile-record-manager.d.ts",
+      "import": "./dist/core/workspace/control-profile-record-manager.js"
+    },
+    "./core/workspace/control-profile-record-schema": {
+      "types": "./dist/core/workspace/control-profile-record-schema.d.ts",
+      "import": "./dist/core/workspace/control-profile-record-schema.js"
+    },
+    "./core/workspace/control-profile-record-types": {
+      "types": "./dist/core/workspace/control-profile-record-types.d.ts",
+      "import": "./dist/core/workspace/control-profile-record-types.js"
+    },
+    "./core/workspace/control-profile-schema": {
+      "types": "./dist/core/workspace/control-profile-schema.d.ts",
+      "import": "./dist/core/workspace/control-profile-schema.js"
+    },
+    "./core/workspace/control-profile-types": {
+      "types": "./dist/core/workspace/control-profile-types.d.ts",
+      "import": "./dist/core/workspace/control-profile-types.js"
+    },
+    "./core/workspace/elf": {
+      "types": "./dist/core/workspace/elf.d.ts",
+      "import": "./dist/core/workspace/elf.js"
+    },
+    "./core/workspace/firmware-image": {
+      "types": "./dist/core/workspace/firmware-image.d.ts",
+      "import": "./dist/core/workspace/firmware-image.js"
+    },
+    "./core/workspace/fs-primitives": {
+      "types": "./dist/core/workspace/fs-primitives.d.ts",
+      "import": "./dist/core/workspace/fs-primitives.js"
+    },
+    "./core/workspace/host-path-resolver": {
+      "types": "./dist/core/workspace/host-path-resolver.d.ts",
+      "import": "./dist/core/workspace/host-path-resolver.js"
+    },
+    "./core/workspace/index": {
+      "types": "./dist/core/workspace/index.d.ts",
+      "import": "./dist/core/workspace/index.js"
+    },
+    "./core/workspace/intel-hex": {
+      "types": "./dist/core/workspace/intel-hex.d.ts",
+      "import": "./dist/core/workspace/intel-hex.js"
+    },
+    "./core/workspace/types": {
+      "types": "./dist/core/workspace/types.d.ts",
+      "import": "./dist/core/workspace/types.js"
+    },
+    "./core/workspace/workspace-config-manager": {
+      "types": "./dist/core/workspace/workspace-config-manager.d.ts",
+      "import": "./dist/core/workspace/workspace-config-manager.js"
+    },
+    "./core/write-queue/index": {
+      "types": "./dist/core/write-queue/index.d.ts",
+      "import": "./dist/core/write-queue/index.js"
+    },
+    "./core/write-queue/types": {
+      "types": "./dist/core/write-queue/types.d.ts",
+      "import": "./dist/core/write-queue/types.js"
+    },
+    "./core/write-queue/write-queue": {
+      "types": "./dist/core/write-queue/write-queue.d.ts",
+      "import": "./dist/core/write-queue/write-queue.js"
+    },
+    "./create-runtime": {
+      "types": "./dist/create-runtime.d.ts",
+      "import": "./dist/create-runtime.js"
+    },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./jlink/device-catalog": {
+      "types": "./dist/jlink/device-catalog.d.ts",
+      "import": "./dist/jlink/device-catalog.js"
+    },
+    "./jlink/errors": {
+      "types": "./dist/jlink/errors.d.ts",
+      "import": "./dist/jlink/errors.js"
+    },
+    "./jlink/firmware-sanity": {
+      "types": "./dist/jlink/firmware-sanity.d.ts",
+      "import": "./dist/jlink/firmware-sanity.js"
+    },
+    "./jlink/index": {
+      "types": "./dist/jlink/index.d.ts",
+      "import": "./dist/jlink/index.js"
+    },
+    "./jlink/jlink-adapter": {
+      "types": "./dist/jlink/jlink-adapter.d.ts",
+      "import": "./dist/jlink/jlink-adapter.js"
+    },
+    "./jlink/null-backend": {
+      "types": "./dist/jlink/null-backend.d.ts",
+      "import": "./dist/jlink/null-backend.js"
+    },
+    "./jlink/operation-error": {
+      "types": "./dist/jlink/operation-error.d.ts",
+      "import": "./dist/jlink/operation-error.js"
+    },
+    "./jlink/segger-command-runner": {
+      "types": "./dist/jlink/segger-command-runner.d.ts",
+      "import": "./dist/jlink/segger-command-runner.js"
+    },
+    "./jlink/segger-vcom-control": {
+      "types": "./dist/jlink/segger-vcom-control.d.ts",
+      "import": "./dist/jlink/segger-vcom-control.js"
+    },
+    "./jlink/target-resolver": {
+      "types": "./dist/jlink/target-resolver.d.ts",
+      "import": "./dist/jlink/target-resolver.js"
+    },
+    "./jlink/types": {
+      "types": "./dist/jlink/types.d.ts",
+      "import": "./dist/jlink/types.js"
+    },
+    "./jlink/vcom-types": {
+      "types": "./dist/jlink/vcom-types.d.ts",
+      "import": "./dist/jlink/vcom-types.js"
+    },
+    "./ports": {
+      "types": "./dist/ports.d.ts",
+      "import": "./dist/ports.js"
+    },
+    "./services/current-deployment-evidence": {
+      "types": "./dist/services/current-deployment-evidence.d.ts",
+      "import": "./dist/services/current-deployment-evidence.js"
+    },
+    "./services/session-open": {
+      "types": "./dist/services/session-open.d.ts",
+      "import": "./dist/services/session-open.js"
+    },
+    "./transports/index": {
+      "types": "./dist/transports/index.d.ts",
+      "import": "./dist/transports/index.js"
+    },
+    "./transports/local-shell/index": {
+      "types": "./dist/transports/local-shell/index.d.ts",
+      "import": "./dist/transports/local-shell/index.js"
+    },
+    "./transports/local-shell/local-shell-session": {
+      "types": "./dist/transports/local-shell/local-shell-session.d.ts",
+      "import": "./dist/transports/local-shell/local-shell-session.js"
+    },
+    "./transports/local-shell/local-shell-transport": {
+      "types": "./dist/transports/local-shell/local-shell-transport.d.ts",
+      "import": "./dist/transports/local-shell/local-shell-transport.js"
+    },
+    "./transports/local-shell/pty-like": {
+      "types": "./dist/transports/local-shell/pty-like.d.ts",
+      "import": "./dist/transports/local-shell/pty-like.js"
+    },
+    "./transports/serial/index": {
+      "types": "./dist/transports/serial/index.d.ts",
+      "import": "./dist/transports/serial/index.js"
+    },
+    "./transports/serial/serial-discovery": {
+      "types": "./dist/transports/serial/serial-discovery.d.ts",
+      "import": "./dist/transports/serial/serial-discovery.js"
+    },
+    "./transports/serial/serial-port-like": {
+      "types": "./dist/transports/serial/serial-port-like.d.ts",
+      "import": "./dist/transports/serial/serial-port-like.js"
+    },
+    "./transports/serial/serial-session": {
+      "types": "./dist/transports/serial/serial-session.d.ts",
+      "import": "./dist/transports/serial/serial-session.js"
+    },
+    "./transports/serial/serial-transport": {
+      "types": "./dist/transports/serial/serial-transport.d.ts",
+      "import": "./dist/transports/serial/serial-transport.js"
+    },
+    "./transports/ssh/index": {
+      "types": "./dist/transports/ssh/index.d.ts",
+      "import": "./dist/transports/ssh/index.js"
+    },
+    "./transports/ssh/ssh-client-like": {
+      "types": "./dist/transports/ssh/ssh-client-like.d.ts",
+      "import": "./dist/transports/ssh/ssh-client-like.js"
+    },
+    "./transports/ssh/ssh-session": {
+      "types": "./dist/transports/ssh/ssh-session.d.ts",
+      "import": "./dist/transports/ssh/ssh-session.js"
+    },
+    "./transports/ssh/ssh-transport": {
+      "types": "./dist/transports/ssh/ssh-transport.d.ts",
+      "import": "./dist/transports/ssh/ssh-transport.js"
+    },
+    "./transports/types": {
+      "types": "./dist/transports/types.d.ts",
+      "import": "./dist/transports/types.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b --watch",
+    "test": "pnpm run build && vitest run --root ../.. packages/runtime/tests"
+  },
+  "dependencies": {
+    "@linkterm/contracts": "workspace:*",
+    "zod": "^4.4.3",
+    "ssh2": "^1.16.0"
+  }
+}

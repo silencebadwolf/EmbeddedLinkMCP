@@ -4,16 +4,27 @@
     "outDir": "dist/main",
     "rootDir": "src",
     "composite": true,
-    "types": ["node"],
-    "lib": ["ES2022"]
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "ES2022"
+    ]
   },
-  "references": [{ "path": "./packages/contracts" }],
+  "references": [
+    {
+      "path": "./packages/contracts"
+    },
+    {
+      "path": "./packages/runtime"
+    },
+    {
+      "path": "./packages/mcp"
+    }
+  ],
   "include": [
     "src/main/**/*.ts",
-    "src/core/**/*.ts",
-    "src/transports/**/*.ts",
     "src/mcp/**/*.ts",
-    "src/jlink/**/*.ts",
     "src/shared/**/*.ts"
   ]
 }

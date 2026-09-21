@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import type {
   AgentIntegrationTarget,
   WslAgentConfigFileBridge,
-} from '../../core/agent-integrations/index.js';
+} from '@linkterm/runtime/core/agent-integrations/index';
 
 const execFileAsync = promisify(execFile);
 

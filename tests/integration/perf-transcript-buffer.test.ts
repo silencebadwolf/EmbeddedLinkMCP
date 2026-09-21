@@ -13,7 +13,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { TranscriptBuffer } from '@/core/transcript/transcript-buffer.js';
+import { TranscriptBuffer } from '@linkterm/runtime/core/transcript/transcript-buffer';
 import { MAX_TRANSCRIPT_EVENTS } from '@/shared/constants.js';
 
 describe('Phase 12 / perf — TranscriptBuffer at capacity', () => {

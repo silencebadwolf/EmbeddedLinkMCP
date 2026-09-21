@@ -12,8 +12,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { SerialSession } from '@/transports/serial/serial-session.js';
-import { SessionManager } from '@/core/session/session-manager.js';
+import { SerialSession } from '@linkterm/runtime/transports/serial/serial-session';
+import { SessionManager } from '@linkterm/runtime/core/session/session-manager';
 import type { SessionId } from '@/shared/types.js';
 import { createMockSerialPortFactory } from '../fixtures/mock-serialport.js';
 

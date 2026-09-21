@@ -97,26 +97,27 @@ vi.mock('../../../../src/main/ipc/agent-integration-targets.js', () => ({
   buildDefaultAgentIntegrationTargets: buildTargetsMock,
 }));
 
-vi.mock('../../../../src/mcp/http-runtime-server.js', () => ({
+vi.mock('@linkterm/mcp/http-runtime-server', () => ({
   startMcpHttpRuntimeServer: startHttpMock,
 }));
 
-vi.mock('../../../../src/mcp/index.js', () => ({
+vi.mock('@linkterm/mcp/index', () => ({
   createMcpServer: createMcpServerMock,
 }));
 
-vi.mock('../../../../src/jlink/index.js', () => ({
+vi.mock('@linkterm/runtime/jlink/index', () => ({
   JLinkAdapter: vi.fn(function JLinkAdapter() {
     return {
       probeDetect: jlinkProbeDetectMock,
+      dispose: vi.fn(async () => undefined),
     };
   }),
   createJLinkDeviceCatalog: createJLinkDeviceCatalogMock,
 }));
 
-vi.mock('../../../../src/mcp/runtime-metadata.js', async () => {
-  const actual = await vi.importActual<typeof import('../../../../src/mcp/runtime-metadata.js')>(
-    '../../../../src/mcp/runtime-metadata.js',
+vi.mock('@linkterm/mcp/runtime-metadata', async () => {
+  const actual = await vi.importActual<typeof import('@linkterm/mcp/runtime-metadata')>(
+    '@linkterm/mcp/runtime-metadata',
   );
   return {
     ...actual,
@@ -125,10 +126,10 @@ vi.mock('../../../../src/mcp/runtime-metadata.js', async () => {
   };
 });
 
-vi.mock('../../../../src/core/agent-integrations/index.js', async () => {
+vi.mock('@linkterm/runtime/core/agent-integrations/index', async () => {
   const actual = await vi.importActual<
-    typeof import('../../../../src/core/agent-integrations/index.js')
-  >('../../../../src/core/agent-integrations/index.js');
+    typeof import('@linkterm/runtime/core/agent-integrations/index')
+  >('@linkterm/runtime/core/agent-integrations/index');
   return {
     ...actual,
     AgentIntegrationManager: vi.fn(function AgentIntegrationManager(options) {
@@ -553,7 +554,7 @@ describe('registerIpcHandlers HTTP MCP wiring', () => {
         'dist/main/jlink/jlink-adapter.js',
         'dist/main/mcp/surfaces/debug/tools-binary.js',
         'dist/renderer/assets/index.js',
-        'src/jlink/jlink-adapter.ts',
+        'packages/runtime/src/jlink/jlink-adapter.ts',
       ],
     });
 

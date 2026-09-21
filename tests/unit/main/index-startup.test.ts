@@ -31,15 +31,15 @@ vi.mock('../../../src/main/startup-mode.js', () => ({
   shouldQuitForMissingSingleInstanceLock: vi.fn(() => false),
 }));
 
-vi.mock('../../../src/mcp/runtime-metadata.js', () => ({
+vi.mock('@linkterm/mcp/runtime-metadata', () => ({
   runtimeMetadataPath: vi.fn(() => 'C:\\mock\\mcp-runtime.json'),
 }));
 
-vi.mock('../../../src/mcp/stdio-proxy.js', () => ({
+vi.mock('@linkterm/mcp/stdio-proxy', () => ({
   startMcpStdioProxy: vi.fn(),
 }));
 
-vi.mock('../../../src/mcp/electron-runtime-launcher-core.js', () => ({
+vi.mock('@linkterm/mcp/electron-runtime-launcher-core', () => ({
   waitForHealthyRuntimeMetadata: vi.fn(),
 }));
 

@@ -22,8 +22,8 @@ globalThis.__linktermElectronMock = electronMock;
 
 vi.mock('electron', () => ({ default: electronMock, ...electronMock }));
 
-import { SessionManager } from '../../../../src/core/session/session-manager.js';
-import { ControlProfileManager } from '../../../../src/core/workspace/control-profile-manager.js';
+import { SessionManager } from '@linkterm/runtime/core/session/session-manager';
+import { ControlProfileManager } from '@linkterm/runtime/core/workspace/control-profile-manager';
 import type { registerRttLogSessionIpc as RegisterRttLogSessionIpc } from '../../../../src/main/ipc/rtt-log-session-ipc.js';
 import { IPC_CHANNELS } from '../../../../src/shared/ipc-protocol.js';
 import { FakeJLinkBackend } from '../../../fixtures/fake-jlink-backend.js';
