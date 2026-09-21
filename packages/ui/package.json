@@ -1,0 +1,210 @@
+{
+  "name": "@linkterm/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./App": {
+      "types": "./dist/App.d.ts",
+      "import": "./dist/App.js"
+    },
+    "./components/AgentIntegrationsPanel": {
+      "types": "./dist/components/AgentIntegrationsPanel.d.ts",
+      "import": "./dist/components/AgentIntegrationsPanel.js"
+    },
+    "./components/BaudRateInput": {
+      "types": "./dist/components/BaudRateInput.d.ts",
+      "import": "./dist/components/BaudRateInput.js"
+    },
+    "./components/ConnectionDialog": {
+      "types": "./dist/components/ConnectionDialog.d.ts",
+      "import": "./dist/components/ConnectionDialog.js"
+    },
+    "./components/ControlProfilePanel": {
+      "types": "./dist/components/ControlProfilePanel.d.ts",
+      "import": "./dist/components/ControlProfilePanel.js"
+    },
+    "./components/OriginIndicator": {
+      "types": "./dist/components/OriginIndicator.d.ts",
+      "import": "./dist/components/OriginIndicator.js"
+    },
+    "./components/SerialPortPicker": {
+      "types": "./dist/components/SerialPortPicker.d.ts",
+      "import": "./dist/components/SerialPortPicker.js"
+    },
+    "./components/SessionTabBar": {
+      "types": "./dist/components/SessionTabBar.d.ts",
+      "import": "./dist/components/SessionTabBar.js"
+    },
+    "./components/TerminalView": {
+      "types": "./dist/components/TerminalView.d.ts",
+      "import": "./dist/components/TerminalView.js"
+    },
+    "./components/ui/button": {
+      "types": "./dist/components/ui/button.d.ts",
+      "import": "./dist/components/ui/button.js"
+    },
+    "./components/ui/dialog": {
+      "types": "./dist/components/ui/dialog.d.ts",
+      "import": "./dist/components/ui/dialog.js"
+    },
+    "./components/ui/form-field": {
+      "types": "./dist/components/ui/form-field.d.ts",
+      "import": "./dist/components/ui/form-field.js"
+    },
+    "./components/ui/input": {
+      "types": "./dist/components/ui/input.d.ts",
+      "import": "./dist/components/ui/input.js"
+    },
+    "./components/ui/label": {
+      "types": "./dist/components/ui/label.d.ts",
+      "import": "./dist/components/ui/label.js"
+    },
+    "./components/ui/select": {
+      "types": "./dist/components/ui/select.d.ts",
+      "import": "./dist/components/ui/select.js"
+    },
+    "./components/ui/tabs": {
+      "types": "./dist/components/ui/tabs.d.ts",
+      "import": "./dist/components/ui/tabs.js"
+    },
+    "./features/activity/activity-hydration": {
+      "types": "./dist/features/activity/activity-hydration.d.ts",
+      "import": "./dist/features/activity/activity-hydration.js"
+    },
+    "./features/activity/activity-reducer": {
+      "types": "./dist/features/activity/activity-reducer.d.ts",
+      "import": "./dist/features/activity/activity-reducer.js"
+    },
+    "./features/activity/ActivityCenterDrawer": {
+      "types": "./dist/features/activity/ActivityCenterDrawer.d.ts",
+      "import": "./dist/features/activity/ActivityCenterDrawer.js"
+    },
+    "./features/activity/AiStatusCapsule": {
+      "types": "./dist/features/activity/AiStatusCapsule.d.ts",
+      "import": "./dist/features/activity/AiStatusCapsule.js"
+    },
+    "./features/activity/useActivityCenterState": {
+      "types": "./dist/features/activity/useActivityCenterState.d.ts",
+      "import": "./dist/features/activity/useActivityCenterState.js"
+    },
+    "./features/first-success/first-success-reducer": {
+      "types": "./dist/features/first-success/first-success-reducer.d.ts",
+      "import": "./dist/features/first-success/first-success-reducer.js"
+    },
+    "./features/first-success/FirstSuccessFlow": {
+      "types": "./dist/features/first-success/FirstSuccessFlow.d.ts",
+      "import": "./dist/features/first-success/FirstSuccessFlow.js"
+    },
+    "./features/readiness/readiness-hydration": {
+      "types": "./dist/features/readiness/readiness-hydration.d.ts",
+      "import": "./dist/features/readiness/readiness-hydration.js"
+    },
+    "./features/readiness/readiness-reducer": {
+      "types": "./dist/features/readiness/readiness-reducer.d.ts",
+      "import": "./dist/features/readiness/readiness-reducer.js"
+    },
+    "./features/readiness/StartCenter": {
+      "types": "./dist/features/readiness/StartCenter.d.ts",
+      "import": "./dist/features/readiness/StartCenter.js"
+    },
+    "./features/readiness/useRuntimeReadinessState": {
+      "types": "./dist/features/readiness/useRuntimeReadinessState.d.ts",
+      "import": "./dist/features/readiness/useRuntimeReadinessState.js"
+    },
+    "./features/workspaces/workspace-model": {
+      "types": "./dist/features/workspaces/workspace-model.d.ts",
+      "import": "./dist/features/workspaces/workspace-model.js"
+    },
+    "./hooks/useSerialDiscovery": {
+      "types": "./dist/hooks/useSerialDiscovery.d.ts",
+      "import": "./dist/hooks/useSerialDiscovery.js"
+    },
+    "./hooks/useSession": {
+      "types": "./dist/hooks/useSession.d.ts",
+      "import": "./dist/hooks/useSession.js"
+    },
+    "./hooks/useSessionHydration": {
+      "types": "./dist/hooks/useSessionHydration.d.ts",
+      "import": "./dist/hooks/useSessionHydration.js"
+    },
+    "./hooks/useTranscript": {
+      "types": "./dist/hooks/useTranscript.d.ts",
+      "import": "./dist/hooks/useTranscript.js"
+    },
+    "./hooks/useUiPatchSubscription": {
+      "types": "./dist/hooks/useUiPatchSubscription.d.ts",
+      "import": "./dist/hooks/useUiPatchSubscription.js"
+    },
+    "./i18n/en": {
+      "types": "./dist/i18n/en.d.ts",
+      "import": "./dist/i18n/en.js"
+    },
+    "./i18n/index": {
+      "types": "./dist/i18n/index.d.ts",
+      "import": "./dist/i18n/index.js"
+    },
+    "./i18n/zh": {
+      "types": "./dist/i18n/zh.d.ts",
+      "import": "./dist/i18n/zh.js"
+    },
+    "./lib/cn": {
+      "types": "./dist/lib/cn.d.ts",
+      "import": "./dist/lib/cn.js"
+    },
+    "./lib/linkterm-bridge": {
+      "types": "./dist/lib/linkterm-bridge.d.ts",
+      "import": "./dist/lib/linkterm-bridge.js"
+    },
+    "./lib/render-event": {
+      "types": "./dist/lib/render-event.d.ts",
+      "import": "./dist/lib/render-event.js"
+    },
+    "./lib/terminal-clipboard": {
+      "types": "./dist/lib/terminal-clipboard.d.ts",
+      "import": "./dist/lib/terminal-clipboard.js"
+    },
+    "./store/app-store": {
+      "types": "./dist/store/app-store.d.ts",
+      "import": "./dist/store/app-store.js"
+    },
+    "./styles.css": {
+      "types": "./dist/styles.d.ts",
+      "import": "./dist/styles/global.css"
+    }
+  },
+  "scripts": {
+    "build": "node ../../scripts/copy-ui-assets.mjs && tsc -b",
+    "dev": "tsc -b --watch",
+    "test": "pnpm run build && vitest run --root ../.. packages/ui/tests"
+  },
+  "dependencies": {
+    "@linkterm/contracts": "workspace:*",
+    "@radix-ui/react-dialog": "^1.1.16",
+    "@radix-ui/react-label": "^2.1.9",
+    "@radix-ui/react-select": "^2.3.0",
+    "@radix-ui/react-slot": "^1.2.5",
+    "@radix-ui/react-tabs": "^1.1.14",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.6.0",
+    "zustand": "^5.0.14"
+  },
+  "peerDependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  }
+}

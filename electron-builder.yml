@@ -5,6 +5,8 @@ directories:
   output: release
 files:
   - dist/**/*
+  - apps/desktop/dist/**/*
+  - packages/*/dist/**/*
   - package.json
   - node_modules/**/*.node
   - node_modules/**/prebuilds/**/*
@@ -20,7 +22,7 @@ extraResources:
   - from: licenses
     to: licenses
 extraMetadata:
-  main: dist/main/main/index.js
+  main: apps/desktop/dist/main/index.js
 npmRebuild: false
 mac:
   category: public.app-category.developer-tools

@@ -25,11 +25,19 @@ BUILD_INPUT_FILES = [
     "tsconfig.renderer.json",
     "vite.config.ts",
     "postcss.config.js",
+    "pnpm-workspace.yaml",
+    "tsconfig.base.json",
+    "scripts/copy-ui-assets.mjs",
+    "apps/desktop/vite.config.ts",
+    "apps/desktop/tsconfig.main.json",
+    "apps/desktop/tsconfig.renderer.json",
 ]
-BUILD_INPUT_DIRS = ["src"]
+WORKSPACE_MEMBERS = ["apps/desktop", "apps/web", "apps/server", "packages/contracts", "packages/ui", "packages/runtime", "packages/mcp"]
+BUILD_INPUT_FILES += [f"{member}/{filename}" for member in WORKSPACE_MEMBERS for filename in ("package.json", "tsconfig.json")]
+BUILD_INPUT_DIRS = ["src", *[f"{member}/src" for member in WORKSPACE_MEMBERS]]
 BUILD_OUTPUT_FILES = [
-    "dist/main/main/index.js",
-    "dist/renderer/index.html",
+    "apps/desktop/dist/main/index.js",
+    "apps/desktop/dist/renderer/index.html",
 ]
 BUILD_STAMP_FILE = "dist/.linkterm-build-stamp"
 

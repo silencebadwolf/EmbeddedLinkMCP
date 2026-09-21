@@ -16,8 +16,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, type RenderResult } from '@testing-library/react';
 import type { NonSensitivePrefill } from '../../src/shared/preload-api.js';
-import { ConnectionDialog } from '../../src/renderer/components/ConnectionDialog.js';
-import { useAppStore } from '../../src/renderer/store/app-store.js';
+import { ConnectionDialog } from '@linkterm/ui/components/ConnectionDialog';
+import { useAppStore } from '@linkterm/ui/store/app-store';
 import { installMockPreload, type MockPreloadAPI } from '../fixtures/mock-preload-api.js';
 
 const resetStore = (): void => {

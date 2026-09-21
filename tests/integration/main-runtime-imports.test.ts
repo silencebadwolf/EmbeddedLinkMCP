@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const repositoryRoot = path.resolve(import.meta.dirname, '../..');
-const mainOutputRoot = path.join(repositoryRoot, 'dist', 'main');
+const mainOutputRoot = path.join(repositoryRoot, 'apps', 'desktop', 'dist');
 
 function javascriptFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -18,7 +18,7 @@ describe('Electron Main build runtime imports', () => {
   it('emits Node-resolvable relative imports instead of the renderer @ alias', () => {
     execFileSync(
       process.execPath,
-      [path.join(repositoryRoot, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.main.json'],
+      [path.join(repositoryRoot, 'node_modules', 'typescript', 'bin', 'tsc'), '-b', 'apps/desktop/tsconfig.main.json'],
       {
       cwd: repositoryRoot,
       stdio: 'ignore',

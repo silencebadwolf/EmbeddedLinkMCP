@@ -2,7 +2,7 @@
   "name": "linkterm-v2",
   "version": "0.1.0",
   "private": true,
-  "description": "LinkTerm v2 — Electron/TypeScript desktop terminal & MCP automation platform",
+  "description": "LinkTerm — desktop and self-hosted Web terminal & MCP automation platform",
   "author": "LinkTerm contributors",
   "homepage": "https://gitee.com/wake_micro/link-mcp",
   "repository": {
@@ -13,13 +13,13 @@
     "url": "https://gitee.com/wake_micro/link-mcp/issues"
   },
   "type": "module",
-  "main": "dist/main/main/index.js",
+  "main": "apps/desktop/dist/main/index.js",
   "scripts": {
-    "dev": "pnpm run build:packages && vite",
+    "dev": "pnpm dev:desktop",
     "build:contracts": "pnpm --filter @linkterm/contracts build",
-    "build": "tsc -b && vite build",
-    "build:main": "tsc -b tsconfig.main.json",
-    "build:renderer": "pnpm run build:packages && vite build",
+    "build": "node scripts/copy-ui-assets.mjs && tsc -b && vite build --config apps/desktop/vite.config.ts",
+    "build:main": "tsc -b apps/desktop/tsconfig.main.json tsconfig.main.json",
+    "build:renderer": "pnpm run build:packages && vite build --config apps/desktop/vite.config.ts",
     "build:all": "pnpm run build:main && pnpm run build:renderer",
     "start": "node scripts/start-electron.mjs .",
     "doctor:wsl": "node scripts/doctor-wsl.mjs",
@@ -28,17 +28,19 @@
     "test": "pnpm run build:packages && vitest run",
     "test:coverage": "node scripts/doctor-wsl.mjs && pnpm run build:packages && vitest run --coverage",
     "test:watch": "pnpm run build:packages && vitest",
-    "lint": "eslint src/ packages/ tests/",
-    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\"",
+    "lint": "eslint src/ apps/ packages/ tests/",
+    "format": "prettier --write \"{src,apps,packages,tests}/**/*.{ts,tsx}\"",
     "validate:licenses": "tsx scripts/validate-licenses.ts",
     "sbom": "node scripts/generate-sbom.mjs",
     "release:checksums": "node scripts/generate-checksums.mjs",
     "ci:check": "pnpm run lint && pnpm run build && pnpm run test && pnpm run validate:licenses",
     "pack": "pnpm run build && electron-builder --dir",
     "dist": "pnpm run build && electron-builder",
-    "build:packages": "tsc -b packages/contracts packages/runtime packages/mcp"
+    "build:packages": "node scripts/copy-ui-assets.mjs && tsc -b packages/contracts packages/runtime packages/mcp packages/ui",
+    "dev:desktop": "node scripts/dev-desktop.mjs",
+    "build:desktop": "pnpm --filter @linkterm/desktop build"
   },
-  "dependencies": {
+  "devDependencies": {
     "@linkterm/contracts": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@radix-ui/react-dialog": "^1.1.16",
@@ -59,9 +61,8 @@
     "zod": "^4.4.3",
     "zustand": "^5.0.14",
     "@linkterm/runtime": "workspace:*",
-    "@linkterm/mcp": "workspace:*"
-  },
-  "devDependencies": {
+    "@linkterm/mcp": "workspace:*",
+    "@linkterm/ui": "workspace:*",
     "@tailwindcss/postcss": "^4.3.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

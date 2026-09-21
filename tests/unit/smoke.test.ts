@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { APP_NAME } from '@/shared/constants.js';
-import { IPC_CHANNELS } from '@/shared/ipc-protocol.js';
+import { IPC_CHANNELS } from '../../apps/desktop/src/ipc/channels.js';
 
 describe('Phase 0 Smoke Test', () => {
   it('exports correct app name', () => {

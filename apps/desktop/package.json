@@ -1,0 +1,34 @@
+{
+  "name": "@linkterm/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "description": "LinkTerm v2 — Electron/TypeScript desktop terminal & MCP automation platform",
+  "productName": "linkterm-v2",
+  "main": "dist/main/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "node ../../scripts/dev-desktop.mjs",
+    "build": "node ../../scripts/copy-ui-assets.mjs && tsc -b && vite build",
+    "start": "node ../../scripts/start-electron.mjs apps/desktop",
+    "build:main": "tsc -b tsconfig.main.json",
+    "build:renderer": "vite build"
+  },
+  "dependencies": {
+    "@linkterm/contracts": "workspace:*",
+    "@linkterm/ui": "workspace:*",
+    "@linkterm/runtime": "workspace:*",
+    "@linkterm/mcp": "workspace:*",
+    "node-pty": "^1.0.0",
+    "serialport": "^13.0.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "electron": "^42.4.0"
+  }
+}

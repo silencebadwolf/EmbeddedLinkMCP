@@ -11,6 +11,10 @@
 import { afterEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
+import { configureLinktermClient } from '@linkterm/ui/lib/linkterm-bridge';
+
+// Test host adapter: fixtures may replace the desktop bridge independently.
+configureLinktermClient(() => typeof window === 'undefined' ? null : window.linkterm ?? null);
 
 // happy-dom 没有 ResizeObserver；用最小 stub 替代避免组件 mount 报错
 class ResizeObserverStub {

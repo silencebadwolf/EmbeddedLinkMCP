@@ -130,10 +130,53 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   readiness subscription and related UI orchestration still live in desktop IPC.
   These must move behind runtime services before Web feature parity is complete.
 
+## P3 — Shared UI and desktop host
+
+- Moved the shared React application, components, styles and 33 UI test files into
+  `packages/ui`. Compiled ESM/declaration exports and React peer dependencies keep
+  it consumable by both hosts. The browser-only TypeScript project has no Node
+  ambient types. A boundary test rejects Node/Electron/runtime/MCP imports and
+  direct access to the Electron global throughout shared UI source.
+- `configureLinktermClient` injects the host client. Desktop bootstrap owns
+  `window.linkterm`; shared components retain their existing `getLinkterm` calls.
+  Tests verify host replacement and disconnection. The generated CSS hash still
+  matches the baseline; the small JS change reflects client injection.
+- Moved Electron main, preload, IPC channels, platform resolver, renderer bootstrap
+  and their unit tests to `apps/desktop`. The root is now a scripts/tooling package;
+  runtime dependencies belong to workspace members. Frozen offline installation
+  passed without changing external dependency versions.
+- Kept root `pnpm start`, Vite and old MCP executable entry points compatible.
+  The desktop manifest's `productName: linkterm-v2` preserves the original Electron
+  application name/data-directory behavior despite the scoped workspace name.
+  Runtime diagnostics now watch compiled runtime, MCP and contracts packages plus
+  the desktop main/preload/platform artifacts.
+- Added `pnpm dev:desktop`: initial build, TypeScript watch, shared UI/CSS HMR and
+  Electron restart only after successful backend builds. Restarts request ordinary
+  app shutdown and await exit before replacing the process. Tests cover watched
+  artifact selection, graceful shutdown and the unresponsive-child fallback.
+- Full quality gate passed: lint, build, 177 test files / 2039 tests and licenses.
+  Hidden Electron smoke passed using isolated data: main composition, migrated
+  preload, session-list IPC and rendered shared UI. Screenshot inspection confirms
+  the Start Center renders correctly. No hardware connection was opened.
+- Before edits, 498 graph impact targets covered shared UI, desktop modules,
+  bootstrap helpers and their tests: 9 CRITICAL, 33 HIGH, 11 MEDIUM, 345 LOW and
+  100 UNKNOWN. `getLinkterm` has 47 direct callers / 22 grouped flows, `useT` has
+  25 direct callers and preload invocation has 38. HIGH/CRITICAL findings were
+  reported before changes. Unknown entries were supplemented by an AST reference
+  inventory and Vitest discovery, including unused compatibility exports.
+- Distribution/native dependency materialization remains P7 work. The Node server
+  and Web app have not been implemented at this checkpoint.
+- Removed all legacy/application/package build outputs and rebuilt from source.
+  The refreshed graph contains 45,331 nodes / 88,358 edges / 495 enumerated flows.
+  Pre-commit `detect_changes(scope=all)` reports 167 files / 50 changed symbols /
+  23 affected flows, matching client injection, desktop bootstrap and development
+  tooling. The cumulative `main` comparison reports 472 files / 1135 symbols /
+  74 flows; its 1000-symbol list is truncated, so phase-local reports and the
+  complete staged file diff were also reviewed.
+
 ## Remaining phases
 
 - P2: runtime and MCP packages with injected host services.
-- P3: shared UI and migrated Electron host.
 - P4: independently runnable Node server and Web client.
 - P5: full feature parity within the accepted Web scope.
 - P6: authentication, file boundaries, reconnect, lifecycle and resource ownership.

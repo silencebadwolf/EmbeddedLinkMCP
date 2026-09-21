@@ -1,16 +1,8 @@
 {
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "outDir": "dist/renderer",
-    "rootDir": "src",
-    "composite": true,
-    "jsx": "react-jsx",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
-  },
-  "references": [{ "path": "./packages/contracts" }],
-  "include": [
-    "src/renderer/**/*.ts",
-    "src/renderer/**/*.tsx",
-    "src/shared/**/*.ts"
+  "files": [],
+  "references": [
+    {
+      "path": "./apps/desktop/tsconfig.renderer.json"
+    }
   ]
 }

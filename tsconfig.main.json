@@ -1,14 +1,11 @@
 {
-  "extends": "./tsconfig.json",
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist/main",
     "rootDir": "src",
+    "outDir": "dist/main",
     "composite": true,
     "types": [
       "node"
-    ],
-    "lib": [
-      "ES2022"
     ]
   },
   "references": [
@@ -16,15 +13,13 @@
       "path": "./packages/contracts"
     },
     {
-      "path": "./packages/runtime"
+      "path": "./packages/mcp"
     },
     {
-      "path": "./packages/mcp"
+      "path": "./apps/desktop/tsconfig.main.json"
     }
   ],
   "include": [
-    "src/main/**/*.ts",
-    "src/mcp/**/*.ts",
-    "src/shared/**/*.ts"
+    "src/mcp/**/*.ts"
   ]
 }

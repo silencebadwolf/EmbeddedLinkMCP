@@ -1,14 +1,4 @@
 {
-  "extends": "./tsconfig.base.json",
-  "compilerOptions": {
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "paths": {
-      "@/*": [
-        "./src/*"
-      ]
-    }
-  },
   "files": [],
   "references": [
     {
@@ -21,10 +11,13 @@
       "path": "./packages/mcp"
     },
     {
-      "path": "./tsconfig.main.json"
+      "path": "./packages/ui"
     },
     {
-      "path": "./tsconfig.renderer.json"
+      "path": "./apps/desktop"
+    },
+    {
+      "path": "./tsconfig.main.json"
     }
   ]
 }

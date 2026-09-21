@@ -7,7 +7,10 @@ settings:
 importers:
 
   .:
-    dependencies:
+    devDependencies:
+      '@linkterm/ui':
+        specifier: workspace:*
+        version: link:packages/ui
       '@linkterm/runtime':
         specifier: workspace:*
         version: link:packages/runtime
@@ -71,7 +74,6 @@ importers:
       zustand:
         specifier: ^5.0.14
         version: 5.0.14(@types/react@19.2.17)(react@19.2.7)
-    devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.3.1
         version: 4.3.1
@@ -142,6 +144,41 @@ importers:
         specifier: ^4.1.8
         version: 4.1.8(@types/node@25.9.3)(@vitest/coverage-v8@4.1.8)(happy-dom@20.10.3)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4))
 
+  apps/desktop:
+    dependencies:
+      '@linkterm/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@linkterm/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      '@linkterm/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@linkterm/mcp':
+        specifier: workspace:*
+        version: link:../../packages/mcp
+      node-pty:
+        specifier: ^1.0.0
+        version: 1.1.0
+      serialport:
+        specifier: ^13.0.0
+        version: 13.0.0
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.7
+        version: 19.2.7(react@19.2.7)
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      electron:
+        specifier: ^42.4.0
+        version: 42.4.0
+
+
   packages/contracts:
     dependencies:
       zod:
@@ -174,6 +211,51 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+
+  packages/ui:
+    dependencies:
+      '@linkterm/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@radix-ui/react-dialog':
+        specifier: ^1.1.16
+        version: 1.1.16(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-label':
+        specifier: ^2.1.9
+        version: 2.1.9(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-select':
+        specifier: ^2.3.0
+        version: 2.3.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-slot':
+        specifier: ^1.2.5
+        version: 1.2.5(@types/react@19.2.17)(react@19.2.7)
+      '@radix-ui/react-tabs':
+        specifier: ^1.1.14
+        version: 1.1.14(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@xterm/addon-fit':
+        specifier: ^0.10.0
+        version: 0.10.0(@xterm/xterm@5.5.0)
+      '@xterm/xterm':
+        specifier: ^5.5.0
+        version: 5.5.0
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
+      tailwind-merge:
+        specifier: ^3.6.0
+        version: 3.6.0
+      zustand:
+        specifier: ^5.0.14
+        version: 5.0.14(@types/react@19.2.17)(react@19.2.7)
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.7
+        version: 19.2.7(react@19.2.7)
 
 packages:
 
