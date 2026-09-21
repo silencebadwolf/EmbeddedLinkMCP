@@ -1,4 +1,8 @@
 node_modules/
+.pnpm-store/
+.artifacts/
+.gitnexus/
+*.tsbuildinfo
 dist/
 release/
 release-smoke/

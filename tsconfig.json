@@ -1,23 +1,15 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
     "paths": {
       "@/*": ["./src/*"]
     }
   },
   "files": [],
   "references": [
+    { "path": "./packages/contracts" },
     { "path": "./tsconfig.main.json" },
     { "path": "./tsconfig.renderer.json" }
   ]

@@ -15,12 +15,12 @@ export default defineConfig({
     testTimeout: 15_000,
     // 默认 node 环境；renderer 测试通过文件首行 `// @vitest-environment happy-dom` 切换
     environment: 'node',
-    include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
+    include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx', 'packages/*/tests/**/*.test.ts'],
     setupFiles: ['tests/unit/setup.ts', 'tests/setup-renderer.ts'],
     coverage: {
       provider: 'v8',
-      include: ['src/**/*.{ts,tsx}'],
-      exclude: ['src/**/*.d.ts'],
+      include: ['src/**/*.{ts,tsx}', 'packages/*/src/**/*.{ts,tsx}'],
+      exclude: ['**/*.d.ts', 'src/shared/**'],
       reporter: ['text', 'json-summary', 'html', 'lcov'],
       reportsDirectory: 'coverage',
     },

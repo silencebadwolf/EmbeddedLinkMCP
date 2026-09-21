@@ -16,6 +16,7 @@ import { readFileSync, existsSync, realpathSync, statSync } from 'fs';
 import { createRequire } from 'module';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { collectWorkspaceDependencies } from './workspace-packages.js';
 
 interface ManifestEntry {
   name: string;
@@ -368,12 +369,10 @@ export function validateLicenses(opts: ValidateOptions): ValidateResult {
   }
   const pkg = packageJsonValue as PackageJsonLike;
 
-  const pkgDeps = pkg.dependencies ?? {};
-  const allDeps = {
-    ...(pkg.dependencies ?? {}),
-    ...(pkg.devDependencies ?? {}),
-    ...(pkg.optionalDependencies ?? {}),
-  };
+  const declaredDependencies = collectWorkspaceDependencies(opts.rootDir, pkg);
+  errors.push(...declaredDependencies.errors);
+  const pkgDeps = declaredDependencies.runtime;
+  const allDeps = declaredDependencies.all;
 
   // EXTRA_RUNTIME_DEPS 必须实际出现在 package.json 任一 dep 字段（防 stale allowlist）
   for (const name of EXTRA_RUNTIME_DEPS) {

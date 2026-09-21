@@ -1,2 +1,2 @@
-/** Shared, display-safe control workflow cancellation capability. */
-export type CancellationCapability = 'none' | 'best-effort' | 'safe-point';
+/** Compatibility export during the pnpm workspace migration. */
+export * from '@linkterm/contracts/control-workflow-contract';

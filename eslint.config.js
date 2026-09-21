@@ -2,11 +2,11 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'release/**', '*.config.js', '*.config.ts'],
+    ignores: ['**/dist/**', '**/node_modules/**', 'release/**', '.artifacts/**', '*.config.js', '*.config.ts'],
   },
   ...tseslint.configs.recommended,
   {
-    files: ['src/**/*.ts', 'src/**/*.tsx', 'tests/**/*.ts'],
+    files: ['src/**/*.ts', 'src/**/*.tsx', 'packages/**/*.ts', 'packages/**/*.tsx', 'tests/**/*.ts'],
     languageOptions: {
       parserOptions: {
         ecmaVersion: 'latest',
