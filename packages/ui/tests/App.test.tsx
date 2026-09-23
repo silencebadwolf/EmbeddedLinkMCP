@@ -693,6 +693,39 @@ describe('App', () => {
     expect(statusPanel).not.toHaveTextContent('probeConnected');
   });
 
+  it('recovers a Web download job after page refresh and displays its result', async () => {
+    sessionStorage.setItem('linkterm:web:downloadJobId', 'job_recovered_1');
+    mock.spies.controlProfile.getDownloadStatus.mockResolvedValueOnce({
+      success: true,
+      data: {
+        jobId: 'job_recovered_1',
+        state: 'succeeded',
+        mode: 'flash-observe',
+        root: 'C:/repo',
+        createdAt: 1,
+        updatedAt: 2,
+        completedAt: 2,
+        cancelRequested: false,
+        workflow: {
+          mode: 'flash-observe',
+          root: 'C:/repo',
+          steps: [],
+          summary: { verified: true },
+          nextActions: [],
+        },
+      },
+    });
+
+    const { App } = await import('@linkterm/ui/App');
+    render(<App reconcileMissingSessions />);
+
+    await waitFor(() =>
+      expect(mock.spies.controlProfile.getDownloadStatus).toHaveBeenCalledWith({ jobId: 'job_recovered_1' }),
+    );
+    expect(await screen.findByTestId('background-download-status')).toHaveTextContent('Download verified');
+    await waitFor(() => expect(sessionStorage.getItem('linkterm:web:downloadJobId')).toBeNull());
+  });
+
   it('opens a saved serial control profile when serial mode is omitted', async () => {
     const record = {
       id: 'ctrl_serial_legacy',

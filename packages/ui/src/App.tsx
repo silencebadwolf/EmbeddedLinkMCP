@@ -64,6 +64,7 @@ import {
 } from './features/workspaces/workspace-model.js';
 
 const DOWNLOAD_POLL_INTERVAL_MS = 200;
+const WEB_DOWNLOAD_JOB_STORAGE_KEY = 'linkterm:web:downloadJobId';
 const FIRST_SIGNAL_TIMEOUT_MS = 30_000;
 
 /**
@@ -111,6 +112,13 @@ export function App({ reconcileMissingSessions = false }: { reconcileMissingSess
     React.useState<ControlProfileOpenedEvent | null>(null);
   const [controlProfileDownload, setControlProfileDownload] =
     React.useState<ControlProfileDownloadState>({ phase: 'idle' });
+  const [recoveringDownloadJobId, setRecoveringDownloadJobId] = React.useState<string | null>(() => {
+    if (!reconcileMissingSessions) return null;
+    try {
+      const jobId = sessionStorage.getItem(WEB_DOWNLOAD_JOB_STORAGE_KEY);
+      return jobId && /^[A-Za-z0-9_-]{1,96}$/u.test(jobId) ? jobId : null;
+    } catch { return null; }
+  });
   const [controlProfileChip, setControlProfileChip] = React.useState<ControlProfileChipState>({
     phase: 'idle',
   });
@@ -898,6 +906,7 @@ export function App({ reconcileMissingSessions = false }: { reconcileMissingSess
 
   const downloadControlProfile = React.useCallback(async (): Promise<void> => {
     if (openedControlProfile === null) return;
+    setRecoveringDownloadJobId(null);
     const api = getLinkterm();
     if (!api) {
       setControlProfileDownload({
@@ -919,6 +928,7 @@ export function App({ reconcileMissingSessions = false }: { reconcileMissingSess
 
   const reviewCompensationReflash = React.useCallback(
     async (candidateId: string): Promise<void> => {
+      setRecoveringDownloadJobId(null);
       const api = getLinkterm();
       if (!api) {
         setControlProfileDownload({
@@ -966,13 +976,25 @@ export function App({ reconcileMissingSessions = false }: { reconcileMissingSess
     [readinessState],
   );
 
-  const runningDownloadJobId =
-    controlProfileDownload.phase === 'running' ? controlProfileDownload.job?.jobId : undefined;
+  const runningDownloadJobId = (
+    controlProfileDownload.phase === 'running'
+      ? controlProfileDownload.job?.jobId ?? recoveringDownloadJobId
+      : recoveringDownloadJobId
+  ) ?? undefined;
+
+  React.useEffect(() => {
+    if (!reconcileMissingSessions) return;
+    try {
+      if (runningDownloadJobId) sessionStorage.setItem(WEB_DOWNLOAD_JOB_STORAGE_KEY, runningDownloadJobId);
+      else sessionStorage.removeItem(WEB_DOWNLOAD_JOB_STORAGE_KEY);
+    } catch { /* Browser storage may be unavailable; in-memory polling still works. */ }
+  }, [reconcileMissingSessions, runningDownloadJobId]);
 
   React.useEffect(() => {
     if (runningDownloadJobId === undefined) return;
     const api = getLinkterm();
     if (!api) {
+      setRecoveringDownloadJobId(null);
       setControlProfileDownload({ phase: 'failed', error: preloadUnavailableMessage });
       return;
     }
@@ -988,12 +1010,14 @@ export function App({ reconcileMissingSessions = false }: { reconcileMissingSess
           timer = setTimeout(() => void poll(), 1_000);
           return;
         }
+        setRecoveringDownloadJobId(null);
         setControlProfileDownload({ phase: 'failed', error: result.error.message });
         return;
       }
 
       const job = result.data;
       if (isActiveDownloadJob(job)) {
+        setRecoveringDownloadJobId(null);
         setControlProfileDownload({ phase: 'running', job });
         timer = setTimeout(() => void poll(), DOWNLOAD_POLL_INTERVAL_MS);
         return;
@@ -1003,6 +1027,7 @@ export function App({ reconcileMissingSessions = false }: { reconcileMissingSess
         ? job
         : await readDownloadJob(api.controlProfile, runningDownloadJobId, job);
       if (disposed) return;
+      setRecoveringDownloadJobId(null);
       const workflow = finalJob.workflow;
       if (finalJob.state === 'succeeded' && workflow !== undefined) {
         setControlProfileDownload({ phase: 'succeeded', result: workflow });
@@ -1069,6 +1094,19 @@ export function App({ reconcileMissingSessions = false }: { reconcileMissingSess
           ))}
         </div>
       </header>
+
+      {reconcileMissingSessions && visibleControlProfile === null &&
+        (recoveringDownloadJobId !== null || controlProfileDownload.phase !== 'idle') ? (
+          <section className="border-b border-gray-800 bg-gray-900 px-4 py-2" data-testid="background-download-status">
+            <p className="text-xs font-semibold text-gray-200">{t('controlProfile.download')}</p>
+            {controlProfileDownload.phase === 'idle'
+              ? <p className="text-xs text-gray-400">{t('controlProfile.download.downloading')}</p>
+              : <StatusBar download={controlProfileDownload} />}
+            {controlProfileDownload.phase === 'failed'
+              ? <p className="mt-1 text-xs text-red-200">{controlProfileDownload.error}</p>
+              : null}
+          </section>
+        ) : null}
 
       <SessionTabBar
         onOpenActivityForSession={openActivityCenterForSession}

@@ -261,6 +261,11 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   errors, then re-queries that job after reconnecting; the start command is
   never resent. The UI test exercises a connection-loss response followed by
   the original job's completed status.
+  Web also retains only the known job ID in origin-scoped `sessionStorage` after
+  a start response. Refreshing the page queries that same job and shows its
+  result in a page-level status area even before a control profile is opened;
+  terminal status clears the stored ID. A lost start response still has an
+  uncertain outcome and is not automatically retried.
   A real server restart test confirms the old browser cookie is rejected and
   a fresh login succeeds. The Web transport now checks `/api/session` after a
   WS disconnect; a 401 returns the browser to login without an endless retry
@@ -353,11 +358,14 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   on the `poll` closure is LOW (1 caller, 1 flow, 2 modules). The HIGH result
   reflects the root component's broad graph reach, while the staged diff only
   retries three transient errors from the read-only job-status request.
+- Web page-refresh job recovery passed the complete quality gate: lint, both
+  builds, 185 test files / 2064 tests and license attribution. The test restores
+  a known job ID, queries its terminal status and checks the visible result.
 
 ## Remaining acceptance work
 
-- Verify the remaining Web service surfaces, including page-refresh recovery of
-  a background job ID and service-specific reconnect paths.
+- Verify the remaining Web service surfaces, including recovery from a lost
+  background-job start response and service-specific reconnect paths.
 - Exercise lifecycle fault paths, multi-tab event races, slow clients and stale
   owner recovery; ensure interrupted server shutdown cannot corrupt a data dir.
 - Repeat development native-binding and legacy stdio smoke on Linux/macOS and
