@@ -303,7 +303,7 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
 - The legacy standalone desktop stdio MCP entry passed a separate SDK client
   smoke: it advertised its 48 available tools and opened/closed a local PTY.
 - Full quality gate passed at normal host permissions: lint, both application
-  builds, 185 test files / 2067 tests and license attribution. A prior
+  builds, 186 test files / 2068 tests and license attribution. A prior
   restricted sandbox run passed 2044/2047; its three audit-export/child-process
   failures also passed in a targeted normal-permission rerun (58/58).
 - Before P4/P5 edits, 183 service/adapter targets were analyzed: 143 LOW,
@@ -376,13 +376,20 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   symbols and 16 flows (CRITICAL) because the generic Web `invoke` entry can
   reach many commands; the diff restricts recovery to the two download starts.
   The cumulative `main` comparison remains CRITICAL and truncated.
+- Shutdown concurrency and ownership checks pass: the request ledger completes
+  accepted work before settling, refuses new work with `SERVER_STOPPING`, and
+  retains the original response for duplicate IDs. Existing tests also confirm
+  a stale or replaced data-directory lock is never silently taken or removed,
+  runtime cleanup continues after an injected job-shutdown failure, and a slow
+  Web peer is disconnected before another frame is queued. The latest full
+  gate passes 186 test files / 2068 tests.
 
 ## Remaining acceptance work
 
 - Verify the remaining Web service surfaces, including longer outages before a
   background-job ID is known and service-specific reconnect paths.
-- Exercise lifecycle fault paths, multi-tab event races, slow clients and stale
-  owner recovery; ensure interrupted server shutdown cannot corrupt a data dir.
+- Exercise abrupt process termination and manual stale-owner recovery, long
+  duration slow-client behavior, and multi-tab event races on deployed hosts.
 - Repeat development native-binding and legacy stdio smoke on Linux/macOS and
   with actual hardware.
 - Run full quality and release gates across Windows, Linux and macOS; verify
