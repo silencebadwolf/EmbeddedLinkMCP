@@ -117,6 +117,8 @@ export class WebTransport implements ClientTransport {
     }
     if (method === CLIENT_CHANNELS.CONTROL_PROFILE_PICK_FIRMWARE_FILE) return this.#chooseFirmwareFile();
     const request: WebRequest = { id: crypto.randomUUID(), issuedAt: Date.now() + this.#clockOffset, method: method as WebRequest['method'], payload };
+    const requestRuntimeId = this.#runtime.id;
+    const requestSocket = this.#socket;
     if (streamed.has(method)) {
       const socket = this.#socket;
       return new Promise(resolve => {
@@ -150,9 +152,23 @@ export class WebTransport implements ClientTransport {
       }
       return body;
     } catch {
+      clearTimeout(timeout);
+      if (method === CLIENT_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD ||
+          method === CLIENT_CHANNELS.CONTROL_PROFILE_START_COMPENSATION_REFLASH) {
+        const recovered = await this.#recoverDownloadStartResult(request.id, requestRuntimeId);
+        if (recovered !== undefined) return recovered;
+      }
+      if (this.#runtime.id !== requestRuntimeId) {
+        this.#unrecoverable.add(request.id);
+        return failure('CONNECTION_LOST', `Server restarted; command ${request.id} cannot be confirmed`);
+      }
       this.#uncertain.add(request.id);
-      this.#setStatus('disconnected');
-      this.#socket.close();
+      if (this.status !== 'closed') {
+        if (this.#socket === requestSocket) {
+          this.#setStatus('disconnected');
+          requestSocket.close();
+        } else if (this.#status === 'connected') void this.#checkUncertainRequests();
+      }
       return failure('CONNECTION_LOST', `Command ${request.id} may have run; check its status after reconnecting`);
     } finally {
       clearTimeout(timeout);
@@ -224,5 +240,32 @@ export class WebTransport implements ClientTransport {
       } catch { break; }
     }
     this.#setStatus(this.#status);
+  }
+
+  async #recoverDownloadStartResult(id: string, runtimeId: string): Promise<unknown | undefined> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (this.#status === 'closed' || this.#status === 'auth-required' || this.#runtime.id !== runtimeId) return undefined;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 3_000);
+      try {
+        const response = await fetch(`/api/requests/${encodeURIComponent(id)}`, {
+          credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+        });
+        if (response.status === 401 || response.status === 404) return undefined;
+        if (response.ok) {
+          const status = await response.json() as { state?: string; result?: unknown };
+          if (this.status === 'closed' || this.#runtime.id !== runtimeId) return undefined;
+          if (status.state === 'completed' && 'result' in status) {
+            const result = status.result as { success?: boolean; error?: { code?: string } } | null;
+            if (result?.success === false && result.error?.code === 'RESULT_NOT_RETAINED') return undefined;
+            return status.result;
+          }
+          if (status.state !== 'pending') return undefined;
+        }
+      } catch { /* A lost status response cannot authorize a second start command. */ }
+      finally { clearTimeout(timeout); }
+      if (attempt < 2) await new Promise<void>(resolve => window.setTimeout(resolve, 250));
+    }
+    return undefined;
   }
 }

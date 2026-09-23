@@ -131,7 +131,7 @@ it('serves authenticated Web clients from one runtime and retains commands acros
       expect(result.success).toBe(true);
     }, { timeout: 5_000, interval: 25 });
     const status = await fetch(`${server.url}/api/requests/${create.id}`, { headers: { Cookie: cookie } });
-    expect((await status.json() as { state: string }).state).toBe('completed');
+    expect(await status.json()).toEqual({ state: 'completed', result: created });
     const workspaceList = await fetch(server.url + '/api/workspaces', { headers: { Cookie: cookie } });
     const roots = await workspaceList.json() as { directories: { id: string }[] };
     expect(roots.directories).toHaveLength(1);

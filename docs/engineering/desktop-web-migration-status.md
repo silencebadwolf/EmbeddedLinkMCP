@@ -264,8 +264,11 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   Web also retains only the known job ID in origin-scoped `sessionStorage` after
   a start response. Refreshing the page queries that same job and shows its
   result in a page-level status area even before a control profile is opened;
-  terminal status clears the stored ID. A lost start response still has an
-  uncertain outcome and is not automatically retried.
+  terminal status clears the stored ID. If a download or compensation start's
+  HTTP response is lost while the same server runtime is reachable, the browser
+  queries the bounded request ledger by the original request ID and can recover
+  the original job response without starting a second job. An unavailable,
+  expired or unretained ledger result stays uncertain and is never auto-retried.
   A real server restart test confirms the old browser cookie is rejected and
   a fresh login succeeds. The Web transport now checks `/api/session` after a
   WS disconnect; a 401 returns the browser to login without an endless retry
@@ -361,11 +364,21 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
 - Web page-refresh job recovery passed the complete quality gate: lint, both
   builds, 185 test files / 2064 tests and license attribution. The test restores
   a known job ID, queries its terminal status and checks the visible result.
+- Lost Web download-start responses can now recover the original ledger result
+  while the same runtime is reachable. Transport tests cover both download and
+  compensation, a missing ledger entry, and a server restart during the request;
+  the server test asserts the retained result matches the original command.
+  Full quality gate passes: lint, both builds, 185 test files / 2067 tests and
+  license attribution. GitNexus refreshed to 48,553 nodes / 96,214 edges /
+  595 budget-limited flows. Phase-local detection reports 4 files, 19 indexed
+  symbols and 16 flows (CRITICAL) because the generic Web `invoke` entry can
+  reach many commands; the diff restricts recovery to the two download starts.
+  The cumulative `main` comparison remains CRITICAL and truncated.
 
 ## Remaining acceptance work
 
-- Verify the remaining Web service surfaces, including recovery from a lost
-  background-job start response and service-specific reconnect paths.
+- Verify the remaining Web service surfaces, including longer outages before a
+  background-job ID is known and service-specific reconnect paths.
 - Exercise lifecycle fault paths, multi-tab event races, slow clients and stale
   owner recovery; ensure interrupted server shutdown cannot corrupt a data dir.
 - Repeat development native-binding and legacy stdio smoke on Linux/macOS and

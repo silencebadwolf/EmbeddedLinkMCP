@@ -151,3 +151,69 @@ it('aborts a stalled HTTP command without automatically repeating it', async () 
   expect(sockets[0].readyState).toBe(3);
   transport.close();
 });
+
+it('recovers a download start result from the ledger after its HTTP response is lost', async () => {
+  const recoveredJob = { success: true, data: { jobId: 'job_started_once', state: 'queued' } };
+  const fetchCommand = vi.fn(async (url: string, _init?: RequestInit) => {
+    if (url === '/api/request') throw new Error('response lost');
+    if (url.startsWith('/api/requests/')) return { status: 200, ok: true, json: async () => ({ state: 'completed', result: recoveredJob }) };
+    return { status: 200, ok: true, json: async () => ({}) };
+  });
+  vi.stubGlobal('fetch', fetchCommand);
+  const transport = new WebTransport('csrf', runtime);
+  transport.connect(); sockets[0].open();
+
+  await expect(transport.invoke(CLIENT_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD, { root: 'C:/repo' })).resolves.toEqual(recoveredJob);
+  const posted = fetchCommand.mock.calls.filter(([url]) => url === '/api/request');
+  expect(posted).toHaveLength(1);
+  const request = JSON.parse((posted[0][1] as RequestInit).body as string) as { id: string };
+  expect(fetchCommand).toHaveBeenCalledWith(`/api/requests/${request.id}`, expect.anything());
+  expect(transport.uncertainRequests).toHaveLength(0);
+  expect(sockets[0].readyState).toBe(FakeSocket.OPEN);
+  transport.close();
+});
+
+it('keeps a compensation start uncertain when the lost response is absent from the ledger', async () => {
+  const fetchCommand = vi.fn(async (url: string, _init?: RequestInit) => url === '/api/request'
+    ? Promise.reject(new Error('response lost'))
+    : url.startsWith('/api/requests/')
+      ? { status: 404, ok: false }
+      : { status: 200, ok: true });
+  vi.stubGlobal('fetch', fetchCommand);
+  const transport = new WebTransport('csrf', runtime);
+  transport.connect(); sockets[0].open();
+
+  await expect(transport.invoke(CLIENT_CHANNELS.CONTROL_PROFILE_START_COMPENSATION_REFLASH, { candidateId: 'candidate_1' }))
+    .resolves.toMatchObject({ success: false, error: { code: 'CONNECTION_LOST' } });
+  const posted = fetchCommand.mock.calls.filter(([url]) => url === '/api/request');
+  expect(posted).toHaveLength(1);
+  const request = JSON.parse((posted[0][1] as RequestInit).body as string) as { id: string };
+  expect(transport.uncertainRequests).toContain(request.id);
+  expect(sockets[0].readyState).toBe(3);
+  transport.close();
+});
+
+it('does not query a replacement runtime or close its socket for an old download start', async () => {
+  vi.useFakeTimers();
+  let rejectRequest!: (error: Error) => void;
+  const fetchCommand = vi.fn((url: string, _init?: RequestInit) => url === '/api/request'
+    ? new Promise<never>((_, reject) => { rejectRequest = reject; })
+    : Promise.resolve({ status: 200, ok: true }));
+  vi.stubGlobal('fetch', fetchCommand);
+  const transport = new WebTransport('csrf', runtime);
+  transport.connect(); sockets[0].open();
+  const starting = transport.invoke(CLIENT_CHANNELS.CONTROL_PROFILE_START_DOWNLOAD, { root: 'C:/repo' });
+  const request = JSON.parse(fetchCommand.mock.calls[0][1]?.body as string) as { id: string };
+
+  sockets[0].close();
+  await vi.advanceTimersByTimeAsync(500);
+  sockets[1].open({ ...runtime, id: 'runtime-two' });
+  rejectRequest(new Error('old response lost'));
+
+  await expect(starting).resolves.toMatchObject({ success: false, error: { code: 'CONNECTION_LOST' } });
+  expect(transport.unrecoverableRequests).toContain(request.id);
+  expect(transport.uncertainRequests).toHaveLength(0);
+  expect(sockets[1].readyState).toBe(FakeSocket.OPEN);
+  expect(fetchCommand.mock.calls.some(([url]) => String(url).startsWith('/api/requests/'))).toBe(false);
+  transport.close();
+});
