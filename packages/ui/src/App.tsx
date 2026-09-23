@@ -984,6 +984,10 @@ export function App({ reconcileMissingSessions = false }: { reconcileMissingSess
       const result = await api.controlProfile.getDownloadStatus({ jobId: runningDownloadJobId });
       if (disposed) return;
       if (!result.success) {
+        if (['CONNECTION_LOST', 'CLIENT_NOT_CONNECTED', 'SERVER_STOPPING'].includes(result.error.code)) {
+          timer = setTimeout(() => void poll(), 1_000);
+          return;
+        }
         setControlProfileDownload({ phase: 'failed', error: result.error.message });
         return;
       }

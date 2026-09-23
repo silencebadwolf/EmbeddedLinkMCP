@@ -625,6 +625,7 @@ describe('App', () => {
     const getDownloadStatus = vi
       .fn()
       .mockResolvedValueOnce({ success: true as const, data: runningJob })
+      .mockResolvedValueOnce({ success: false as const, error: { code: 'CONNECTION_LOST', message: 'Temporarily offline' } })
       .mockReturnValue(nextStatus);
     const readDownload = vi.fn(async () => ({ success: true as const, data: succeededJob }));
     Object.assign(mock.api.controlProfile as Record<string, unknown>, {
@@ -674,13 +675,14 @@ describe('App', () => {
     expect(screen.getByTestId('control-profile-progress')).toHaveStyle({ width: '0%' });
     expect(screen.queryByTestId('control-profile-download-result')).not.toBeInTheDocument();
 
+    await waitFor(() => expect(getDownloadStatus).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId('control-profile-status-bar')).toHaveAttribute('data-phase', 'running');
+
     resolveNextStatus({ success: true, data: succeededJob });
 
-    await waitFor(() =>
-      expect(screen.getByTestId('control-profile-status-bar')).toHaveAttribute(
-        'data-phase',
-        'succeeded',
-      ),
+    await waitFor(
+      () => expect(screen.getByTestId('control-profile-status-bar')).toHaveAttribute('data-phase', 'succeeded'),
+      { timeout: 3_000 },
     );
     expect(statusPanel).toHaveTextContent(expectedCompletion);
     expect(screen.queryByTestId('control-profile-download-result')).not.toBeInTheDocument();

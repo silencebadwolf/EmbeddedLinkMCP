@@ -255,6 +255,12 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   while its PTY remains open, emits output during the gap, then reconnects a
   second browser. The new client recovers both retained output chunks and
   receives new live transcript events without creating a second PTY.
+  Shared-runtime integration coverage confirms that workflow jobs survive a
+  peer disconnect and another client can query the same job. The shared UI now
+  keeps polling an in-progress download job after transient Web transport
+  errors, then re-queries that job after reconnecting; the start command is
+  never resent. The UI test exercises a connection-loss response followed by
+  the original job's completed status.
   A real server restart test confirms the old browser cookie is rejected and
   a fresh login succeeds. The Web transport now checks `/api/session` after a
   WS disconnect; a 401 returns the browser to login without an endless retry
@@ -339,11 +345,19 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   flows. Phase-local detection reports 3 files, 5 indexed symbols and 3 Agent
   panel flows (MEDIUM); comparison with `main` reports 545 files, 1839 symbols
   and 254 flows (CRITICAL, truncated).
+- The download-status reconnect follow-up also passes the complete 2063-test
+  quality gate. Its UI regression checks that an interrupted status read does
+  not turn a running job into a failure before the same job reports completion.
+  GitNexus refreshed to 48,429 nodes / 95,895 edges. Phase-local detection
+  reports 3 files, 6 indexed symbols and 9 root-App flows (HIGH); direct impact
+  on the `poll` closure is LOW (1 caller, 1 flow, 2 modules). The HIGH result
+  reflects the root component's broad graph reach, while the staged diff only
+  retries three transient errors from the read-only job-status request.
 
 ## Remaining acceptance work
 
-- Verify the remaining Web service surfaces, including background job recovery
-  and service-specific reconnect paths.
+- Verify the remaining Web service surfaces, including page-refresh recovery of
+  a background job ID and service-specific reconnect paths.
 - Exercise lifecycle fault paths, multi-tab event races, slow clients and stale
   owner recovery; ensure interrupted server shutdown cannot corrupt a data dir.
 - Repeat development native-binding and legacy stdio smoke on Linux/macOS and
