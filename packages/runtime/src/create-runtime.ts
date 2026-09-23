@@ -139,24 +139,20 @@ async function createOwnedRuntime(options: RuntimeOptions) {
   let disposePromise: Promise<void> | undefined;
   const dispose = (): Promise<void> => {
     disposePromise ??= (async () => {
-      sessionManager.beginShutdown();
-      firstSignalObservationService.shutdown();
-      await controlWorkflowJobManager.shutdown();
+      const failures: unknown[] = [];
+      try { sessionManager.beginShutdown(); } catch (error) { failures.push(error); }
+      try { firstSignalObservationService.shutdown(); } catch (error) { failures.push(error); }
+      try { await controlWorkflowJobManager.shutdown(); } catch (error) { failures.push(error); }
       const results = await Promise.allSettled([
-        sessionManager.destroyAll(),
-        ownedJLinkAdapter?.dispose() ?? options.disposeJLinkBackend?.() ?? Promise.resolve(),
+        Promise.resolve().then(() => sessionManager.destroyAll()),
+        Promise.resolve().then(() => ownedJLinkAdapter?.dispose() ?? options.disposeJLinkBackend?.()),
       ]);
-      serialDiscovery.dispose();
-      unsubscribeAudit?.();
-      await auditStore.dispose();
-      const failures = results.filter(
-        (result): result is PromiseRejectedResult => result.status === 'rejected',
-      );
+      try { serialDiscovery.dispose(); } catch (error) { failures.push(error); }
+      try { unsubscribeAudit?.(); } catch (error) { failures.push(error); }
+      try { await auditStore.dispose(); } catch (error) { failures.push(error); }
+      failures.push(...results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map(result => result.reason));
       if (failures.length > 0)
-        throw new AggregateError(
-          failures.map((result) => result.reason),
-          'Runtime resource disposal failed',
-        );
+        throw new AggregateError(failures, 'Runtime resource disposal failed');
     })();
     return disposePromise;
   };

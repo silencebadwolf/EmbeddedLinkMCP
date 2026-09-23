@@ -14,7 +14,7 @@ const SESSION_RECONCILE_INTERVAL_MS = 2000;
  *
  * @returns 无返回值；副作用是同步 Zustand store。
  */
-export function useSessionHydration(): void {
+export function useSessionHydration(reconcileMissingSessions = false): void {
   const addSession = useAppStore((s) => s.addSession);
   const removeSession = useAppStore((s) => s.removeSession);
   const setActive = useAppStore((s) => s.setActive);
@@ -24,6 +24,9 @@ export function useSessionHydration(): void {
     if (!api) return;
 
     let cancelled = false;
+    let reconciling = false;
+    let lifecycleRevision = 0;
+    const touched = new Map<string, number>();
     const upsertSummary = (summary: SessionSummary): void => {
       addSession({
         id: summary.sessionId,
@@ -35,6 +38,8 @@ export function useSessionHydration(): void {
     };
 
     const unsubscribeLifecycle = api.session.onLifecycle((event) => {
+      lifecycleRevision += 1;
+      touched.set(event.type === 'destroyed' ? event.sessionId : event.session.sessionId, lifecycleRevision);
       if (event.type === 'created' || event.type === 'stateChanged') {
         upsertSummary(event.session);
         if (event.type === 'created' && event.session.createdBy === 'ai') {
@@ -46,14 +51,28 @@ export function useSessionHydration(): void {
     });
 
     const hydrate = async (): Promise<void> => {
-      const result = await api.session.list();
-      if (cancelled || !result.success) return;
-      for (const summary of result.data.sessions) {
-        const isKnownSession = useAppStore.getState().sessions.has(summary.sessionId);
-        upsertSummary(summary);
-        if (!isKnownSession && summary.createdBy === 'ai') {
-          setActive(summary.sessionId);
+      if (reconciling) return;
+      reconciling = true;
+      const before = new Set(useAppStore.getState().sessions.keys());
+      const snapshotRevision = lifecycleRevision;
+      try {
+        const result = await api.session.list();
+        if (cancelled || !result.success) return;
+        const present = new Set<string>();
+        for (const summary of result.data.sessions) {
+          present.add(summary.sessionId);
+          if ((touched.get(summary.sessionId) ?? 0) > snapshotRevision) continue;
+          const isKnownSession = useAppStore.getState().sessions.has(summary.sessionId);
+          upsertSummary(summary);
+          if (!isKnownSession && summary.createdBy === 'ai') {
+            setActive(summary.sessionId);
+          }
         }
+        if (reconcileMissingSessions) for (const sessionId of before) {
+          if (!present.has(sessionId) && (touched.get(sessionId) ?? 0) <= snapshotRevision) removeSession(sessionId);
+        }
+      } finally {
+        reconciling = false;
       }
     };
 
@@ -67,5 +86,5 @@ export function useSessionHydration(): void {
       window.clearInterval(reconcileTimer);
       unsubscribeLifecycle();
     };
-  }, [addSession, removeSession, setActive]);
+  }, [addSession, reconcileMissingSessions, removeSession, setActive]);
 }

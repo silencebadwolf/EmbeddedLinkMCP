@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { CLIENT_CHANNELS } from '@linkterm/contracts/client-protocol';
@@ -32,7 +32,7 @@ it('serves authenticated Web clients from one runtime and retains commands acros
   const options = { runtime: { dataDir,
     nativeBindings: { createPty: pty.factory, createSerialPort: () => { throw new Error('No hardware'); }, listSerialPorts: async () => [] },
     secretCodec: new ServerSecretCodec(randomBytes(32)), jlinkBackend: new NullJLinkBackend(),
-  }, accessToken: token, publicDir, host: '127.0.0.1', port: 0 } as const;
+  }, accessToken: token, publicDir, host: '127.0.0.1', port: 0, agentConfigHome: join(dataDir, 'agent-home') } as const;
   const server = await startServer(options);
   const peers: WebSocket[] = [];
   let mcpClient: Client | undefined;
@@ -62,6 +62,14 @@ it('serves authenticated Web clients from one runtime and retains commands acros
     expect(pty.created).toHaveLength(1);
     const list = await (await send(second.clientId, command(CLIENT_CHANNELS.SESSION_LIST))).json() as { success: boolean; data: { sessions: unknown[] } };
     expect(list.success).toBe(true); expect(list.data.sessions).toHaveLength(1);
+    const agents = await (await send(first.clientId, command(CLIENT_CHANNELS.AGENT_INTEGRATIONS_LIST))).json() as { success: boolean; data: { id: string; locationLabel: string; transportLabel: string }[] };
+    expect(agents).toMatchObject({ success: true, data: [{ id: 'codex', locationLabel: 'Server host', transportLabel: 'HTTP' }] });
+    const installed = await (await send(first.clientId, command(CLIENT_CHANNELS.AGENT_INTEGRATIONS_INSTALL, { targetId: 'codex' }))).json() as { success: boolean };
+    expect(installed.success).toBe(true);
+    const agentConfig = await readFile(join(dataDir, 'agent-home', '.codex', 'config.toml'), 'utf8');
+    expect(agentConfig).toContain(`${server.url}/mcp`);
+    expect(agentConfig).toContain('LINKTERM_MCP_TOKEN');
+    expect(agentConfig).not.toContain(token);
     mcpClient = new Client({ name: 'web-server-integration', version: '1.0.0' });
     await mcpClient.connect(new StreamableHTTPClientTransport(new URL(`${server.url}/mcp`), {
       requestInit: { headers: { authorization: `Bearer ${token}` } },
@@ -112,6 +120,57 @@ it('serves authenticated Web clients from one runtime and retains commands acros
   } finally {
     await mcpClient?.close().catch(() => undefined);
     for (const socket of peers) socket.terminate();
+    await server.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+}, 30_000);
+
+it('drains an accepted Web command before disposing the runtime', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'linkterm-web-drain-'));
+  const publicDir = join(dataDir, 'public');
+  await mkdir(publicDir);
+  await writeFile(join(publicDir, 'index.html'), 'ready');
+  const pty = createMockPtyFactory();
+  const token = randomBytes(32).toString('base64');
+  const server = await startServer({ runtime: { dataDir,
+    nativeBindings: { createPty: pty.factory, createSerialPort: () => { throw new Error('No hardware'); }, listSerialPorts: async () => [] },
+    secretCodec: new ServerSecretCodec(randomBytes(32)), jlinkBackend: new NullJLinkBackend(),
+  }, accessToken: token, publicDir, host: '127.0.0.1', port: 0, agentConfigHome: join(dataDir, 'agent-home') });
+  let socket: WebSocket | undefined;
+  let releaseWrite: (() => void) | undefined;
+  try {
+    const origin = server.url;
+    const login = await fetch(server.url + '/api/login', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+    const cookie = login.headers.get('set-cookie')!.split(';')[0];
+    const { csrf } = await login.json() as { csrf: string };
+    const peer = await connect(origin, cookie, origin);
+    socket = peer.socket;
+    const create = await fetch(server.url + '/api/request', { method: 'POST', headers: {
+      Origin: origin, Cookie: cookie, 'X-Linkterm-Csrf': csrf, 'X-Linkterm-Client': peer.clientId, 'Content-Type': 'application/json',
+    }, body: JSON.stringify({ id: randomUUID(), issuedAt: Date.now(), method: CLIENT_CHANNELS.SESSION_CREATE, payload: { config: { type: 'local-shell' } } }) });
+    const created = await create.json() as { success: boolean; data: { sessionId: string } };
+    expect(created.success).toBe(true);
+    const session = server.runtime.sessionManager.get(created.data.sessionId)!;
+    let writeEntered: () => void = () => undefined;
+    const entered = new Promise<void>(resolve => { writeEntered = resolve; });
+    const writeGate = new Promise<void>(resolve => { releaseWrite = resolve; });
+    vi.spyOn(session, 'write').mockImplementation(async () => { writeEntered(); await writeGate; });
+    socket.send(JSON.stringify({ type: 'request', request: {
+      id: randomUUID(), issuedAt: Date.now(), method: CLIENT_CHANNELS.SESSION_WRITE,
+      payload: { sessionId: created.data.sessionId, dataBase64: 'YQ==' },
+    } }));
+    await Promise.race([entered, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Write handler did not start')), 3_000))]);
+    let stopped = false;
+    const closing = server.close().then(() => { stopped = true; });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    expect(stopped).toBe(false);
+    expect(pty.created[0].killCalls).toBe(0);
+    releaseWrite();
+    await Promise.race([closing, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Server did not drain the write')), 3_000))]);
+    expect(pty.created[0].killCalls).toBe(1);
+  } finally {
+    releaseWrite?.();
+    socket?.terminate();
     await server.close();
     await rm(dataDir, { recursive: true, force: true });
   }

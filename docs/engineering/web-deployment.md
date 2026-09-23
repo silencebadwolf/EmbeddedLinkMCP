@@ -36,6 +36,8 @@ For remote access, terminate TLS at a reverse proxy and forward the original `Ho
 
 The MCP endpoint is `<origin>/mcp` using `Authorization: Bearer <access-token>`. It exposes the same 63 tools and runtime as the Web UI. Configure an MCP client on the machine where that client runs; do not assume the browser can install local Agent configuration on its own computer. Browser UI patch operations go to the selected authenticated tab; screenshots are unavailable in Web mode.
 
+The Agent integration screen can install a Codex HTTP MCP entry for the **server account** at `~/.codex/config.toml`. It points to `<origin>/mcp` and names `LINKTERM_MCP_TOKEN` as the bearer-token environment variable; it never writes the token into Codex's config file. Set that variable in the Codex process environment on the server host. For remote hosting, the configured public HTTPS origin must be reachable from that host too.
+
 ## Existing desktop data and recovery
 
 Keep a backup of the old desktop data directory and the new server data directory, including `credential-key`. With the server stopped, preview connection metadata import:

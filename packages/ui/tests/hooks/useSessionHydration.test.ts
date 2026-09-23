@@ -354,4 +354,44 @@ describe('useSessionHydration', () => {
 
     expect(useAppStore.getState().activeSessionId).toBe('sess_manual_serial');
   });
+
+  it('removes tabs that belong to an earlier runtime after a successful snapshot', async () => {
+    useAppStore.getState().addSession({ id: 'sess_old_runtime', label: 'Old shell', connectionType: 'local-shell', state: 'open' });
+    mock.spies.session.list.mockResolvedValueOnce({ success: true, data: { sessions: [] } } as never);
+    const { useSessionHydration } = await import('@linkterm/ui/hooks/useSessionHydration');
+
+    renderHook(() => useSessionHydration(true));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(useAppStore.getState().sessions.has('sess_old_runtime')).toBe(false);
+    expect(useAppStore.getState().activeSessionId).toBeNull();
+  });
+
+  it('keeps desktop tabs when a partial snapshot omits them', async () => {
+    useAppStore.getState().addSession({ id: 'sess_desktop', label: 'COM7', connectionType: 'serial', state: 'open' });
+    mock.spies.session.list.mockResolvedValueOnce({ success: true, data: { sessions: [] } } as never);
+    const { useSessionHydration } = await import('@linkterm/ui/hooks/useSessionHydration');
+
+    renderHook(() => useSessionHydration());
+    await act(async () => { await Promise.resolve(); });
+
+    expect(useAppStore.getState().sessions.has('sess_desktop')).toBe(true);
+  });
+
+  it('does not let an older snapshot erase a lifecycle event received during the request', async () => {
+    let finishSnapshot!: (value: unknown) => void;
+    mock.spies.session.list.mockImplementationOnce(() => new Promise(resolve => { finishSnapshot = resolve; }) as never);
+    const { useSessionHydration } = await import('@linkterm/ui/hooks/useSessionHydration');
+
+    renderHook(() => useSessionHydration(true));
+    act(() => {
+      mock.emitSessionLifecycle({ type: 'created', session: {
+        sessionId: 'sess_new', label: 'New shell', connectionType: 'local-shell', state: 'open', createdBy: 'ai',
+      } });
+    });
+    await act(async () => { finishSnapshot({ success: true, data: { sessions: [] } }); await Promise.resolve(); });
+
+    expect(useAppStore.getState().sessions.has('sess_new')).toBe(true);
+    expect(useAppStore.getState().activeSessionId).toBe('sess_new');
+  });
 });

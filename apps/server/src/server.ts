@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { hostname } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -31,6 +31,8 @@ export interface ServerOptions {
   /** Explicit loopback-only Vite origin, never enabled for a deployed remote server. */
   readonly devOrigin?: string;
   readonly workspaceRoots?: readonly string[];
+  /** Defaults to the server account's home, never the browser's computer. */
+  readonly agentConfigHome?: string;
 }
 
 export interface LinkTermServer {
@@ -50,7 +52,10 @@ export async function startServer(options: ServerOptions): Promise<LinkTermServe
   const devOrigin = options.devOrigin ? parseOrigin(options.devOrigin) : undefined;
   if (devOrigin && (!isLoopback || !LOOPBACK_HOSTS.has(devOrigin.hostname) || publicOrigin)) throw new Error('The development origin is only allowed for a loopback server');
   const auth = new AuthService(options.accessToken, publicOrigin?.protocol === 'https:');
-  const runtime = await createRuntime(options.runtime);
+  let agentIntegrationManager: AgentIntegrationManager | undefined;
+  const runtime = await createRuntime({ ...options.runtime, agentIntegrations: {
+    listStatuses: () => agentIntegrationManager?.listStatuses() ?? Promise.resolve([]),
+  } });
   let workspaces: WorkspaceResources;
   let firmware: FirmwareResources;
   try {
@@ -189,27 +194,23 @@ export async function startServer(options: ServerOptions): Promise<LinkTermServe
   const close = (): Promise<void> => closing ??= (async () => {
     ledger.stopAccepting();
     if (heartbeat) clearInterval(heartbeat);
-    for (const peer of peers.values()) peer.close();
-    auth.clear();
     const httpClosed = server.listening ? new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())) : Promise.resolve();
     server.closeIdleConnections();
     const forceClose = setTimeout(() => server.closeAllConnections(), 5_000); forceClose.unref();
     const failures: unknown[] = [];
-    try { unregister?.(); } catch (error) { failures.push(error); }
-    const results = await Promise.allSettled([mcp?.close(), runtime.dispose(), ledger.settle(), httpClosed]);
-    clearTimeout(forceClose);
+    const results = await Promise.allSettled([ledger.settle(), mcp?.close()]);
     for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
+    for (const peer of peers.values()) peer.close();
+    auth.clear();
+    try { await httpClosed; } catch (error) { failures.push(error); }
+    clearTimeout(forceClose);
+    try { unregister?.(); } catch (error) { failures.push(error); }
+    try { await runtime.dispose(); } catch (error) { failures.push(error); }
     await new Promise<void>(resolve => sockets.close(() => resolve()));
     if (failures.length) throw new AggregateError(failures, 'Server shutdown failed');
   })();
 
   try {
-    const agentIntegrationManager = new AgentIntegrationManager({ targets: [], launchConfig: { command: process.execPath, args: [], env: {} } });
-    unregister = registerRuntimeClientServices(runtime, {
-      requests, getPeers: () => [...peers.values()].filter(peer => !!auth.getSession(peer.sessionId) && !peer.isDestroyed()),
-      chooseWorkspaceRoot: async () => failure('WEB_FILE_SELECTION_REQUIRED', 'Select a server workspace in the browser'),
-      chooseFirmwareFile: async () => failure('WEB_FILE_SELECTION_REQUIRED', 'Upload or select firmware in the browser'),
-    }, { agentIntegrationManager, isTrustedPeer: id => [...peers.values()].some(peer => peer.id === id && !peer.isDestroyed() && !!auth.getSession(peer.sessionId)) });
     mcp = await startMcpHttpRuntimeServer({ ...runtime, metadataPath: path.join(runtime.dataDir, 'mcp-runtime.json'), host: '127.0.0.1', port: 0,
       getActiveWindow: () => null,
       uiBridge: { applyPatch: patch => {
@@ -223,6 +224,20 @@ export async function startServer(options: ServerOptions): Promise<LinkTermServe
     });
     const port = (server.address() as AddressInfo).port;
     const url = publicOrigin?.origin ?? `http://${host.includes(':') ? `[${host}]` : host}:${port}`;
+    agentIntegrationManager = new AgentIntegrationManager({
+      targets: [{
+        id: 'codex', label: 'Codex (server host)',
+        configPath: path.join(options.agentConfigHome ?? homedir(), '.codex', 'config.toml'),
+        configKind: 'codex-config-toml', locationLabel: 'Server host',
+        transport: { type: 'http', url: `${url}/mcp`, bearerTokenEnvVar: 'LINKTERM_MCP_TOKEN' },
+      }],
+      launchConfig: { command: process.execPath, args: [], env: {} },
+    });
+    unregister = registerRuntimeClientServices(runtime, {
+      requests, getPeers: () => [...peers.values()].filter(peer => !!auth.getSession(peer.sessionId) && !peer.isDestroyed()),
+      chooseWorkspaceRoot: async () => failure('WEB_FILE_SELECTION_REQUIRED', 'Select a server workspace in the browser'),
+      chooseFirmwareFile: async () => failure('WEB_FILE_SELECTION_REQUIRED', 'Upload or select firmware in the browser'),
+    }, { agentIntegrationManager, isTrustedPeer: id => [...peers.values()].some(peer => peer.id === id && !peer.isDestroyed() && !!auth.getSession(peer.sessionId)) });
     const origins = publicOrigin ? [publicOrigin.origin] : [...LOOPBACK_HOSTS].filter(value => value !== '::1').map(value => `http://${value}:${port}`);
     if (devOrigin) origins.push(devOrigin.origin);
     policy = new OriginPolicy(origins);

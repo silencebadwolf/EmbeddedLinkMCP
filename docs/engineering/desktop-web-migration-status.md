@@ -204,8 +204,11 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   migration CLI previews/imports connection metadata and strips old ciphertext.
 - The server exposes activity, readiness, first-signal, connections, control
   profiles, J-Link/RTT and workflow services through the shared client service
-  registrations. The corresponding full Web feature matrix, server-local Agent
-  integration and hardware behavior still need individual acceptance checks.
+  registrations. The server-host Codex Agent target now installs an HTTP MCP
+  configuration in the server account's home without writing the access token
+  into `config.toml`; the authenticated API test verifies the target and file.
+  The full Web feature matrix, Agent UI and hardware behavior still need
+  individual acceptance checks.
 
 ## P6 — Network and resource boundaries (partially implemented)
 
@@ -215,28 +218,37 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   Existing-file symlink escape tests pass. The runtime refuses to steal stale
   owner locks after a crash.
 - Reconnect leaves uncertain writes unresent and offers request-status lookup.
-  Snapshot/WS race, runtime replacement, slow-client and shutdown fault
-  injection still need dedicated verification and any resulting fixes.
+  WebSocket hello and command waits, plus HTTP commands, now have bounded
+  timeouts; fault tests confirm interrupted writes are never automatically
+  resent. The Web app prunes stale tabs from an authoritative server snapshot
+  while preserving desktop tab behavior, and lifecycle events received during
+  a snapshot are not overwritten by it. Shutdown waits for accepted Web
+  commands before unregistering handlers or disposing runtime resources;
+  an in-flight PTY write test verifies that order. Runtime fault tests verify
+  PTY/audit cleanup and retain the owner lock if disposal fails. Slow-client,
+  runtime replacement and multi-tab races still need deeper acceptance checks.
 
 ## P7 — Distribution (partially implemented)
 
 - Windows `pnpm pack:server` produced a relocatable Node/Web directory with 160
   physical package copies, 125 CycloneDX components and 7036 checksums. It was
   copied to another path and passed startup, page, auth, native PTY loading,
-  graceful shutdown and owner-lock release.
+  graceful shutdown and owner-lock release. The latest verified directory is
+  `release/linkterm-server-win32-x64-1790135112377`.
 - Windows `pnpm dist:desktop` produced NSIS and portable executables from a
   separate physical dependency tree (257 package copies, 178 CycloneDX
   components). A relocated packaged `app.asar` passed preload, shared UI and
   real PTY input/output. Four release-file checksums were generated. Native
   Electron and Node dependencies were never rebuilt in the shared workspace.
+  The latest verified directory is `release/linkterm-desktop-win32-x64-1790135227198`.
 - Release-candidate CI now invokes both package/smoke commands. A Web deployment
   guide covers localhost, remote HTTPS proxy, data paths, credentials and
   connection metadata migration. Cross-platform release jobs and real hardware
   remain unverified on this Windows host.
 - Full quality gate passed at normal host permissions: lint, both application
-  builds, 183 test files / 2047 tests and license attribution. A restricted
-  sandbox run passed 2044/2047; its three audit-export/child-process failures
-  also passed in a targeted normal-permission rerun (58/58).
+  builds, 184 test files / 2056 tests and license attribution. A prior
+  restricted sandbox run passed 2044/2047; its three audit-export/child-process
+  failures also passed in a targeted normal-permission rerun (58/58).
 - Before P4/P5 edits, 183 service/adapter targets were analyzed: 143 LOW,
   24 UNKNOWN, 1 MEDIUM, 11 HIGH and 4 CRITICAL. The preload invocation had 38
   direct callers / 3 flows, and serial lifecycle broadcast had 3 direct callers
@@ -250,11 +262,18 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   the complete staged file diff and phase-local impact reports were reviewed.
   Graph flow enumeration itself is budget-limited and must not be treated as a
   complete runtime call trace.
+- This follow-up refreshed the graph to 48,184 nodes, 95,279 edges and 596
+  enumerated flows. The phase-local `detect_changes(scope=all)` reports 13
+  staged files, 64 changed symbols and 106 affected flows; comparison with
+  `main` reports 543 files, 1809 symbols and 251 flows, with the cumulative
+  symbol list truncated. The CRITICAL graph rating spans the intended Web
+  transport, server lifecycle, shared UI and runtime shutdown paths; the
+  complete staged diff and 2056-test quality gate were reviewed together.
 
 ## Remaining acceptance work
 
-- Complete Web-specific Agent integration and verify each supported service
-  surface, including reconnect and background job recovery.
+- Verify the Web Agent UI and each supported service surface, including
+  reconnect and background job recovery.
 - Exercise lifecycle fault paths, multi-tab event races, slow clients and stale
   owner recovery; ensure interrupted server shutdown cannot corrupt a data dir.
 - Validate dev-time physical native isolation and desktop legacy stdio behavior.

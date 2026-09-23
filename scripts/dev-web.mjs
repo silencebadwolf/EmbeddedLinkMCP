@@ -43,6 +43,30 @@ async function stopChild(child) {
   try { await exited; } finally { clearTimeout(fallback); }
 }
 
+function waitForServerReady(child) {
+  return new Promise((resolve, reject) => {
+    let settled = false, buffer = '';
+    const timeout = setTimeout(() => finish(new Error('Web server did not report readiness within 15 seconds')), 15_000);
+    const onExit = code => finish(new Error(`Web server stopped before readiness (${code})`));
+    const onError = error => finish(error);
+    const finish = error => {
+      if (settled) return;
+      settled = true; clearTimeout(timeout);
+      child.off('exit', onExit); child.off('error', onError);
+      if (error) reject(error); else resolve();
+    };
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', chunk => {
+      process.stdout.write(chunk);
+      if (settled) return;
+      buffer += chunk;
+      if (/LinkTerm Web: http:\/\/[^\s]+/u.test(buffer)) finish();
+    });
+    child.once('exit', onExit);
+    child.once('error', onError);
+  });
+}
+
 export async function startWebDevelopment({ serverOnly = false } = {}) {
   await run([join(root, 'scripts/copy-ui-assets.mjs')]);
   await run([compiler, '-b', 'packages/contracts', 'packages/runtime', 'packages/mcp', 'packages/ui', 'apps/server', 'apps/web']);
@@ -56,6 +80,7 @@ export async function startWebDevelopment({ serverOnly = false } = {}) {
     await restart.catch(() => undefined);
     await stopChild(child);
     await vite?.close();
+    await vite?.watcher.close();
   };
   const fail = error => { console.error(error); process.exitCode = 1; void close(); };
   const refresh = async () => {
@@ -67,10 +92,11 @@ export async function startWebDevelopment({ serverOnly = false } = {}) {
     child = spawn(process.execPath, [join(root, 'apps/server/dist/index.js')], {
       cwd: root,
       env: { ...process.env, ...(serverOnly ? {} : { LINKTERM_DEV_ORIGIN: 'http://localhost:5174' }) },
-      stdio: ['inherit', 'inherit', 'inherit', 'ipc'], windowsHide: true,
+      stdio: ['inherit', 'pipe', 'inherit', 'ipc'], windowsHide: true,
     });
     child.on('error', fail);
     child.once('exit', code => { if (!closing && code !== 0) fail(new Error(`Web server stopped (${code})`)); });
+    await waitForServerReady(child);
     lastFingerprint = next;
   };
   process.once('SIGINT', close); process.once('SIGTERM', close);

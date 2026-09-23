@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -178,5 +178,18 @@ describe('host-owned runtime lifecycle', () => {
     expect(pty.created[0].killCalls).toBe(1);
     expect(auditDispose).toHaveBeenCalledOnce();
     expect(runtime.sessionManager.list()).toEqual([]);
+  });
+
+  it('continues cleanup after job shutdown fails and retains the owner lock', async () => {
+    const { runtime, pty } = await openRuntime();
+    await createAndOpenSession(runtime.sessionManager, { type: 'local-shell' });
+    vi.spyOn(runtime.controlWorkflowJobManager, 'shutdown').mockRejectedValueOnce(new Error('injected job shutdown failure'));
+    const auditDispose = vi.spyOn(runtime.auditStore, 'dispose');
+
+    await expect(runtime.dispose()).rejects.toThrow('Runtime resource disposal failed');
+    expect(pty.created[0].killCalls).toBe(1);
+    expect(auditDispose).toHaveBeenCalledOnce();
+    expect(runtime.sessionManager.list()).toEqual([]);
+    await expect(access(path.join(runtime.dataDir, '.runtime-owner.json'))).resolves.toBeUndefined();
   });
 });

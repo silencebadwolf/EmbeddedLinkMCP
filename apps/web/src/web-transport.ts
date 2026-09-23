@@ -7,13 +7,14 @@ export interface DirectoryChoice { readonly id: string; readonly name: string; r
 export interface DirectoryListing { readonly current: DirectoryChoice | null; readonly directories: readonly DirectoryChoice[]; }
 type Listener = (event: unknown, payload: unknown) => void;
 const streamed = new Set<string>([CLIENT_CHANNELS.SESSION_WRITE, CLIENT_CHANNELS.SESSION_RESIZE, CLIENT_CHANNELS.TRANSCRIPT_SUBSCRIBE]);
+const REQUEST_TIMEOUT_MS = 30_000;
 const failure = (code: string, message = code) => ({ success: false as const, error: { code, message } });
 
 /** Browser-side transport: reconnects listeners, never automatically repeats a command. */
 export class WebTransport implements ClientTransport {
   readonly #listeners = new Map<string, Set<Listener>>();
   readonly #statusListeners = new Set<(status: ConnectionStatus) => void>();
-  readonly #pending = new Map<string, (result: unknown) => void>();
+  readonly #pending = new Map<string, { resolve: (result: unknown) => void; timeout: number }>();
   readonly #uncertain = new Set<string>();
   #socket?: WebSocket;
   #clientId?: string;
@@ -51,11 +52,13 @@ export class WebTransport implements ClientTransport {
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(url);
     this.#socket = socket;
+    const handshakeTimeout = window.setTimeout(() => socket.close(1008, 'Server hello timed out'), 10_000);
     socket.addEventListener('message', event => {
       let frame: WebServerFrame;
       try { frame = JSON.parse(event.data as string) as WebServerFrame; } catch { socket.close(1008, 'Invalid server frame'); return; }
       if (frame.type === 'hello') {
         if (frame.protocol !== WEB_PROTOCOL_VERSION || typeof frame.clientId !== 'string' || !frame.runtime || frame.runtime.protocol !== WEB_PROTOCOL_VERSION) { socket.close(1008, 'Protocol mismatch'); return; }
+        clearTimeout(handshakeTimeout);
         this.#runtime = frame.runtime; this.#clockOffset = frame.runtime.serverTime - Date.now();
         this.#clientId = frame.clientId; this.#attempts = 0; this.#generation++;
         this.#setStatus('connected');
@@ -64,13 +67,19 @@ export class WebTransport implements ClientTransport {
       if (frame.type === 'event' && typeof frame.channel === 'string') {
         for (const listener of this.#listeners.get(frame.channel) ?? []) listener(undefined, frame.payload);
       } else if (frame.type === 'response' && typeof frame.id === 'string') {
-        this.#pending.get(frame.id)?.(frame.result); this.#pending.delete(frame.id);
+        const pending = this.#pending.get(frame.id);
+        if (pending) { clearTimeout(pending.timeout); pending.resolve(frame.result); this.#pending.delete(frame.id); }
       }
     });
     socket.addEventListener('close', () => {
+      clearTimeout(handshakeTimeout);
       if (this.#socket !== socket) return;
       this.#clientId = undefined;
-      for (const [id, resolve] of this.#pending) { this.#uncertain.add(id); resolve(failure('CONNECTION_LOST', `Command ${id} may have run; check its status after reconnecting`)); }
+      for (const [id, pending] of this.#pending) {
+        clearTimeout(pending.timeout);
+        this.#uncertain.add(id);
+        pending.resolve(failure('CONNECTION_LOST', `Command ${id} may have run; check its status after reconnecting`));
+      }
       this.#pending.clear();
       if (this.#status !== 'closed') {
         this.#setStatus('disconnected');
@@ -88,15 +97,28 @@ export class WebTransport implements ClientTransport {
     if (method === CLIENT_CHANNELS.CONTROL_PROFILE_PICK_FIRMWARE_FILE) return this.#chooseFirmwareFile();
     const request: WebRequest = { id: crypto.randomUUID(), issuedAt: Date.now() + this.#clockOffset, method: method as WebRequest['method'], payload };
     if (streamed.has(method)) {
+      const socket = this.#socket;
       return new Promise(resolve => {
-        this.#pending.set(request.id, resolve);
-        try { this.#socket!.send(JSON.stringify({ type: 'request', request })); }
-        catch { this.#pending.delete(request.id); resolve(failure('CONNECTION_LOST')); }
+        const timeout = window.setTimeout(() => {
+          if (!this.#pending.has(request.id)) return;
+          this.#pending.delete(request.id); this.#uncertain.add(request.id);
+          resolve(failure('CONNECTION_LOST', `Command ${request.id} may have run; check its status after reconnecting`));
+          socket.close();
+        }, REQUEST_TIMEOUT_MS);
+        this.#pending.set(request.id, { resolve, timeout });
+        try { socket.send(JSON.stringify({ type: 'request', request })); }
+        catch {
+          clearTimeout(timeout); this.#pending.delete(request.id); this.#uncertain.add(request.id);
+          socket.close(); resolve(failure('CONNECTION_LOST'));
+        }
       });
     }
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const response = await fetch('/api/request', {
         method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json', 'X-Linkterm-Csrf': this.#csrf, 'X-Linkterm-Client': this.#clientId },
         body: JSON.stringify(request),
       });
@@ -111,6 +133,8 @@ export class WebTransport implements ClientTransport {
       this.#setStatus('disconnected');
       this.#socket.close();
       return failure('CONNECTION_LOST', `Command ${request.id} may have run; check its status after reconnecting`);
+    } finally {
+      clearTimeout(timeout);
     }
   }
   async listWorkspaces(parentId?: string): Promise<DirectoryListing> {

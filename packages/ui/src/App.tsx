@@ -69,10 +69,10 @@ const FIRST_SIGNAL_TIMEOUT_MS = 30_000;
 /**
  * App 根组件.
  */
-export function App(): React.ReactElement {
+export function App({ reconcileMissingSessions = false }: { reconcileMissingSessions?: boolean } = {}): React.ReactElement {
   // Phase 10：在根组件一次性挂载 MCP UI patch 订阅；卸载时随 React 自动清理。
   useUiPatchSubscription();
-  useSessionHydration();
+  useSessionHydration(reconcileMissingSessions);
 
   const t = useT();
   const preloadUnavailableMessage = t('controlProfile.error.preloadUnavailable');

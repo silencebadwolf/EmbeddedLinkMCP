@@ -60,7 +60,7 @@ function WebApp(): React.ReactElement {
     <header className="web-hostbar"><strong>LinkTerm Web</strong><span>运行于 {runtime?.hostname ?? '服务端'} · {runtime?.platform ?? ''}，硬件与文件均在服务端</span>
       <button type="button" onClick={() => void transport.activateUiTarget()}>将此浏览器设为 UI 目标</button>
       <button type="button" onClick={() => void logout()}>退出</button></header>
-    {status === 'connected' ? <App key={generation} /> : <div className="web-disconnected" role="status">连接已中断，正在重新连接。会话和任务保留在服务端；结果不确定的命令不会自动重发。</div>}
+    {status === 'connected' ? <App key={generation} reconcileMissingSessions /> : <div className="web-disconnected" role="status">连接已中断，正在重新连接。会话和任务保留在服务端；结果不确定的命令不会自动重发。</div>}
     {transport.uncertainRequests.length > 0 && <aside className="web-uncertain" role="alert">有 {transport.uncertainRequests.length} 个命令需要确认结果。重新连接后会查询其状态。</aside>}
     {pickingWorkspace && <WorkspacePicker transport={transport} onSelect={root => { workspaceResolver.current?.(root); workspaceResolver.current = null; setPickingWorkspace(false); }} onCancel={() => { workspaceResolver.current?.(null); workspaceResolver.current = null; setPickingWorkspace(false); }} />}
   </div>;
