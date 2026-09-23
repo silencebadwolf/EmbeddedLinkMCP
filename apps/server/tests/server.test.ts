@@ -161,6 +161,77 @@ it('serves authenticated Web clients from one runtime and retains commands acros
   }
 }, 30_000);
 
+it('recovers a live terminal and missed output after a browser reconnect', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'linkterm-web-reconnect-'));
+  const publicDir = join(dataDir, 'public');
+  await mkdir(publicDir);
+  await writeFile(join(publicDir, 'index.html'), 'ready');
+  const pty = createMockPtyFactory();
+  const token = randomBytes(32).toString('base64');
+  const server = await startServer({ runtime: { dataDir,
+    nativeBindings: { createPty: pty.factory, createSerialPort: () => { throw new Error('No hardware'); }, listSerialPorts: async () => [] },
+    secretCodec: new ServerSecretCodec(randomBytes(32)), jlinkBackend: new NullJLinkBackend(),
+  }, accessToken: token, publicDir, host: '127.0.0.1', port: 0 });
+  const peers: WebSocket[] = [];
+  try {
+    const origin = server.url;
+    const login = await fetch(origin + '/api/login', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+    expect(login.status).toBe(200);
+    const cookie = login.headers.get('set-cookie')!.split(';')[0];
+    const { csrf } = await login.json() as { csrf: string };
+    const first = await connect(origin, cookie, origin); peers.push(first.socket);
+    const send = async (clientId: string, method: string, payload?: unknown) => {
+      const response = await fetch(origin + '/api/request', { method: 'POST', headers: {
+        Origin: origin, Cookie: cookie, 'X-Linkterm-Csrf': csrf, 'X-Linkterm-Client': clientId, 'Content-Type': 'application/json',
+      }, body: JSON.stringify({ id: randomUUID(), issuedAt: Date.now(), method, payload }) });
+      return response.json() as Promise<{ success: boolean; data: Record<string, unknown> }>;
+    };
+    const created = await send(first.clientId, CLIENT_CHANNELS.SESSION_CREATE, { config: { type: 'local-shell' } });
+    expect(created.success).toBe(true);
+    const sessionId = created.data.sessionId as string;
+    expect((await send(first.clientId, CLIENT_CHANNELS.TRANSCRIPT_SUBSCRIBE, { sessionId })).success).toBe(true);
+    pty.created[0].pushIncoming('before disconnect');
+    await vi.waitFor(async () => {
+      const read = await send(first.clientId, CLIENT_CHANNELS.SESSION_READ, { sessionId, cursor: 0 });
+      expect(read.data.events).toEqual(expect.arrayContaining([expect.objectContaining({
+        type: 'data', dataBase64: Buffer.from('before disconnect').toString('base64'),
+      })]));
+    }, { timeout: 2_000, interval: 25 });
+
+    const closed = new Promise<void>(resolve => first.socket.once('close', resolve));
+    first.socket.terminate();
+    await closed;
+    pty.created[0].pushIncoming('while disconnected');
+    const second = await connect(origin, cookie, origin); peers.push(second.socket);
+    const listed = await send(second.clientId, CLIENT_CHANNELS.SESSION_LIST);
+    expect(listed.data.sessions).toEqual(expect.arrayContaining([expect.objectContaining({ sessionId })]));
+    const recovered = await send(second.clientId, CLIENT_CHANNELS.TRANSCRIPT_SUBSCRIBE, { sessionId });
+    expect(recovered.success).toBe(true);
+    expect(recovered.data.truncated).toBe(false);
+    const events = recovered.data.events as { type: string; dataBase64?: string }[];
+    expect(events.filter(event => event.type === 'data').map(event => Buffer.from(event.dataBase64!, 'base64').toString())).toEqual([
+      'before disconnect', 'while disconnected',
+    ]);
+    expect(pty.created).toHaveLength(1);
+
+    const live = new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Live transcript event was not delivered')), 2_000);
+      second.socket.on('message', raw => {
+        const frame = JSON.parse(raw.toString()) as { type: string; channel?: string; payload?: { event?: { dataBase64?: string } } };
+        if (frame.type !== 'event' || frame.channel !== CLIENT_CHANNELS.TRANSCRIPT_EVENT || !frame.payload?.event?.dataBase64) return;
+        clearTimeout(timer);
+        resolve(Buffer.from(frame.payload.event.dataBase64, 'base64').toString());
+      });
+    });
+    pty.created[0].pushIncoming('after reconnect');
+    expect(await live).toBe('after reconnect');
+  } finally {
+    for (const peer of peers) peer.terminate();
+    await server.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+}, 15_000);
+
 it('drains an accepted Web command before disposing the runtime', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'linkterm-web-drain-'));
   const publicDir = join(dataDir, 'public');

@@ -247,6 +247,10 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   one browser observes its own socket close: server-side destruction and UI
   target transfer can finish slightly later. It still rejects any resize error
   other than the temporary `NOT_ACTIVE_CLIENT` state.
+  A live HTTP/WebSocket integration test now disconnects a subscribed browser
+  while its PTY remains open, emits output during the gap, then reconnects a
+  second browser. The new client recovers both retained output chunks and
+  receives new live transcript events without creating a second PTY.
   A real server restart test confirms the old browser cookie is rejected and
   a fresh login succeeds. The Web transport now checks `/api/session` after a
   WS disconnect; a 401 returns the browser to login without an endless retry
@@ -321,12 +325,15 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   not represented as a production symbol. The cumulative `main` comparison
   reports 545 files, 1835 symbols and 254 flows (CRITICAL, truncated). The
   2061-test quality gate and real browser panel smoke cover this change.
+- The terminal reconnect acceptance test passes through a real Web server and
+  WebSocket with a mocked PTY. Full quality gate after this addition passes:
+  lint, both builds, 185 test files / 2062 tests and license attribution.
 
 ## Remaining acceptance work
 
-- Verify the remaining Web service surfaces, including reconnect and background
-  job recovery; complete the Agent install/removal UI check in an isolated
-  account.
+- Verify the remaining Web service surfaces, including background job recovery
+  and service-specific reconnect paths; complete the Agent install/removal UI
+  check in an isolated account.
 - Exercise lifecycle fault paths, multi-tab event races, slow clients and stale
   owner recovery; ensure interrupted server shutdown cannot corrupt a data dir.
 - Repeat development native-binding and legacy stdio smoke on Linux/macOS and
