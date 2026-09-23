@@ -14,7 +14,9 @@ export const en = {
   'agent.entry': 'MCP / Agent integrations',
   'agent.title': 'MCP / Agent integrations',
   'agent.description':
-    'Install or repair LinkTerm MCP server configuration for local AI tools. Backups are created before writing.',
+    'Install or repair LinkTerm MCP server configuration for AI tools. Backups are created before writing.',
+  'agent.serverHostNotice':
+    'Install / Repair writes this config in the server account, not on this browser device.',
   'agent.loading': 'Detecting integrations...',
   'agent.empty': 'No supported agent integrations found.',
   'agent.install': 'Install / Repair',

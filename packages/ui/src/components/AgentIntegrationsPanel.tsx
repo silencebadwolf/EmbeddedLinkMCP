@@ -199,6 +199,9 @@ export function AgentIntegrationsPanel({
                     </span>
                   </div>
                   <p className="break-all text-xs text-gray-400">{status.configPath}</p>
+                  {status.locationLabel === 'Server host' ? (
+                    <p className="text-xs text-amber-200">{t('agent.serverHostNotice')}</p>
+                  ) : null}
                   {status.message ? <p className="text-xs text-red-200">{status.message}</p> : null}
                   {status.backupPath ? (
                     <p className="break-all text-xs text-gray-400">

@@ -210,8 +210,12 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   The same server integration test now probes connection records, control
   profile records, serial discovery, readiness, activity status and J-Link
   catalog lookup through the browser command boundary without hardware.
-  The full Web feature matrix, Agent UI and hardware behavior still need
-  individual acceptance checks.
+  A real browser login opened the Agent integration panel against an isolated
+  server account and confirmed the Codex server-host target, HTTP transport,
+  config path and explicit notice that Install / Repair writes to the server
+  account rather than the browser device. No Agent config was installed in the
+  UI smoke; the isolated API integration test covers config writes. The rest
+  of the Web feature matrix and hardware behavior still need individual checks.
 
 ## P6 — Network and resource boundaries (partially implemented)
 
@@ -239,6 +243,10 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   it, and shows that its outcome cannot be recovered automatically.
   A slow-peer test verifies that the 4 MiB WebSocket backpressure cap closes
   that peer with code 1013 before queuing more event bytes.
+  The two-client integration test now allows a bounded handoff interval after
+  one browser observes its own socket close: server-side destruction and UI
+  target transfer can finish slightly later. It still rejects any resize error
+  other than the temporary `NOT_ACTIVE_CLIENT` state.
   A real server restart test confirms the old browser cookie is rejected and
   a fresh login succeeds. The Web transport now checks `/api/session` after a
   WS disconnect; a 401 returns the browser to login without an endless retry
@@ -271,7 +279,7 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
 - The legacy standalone desktop stdio MCP entry passed a separate SDK client
   smoke: it advertised its 48 available tools and opened/closed a local PTY.
 - Full quality gate passed at normal host permissions: lint, both application
-  builds, 185 test files / 2060 tests and license attribution. A prior
+  builds, 185 test files / 2061 tests and license attribution. A prior
   restricted sandbox run passed 2044/2047; its three audit-export/child-process
   failures also passed in a targeted normal-permission rerun (58/58).
 - Before P4/P5 edits, 183 service/adapter targets were analyzed: 143 LOW,
@@ -307,11 +315,18 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   that Web reconnect has no callers. The cumulative `main` comparison reports
   545 files, 1834 symbols and 252 flows. Fault tests, the 2060-test quality
   gate and the latest relocated Web package smoke provide runtime coverage.
+- The Agent UI follow-up refreshed the graph to 48,368 nodes, 95,785 edges and
+  595 budget-limited flows. Its phase-local detection reports 6 staged files,
+  8 indexed symbols and 3 Agent panel flows (MEDIUM); the server test edit is
+  not represented as a production symbol. The cumulative `main` comparison
+  reports 545 files, 1835 symbols and 254 flows (CRITICAL, truncated). The
+  2061-test quality gate and real browser panel smoke cover this change.
 
 ## Remaining acceptance work
 
-- Verify the Web Agent UI and each supported service surface, including
-  reconnect and background job recovery.
+- Verify the remaining Web service surfaces, including reconnect and background
+  job recovery; complete the Agent install/removal UI check in an isolated
+  account.
 - Exercise lifecycle fault paths, multi-tab event races, slow clients and stale
   owner recovery; ensure interrupted server shutdown cannot corrupt a data dir.
 - Repeat development native-binding and legacy stdio smoke on Linux/macOS and

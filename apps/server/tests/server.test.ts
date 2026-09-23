@@ -122,9 +122,14 @@ it('serves authenticated Web clients from one runtime and retains commands acros
     const secondClosed = new Promise<void>(resolve => second.socket.once('close', () => resolve()));
     second.socket.terminate();
     await secondClosed;
-    expect(await (await send(first.clientId, command(CLIENT_CHANNELS.SESSION_RESIZE, {
-      sessionId: created.data.sessionId, cols: 102, rows: 42,
-    }))).json()).toMatchObject({ success: true });
+    await vi.waitFor(async () => {
+      const result = await (await send(first.clientId, command(CLIENT_CHANNELS.SESSION_RESIZE, {
+        sessionId: created.data.sessionId, cols: 102, rows: 42,
+      }))).json() as { success: boolean; error?: { code: string } };
+      if (!result.success && result.error?.code !== 'NOT_ACTIVE_CLIENT')
+        throw new Error(`Unexpected resize failure: ${result.error?.code ?? 'unknown'}`);
+      expect(result.success).toBe(true);
+    }, { timeout: 5_000, interval: 25 });
     const status = await fetch(`${server.url}/api/requests/${create.id}`, { headers: { Cookie: cookie } });
     expect((await status.json() as { state: string }).state).toBe('completed');
     const workspaceList = await fetch(server.url + '/api/workspaces', { headers: { Cookie: cookie } });

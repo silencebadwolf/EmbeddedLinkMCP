@@ -64,6 +64,28 @@ describe('AgentIntegrationsPanel', () => {
     expect(await screen.findByText('HTTP')).toBeInTheDocument();
   });
 
+  it('explains where a Web server-host config is written', async () => {
+    mock.spies.agentIntegrations.list.mockResolvedValueOnce({
+      success: true,
+      data: [{
+        id: 'codex',
+        label: 'Codex (server host)',
+        configPath: 'C:/server-home/.codex/config.toml',
+        configKind: 'codex-config-toml',
+        locationLabel: 'Server host',
+        transportLabel: 'HTTP',
+        status: 'not-configured',
+        configured: false,
+        canInstall: true,
+      }],
+    });
+
+    render(<AgentIntegrationsPanel open onOpenChange={onOpenChange} />);
+
+    expect(await screen.findByText('Codex (server host)')).toBeInTheDocument();
+    expect(screen.getByText('Install / Repair writes this config in the server account, not on this browser device.')).toBeInTheDocument();
+  });
+
   it('installs selected integration and refreshes row status', async () => {
     mock.spies.agentIntegrations.install.mockResolvedValueOnce({
       success: true,
