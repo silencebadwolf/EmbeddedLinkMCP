@@ -8,18 +8,18 @@ importers:
 
   .:
     devDependencies:
-      '@linkterm/ui':
-        specifier: workspace:*
-        version: link:packages/ui
-      '@linkterm/runtime':
-        specifier: workspace:*
-        version: link:packages/runtime
-      '@linkterm/mcp':
-        specifier: workspace:*
-        version: link:packages/mcp
       '@linkterm/contracts':
         specifier: workspace:*
         version: link:packages/contracts
+      '@linkterm/mcp':
+        specifier: workspace:*
+        version: link:packages/mcp
+      '@linkterm/runtime':
+        specifier: workspace:*
+        version: link:packages/runtime
+      '@linkterm/ui':
+        specifier: workspace:*
+        version: link:packages/ui
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(zod@4.4.3)
@@ -38,42 +38,6 @@ importers:
       '@radix-ui/react-tabs':
         specifier: ^1.1.14
         version: 1.1.14(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@xterm/addon-fit':
-        specifier: ^0.10.0
-        version: 0.10.0(@xterm/xterm@5.5.0)
-      '@xterm/xterm':
-        specifier: ^5.5.0
-        version: 5.5.0
-      class-variance-authority:
-        specifier: ^0.7.1
-        version: 0.7.1
-      clsx:
-        specifier: ^2.1.1
-        version: 2.1.1
-      node-pty:
-        specifier: ^1.0.0
-        version: 1.1.0
-      react:
-        specifier: ^19.2.7
-        version: 19.2.7
-      react-dom:
-        specifier: ^19.2.7
-        version: 19.2.7(react@19.2.7)
-      serialport:
-        specifier: ^13.0.0
-        version: 13.0.0
-      ssh2:
-        specifier: ^1.16.0
-        version: 1.17.0
-      tailwind-merge:
-        specifier: ^3.6.0
-        version: 3.6.0
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
-      zustand:
-        specifier: ^5.0.14
-        version: 5.0.14(@types/react@19.2.17)(react@19.2.7)
       '@tailwindcss/postcss':
         specifier: ^4.3.1
         version: 4.3.1
@@ -104,9 +68,21 @@ importers:
       '@vitest/coverage-v8':
         specifier: 4.1.8
         version: 4.1.8(vitest@4.1.8)
+      '@xterm/addon-fit':
+        specifier: ^0.10.0
+        version: 0.10.0(@xterm/xterm@5.5.0)
+      '@xterm/xterm':
+        specifier: ^5.5.0
+        version: 5.5.0
       autoprefixer:
         specifier: ^10.4.21
         version: 10.5.0(postcss@8.5.15)
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
       electron:
         specifier: ^42.4.0
         version: 42.4.0
@@ -119,12 +95,30 @@ importers:
       happy-dom:
         specifier: ^20.10.3
         version: 20.10.3
+      node-pty:
+        specifier: ^1.0.0
+        version: 1.1.0
       postcss:
         specifier: ^8.5.6
         version: 8.5.15
       prettier:
         specifier: ^3.6.0
         version: 3.8.4
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.7
+        version: 19.2.7(react@19.2.7)
+      serialport:
+        specifier: ^13.0.0
+        version: 13.0.0
+      ssh2:
+        specifier: ^1.16.0
+        version: 1.17.0
+      tailwind-merge:
+        specifier: ^3.6.0
+        version: 3.6.0
       tailwindcss:
         specifier: ^4.3.1
         version: 4.3.1
@@ -143,33 +137,39 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@types/node@25.9.3)(@vitest/coverage-v8@4.1.8)(happy-dom@20.10.3)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4))
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+      zustand:
+        specifier: ^5.0.14
+        version: 5.0.15(@types/react@19.2.17)(react@19.2.7)
 
   apps/desktop:
     dependencies:
       '@linkterm/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@linkterm/ui':
-        specifier: workspace:*
-        version: link:../../packages/ui
-      '@linkterm/runtime':
-        specifier: workspace:*
-        version: link:../../packages/runtime
       '@linkterm/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
+      '@linkterm/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@linkterm/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       node-pty:
         specifier: ^1.0.0
         version: 1.1.0
-      serialport:
-        specifier: ^13.0.0
-        version: 13.0.0
       react:
         specifier: ^19.2.7
         version: 19.2.7
       react-dom:
         specifier: ^19.2.7
         version: 19.2.7(react@19.2.7)
+      serialport:
+        specifier: ^13.0.0
+        version: 13.0.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -178,18 +178,17 @@ importers:
         specifier: ^42.4.0
         version: 42.4.0
 
-
   apps/server:
     dependencies:
       '@linkterm/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@linkterm/runtime':
-        specifier: workspace:*
-        version: link:../../packages/runtime
       '@linkterm/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
+      '@linkterm/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       node-pty:
         specifier: ^1.0.0
         version: 1.1.0
@@ -225,18 +224,6 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
-  packages/runtime:
-    dependencies:
-      '@linkterm/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
-      ssh2:
-        specifier: ^1.16.0
-        version: 1.17.0
-
   packages/mcp:
     dependencies:
       '@linkterm/contracts':
@@ -248,6 +235,18 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(zod@4.4.3)
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  packages/runtime:
+    dependencies:
+      '@linkterm/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      ssh2:
+        specifier: ^1.16.0
+        version: 1.17.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -284,18 +283,18 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
-      tailwind-merge:
-        specifier: ^3.6.0
-        version: 3.6.0
-      zustand:
-        specifier: ^5.0.14
-        version: 5.0.14(@types/react@19.2.17)(react@19.2.7)
       react:
         specifier: ^19.2.7
         version: 19.2.7
       react-dom:
         specifier: ^19.2.7
         version: 19.2.7(react@19.2.7)
+      tailwind-merge:
+        specifier: ^3.6.0
+        version: 3.6.0
+      zustand:
+        specifier: ^5.0.14
+        version: 5.0.15(@types/react@19.2.17)(react@19.2.7)
 
 packages:
 
@@ -1471,6 +1470,7 @@ packages:
   '@xmldom/xmldom@0.8.13':
     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@xterm/addon-fit@0.10.0':
     resolution: {integrity: sha512-UFYkDm4HUahf2lnEyHvio51TNGiLK66mqP2JoATy7hRZeXaGMRDr00JiSF7m63vR5WKATF605yEggJKsw0JpMQ==}
@@ -1994,6 +1994,7 @@ packages:
   eslint@9.39.4:
     resolution: {integrity: sha512-XoMjdBOwe/esVgEvLmNsD3IRHkm7fbKIUGvrleloJXUZgDHig2IPWNniv+GwjyJXzuNqVjlr5+4yVUZjycJwfQ==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
@@ -2119,8 +2120,8 @@ packages:
     resolution: {integrity: sha512-eKpRKAovdpZtR1WopLHxlBWvAgPny3c4gX1G5Jhwmmw4XJj0ifSD5qB5TOo8hmA0wlRKDAOAhEE1yVPgs6Fgcg==}
     engines: {node: '>=14.14'}
 
-  fs-extra@11.4.0:
-    resolution: {integrity: sha512-EQsFzMUJkCKGr1ePqlYADkIUmHW1s3ZXr5Yqy6wbGrfUCphpl2maM/kyOIRA2HpP3AaFQTZXD4ldjek+nccddA==}
+  fs-extra@11.4.1:
+    resolution: {integrity: sha512-KYAb4c9BJQI6QqGKthV68OHe0badztdXJWKo0WtBA9IuCFPTKvE5ZdUBglP833aMjhaSPNO4A5j/EkzZtGlKjA==}
     engines: {node: '>=14.14'}
 
   fs-extra@7.0.1:
@@ -3385,8 +3386,8 @@ packages:
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
-  zustand@5.0.14:
-    resolution: {integrity: sha512-/8tAspM5LMPr28b3fwLYrtdj77ECpfZviaP75CMTnwO8ISyaE4GDIG/9rDDYq/cH9D2Xw2A2RXglLInmVBQB/g==}
+  zustand@5.0.15:
+    resolution: {integrity: sha512-MpSEjRiBkA9crSYeOUH32rJC7SVqAbm0Fqcqge/bUi2PPoLcBWKOsG+C8mevmpr8TwXHBVkChbbJiyvkE+i/3A==}
     engines: {node: '>=12.20.0'}
     peerDependencies:
       '@types/react': '>=18.0.0'
@@ -3519,7 +3520,7 @@ snapshots:
     dependencies:
       cross-dirname: 0.1.0
       debug: 4.4.3
-      fs-extra: 11.4.0
+      fs-extra: 11.4.1
       minimist: 1.2.8
       postject: 1.0.0-alpha.6
     transitivePeerDependencies:
@@ -5298,7 +5299,7 @@ snapshots:
       jsonfile: 6.2.1
       universalify: 2.0.1
 
-  fs-extra@11.4.0:
+  fs-extra@11.4.1:
     dependencies:
       graceful-fs: 4.2.11
       jsonfile: 6.2.1
@@ -6480,7 +6481,7 @@ snapshots:
 
   zod@4.4.3: {}
 
-  zustand@5.0.14(@types/react@19.2.17)(react@19.2.7):
+  zustand@5.0.15(@types/react@19.2.17)(react@19.2.7):
     optionalDependencies:
       '@types/react': 19.2.17
       react: 19.2.7
