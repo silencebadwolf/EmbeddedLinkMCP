@@ -1,10 +1,12 @@
 import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import type { RuntimeNativeBindings } from '@linkterm/runtime';
 import type { SerialPortLike } from '@linkterm/runtime/transports/serial/serial-port-like';
 
 /** The server resolves native libraries from its own deployment directory. */
 export function createServerNativeBindings(): RuntimeNativeBindings {
-  const requireNative = createRequire(import.meta.url);
+  const requireNative = createRequire(process.env.LINKTERM_DEV_NATIVE_MODULE_ROOT
+    ? join(process.env.LINKTERM_DEV_NATIVE_MODULE_ROOT, 'package.json') : import.meta.url);
   return {
     listSerialPorts: async () => (requireNative('serialport') as typeof import('serialport')).SerialPort.list(),
     createSerialPort: options => {

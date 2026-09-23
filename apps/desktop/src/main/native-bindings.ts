@@ -1,10 +1,12 @@
 import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import type { RuntimeNativeBindings } from '@linkterm/runtime';
 import type { SerialPortLike } from '@linkterm/runtime/transports/serial/serial-port-like';
 
 /** Native loading belongs to the Electron host, never to shared runtime modules. */
 export function createDesktopNativeBindings(): RuntimeNativeBindings {
-  const requireNative = createRequire(import.meta.url);
+  const requireNative = createRequire(process.env.LINKTERM_DEV_NATIVE_MODULE_ROOT
+    ? join(process.env.LINKTERM_DEV_NATIVE_MODULE_ROOT, 'package.json') : import.meta.url);
   return {
     createSerialPort: (options) => {
       const { SerialPort } = requireNative('serialport') as typeof import('serialport');

@@ -207,6 +207,9 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   registrations. The server-host Codex Agent target now installs an HTTP MCP
   configuration in the server account's home without writing the access token
   into `config.toml`; the authenticated API test verifies the target and file.
+  The same server integration test now probes connection records, control
+  profile records, serial discovery, readiness, activity status and J-Link
+  catalog lookup through the browser command boundary without hardware.
   The full Web feature matrix, Agent UI and hardware behavior still need
   individual acceptance checks.
 
@@ -227,6 +230,9 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   an in-flight PTY write test verifies that order. Runtime fault tests verify
   PTY/audit cleanup and retain the owner lock if disposal fails. Slow-client,
   runtime replacement and multi-tab races still need deeper acceptance checks.
+  A two-client server test now verifies that only the selected UI-target tab
+  may resize the shared PTY, and that selecting another tab transfers that
+  authority without interrupting the session.
 
 ## P7 — Distribution (partially implemented)
 
@@ -234,17 +240,26 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   physical package copies, 125 CycloneDX components and 7036 checksums. It was
   copied to another path and passed startup, page, auth, native PTY loading,
   graceful shutdown and owner-lock release. The latest verified directory is
-  `release/linkterm-server-win32-x64-1790135112377`.
+  `release/linkterm-server-win32-x64-1790136369276`.
 - Windows `pnpm dist:desktop` produced NSIS and portable executables from a
   separate physical dependency tree (257 package copies, 178 CycloneDX
   components). A relocated packaged `app.asar` passed preload, shared UI and
   real PTY input/output. Four release-file checksums were generated. Native
   Electron and Node dependencies were never rebuilt in the shared workspace.
-  The latest verified directory is `release/linkterm-desktop-win32-x64-1790135227198`.
+  The latest verified directory is `release/linkterm-desktop-win32-x64-1790136492886`.
 - Release-candidate CI now invokes both package/smoke commands. A Web deployment
   guide covers localhost, remote HTTPS proxy, data paths, credentials and
   connection metadata migration. Cross-platform release jobs and real hardware
   remain unverified on this Windows host.
+- `dev:desktop` and `dev:web` now prepare separate physical pnpm deploy trees
+  before launching their hosts. The host-native PTY/serial loaders resolve
+  against their own tree, and shutdown removes that staging directory. A real
+  Web development startup/proxy/cleanup smoke and a hidden Electron development
+  PTY smoke passed on Windows; the short-lived Windows ConPTY helper emitted an
+  `AttachConsole failed` message after the Electron smoke completed, so native
+  behavior needs continued observation on physical hosts.
+- The legacy standalone desktop stdio MCP entry passed a separate SDK client
+  smoke: it advertised its 48 available tools and opened/closed a local PTY.
 - Full quality gate passed at normal host permissions: lint, both application
   builds, 184 test files / 2056 tests and license attribution. A prior
   restricted sandbox run passed 2044/2047; its three audit-export/child-process
@@ -269,6 +284,13 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   symbol list truncated. The CRITICAL graph rating spans the intended Web
   transport, server lifecycle, shared UI and runtime shutdown paths; the
   complete staged diff and 2056-test quality gate were reviewed together.
+- The multi-tab/native-isolation follow-up refreshed the graph to 48,255
+  nodes, 95,539 edges and 595 budget-limited flows. Its phase-local staged
+  detection reports 10 files, 27 changed symbols and 21 affected flows;
+  comparison with `main` reports 544 files, 1816 symbols and 252 flows.
+  The CRITICAL rating includes the expected Web server, native host loaders
+  and development supervisors, and was checked against their targeted and
+  full quality tests plus both relocated release smokes.
 
 ## Remaining acceptance work
 
@@ -276,6 +298,7 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   reconnect and background job recovery.
 - Exercise lifecycle fault paths, multi-tab event races, slow clients and stale
   owner recovery; ensure interrupted server shutdown cannot corrupt a data dir.
-- Validate dev-time physical native isolation and desktop legacy stdio behavior.
+- Repeat development native-binding and legacy stdio smoke on Linux/macOS and
+  with actual hardware.
 - Run full quality and release gates across Windows, Linux and macOS; verify
   real serial/J-Link/RTT/firmware workflows with hardware when available.

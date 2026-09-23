@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { isDirectCliRun } from './start-electron.mjs';
+import { prepareDevNative } from './prepare-dev-native.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const compiler = join(root, 'node_modules/typescript/bin/tsc');
@@ -70,17 +71,22 @@ function waitForServerReady(child) {
 export async function startWebDevelopment({ serverOnly = false } = {}) {
   await run([join(root, 'scripts/copy-ui-assets.mjs')]);
   await run([compiler, '-b', 'packages/contracts', 'packages/runtime', 'packages/mcp', 'packages/ui', 'apps/server', 'apps/web']);
-  const vite = serverOnly ? undefined : await createServer({ configFile: join(root, 'apps/web/vite.config.ts') });
+  const native = await prepareDevNative('server');
+  let vite;
+  try { vite = serverOnly ? undefined : await createServer({ configFile: join(root, 'apps/web/vite.config.ts') }); }
+  catch (error) { await native.cleanup(); throw error; }
   let child, watcher, assetWatcher;
   let closing = false, lastFingerprint = '', restart = Promise.resolve();
   const close = async () => {
     if (closing) return;
     closing = true;
     watcher?.kill(); assetWatcher?.close();
-    await restart.catch(() => undefined);
-    await stopChild(child);
-    await vite?.close();
-    await vite?.watcher.close();
+    try {
+      await restart.catch(() => undefined);
+      await stopChild(child);
+      await vite?.close();
+      await vite?.watcher.close();
+    } finally { await native.cleanup(); }
   };
   const fail = error => { console.error(error); process.exitCode = 1; void close(); };
   const refresh = async () => {
@@ -91,7 +97,7 @@ export async function startWebDevelopment({ serverOnly = false } = {}) {
     if (closing) return;
     child = spawn(process.execPath, [join(root, 'apps/server/dist/index.js')], {
       cwd: root,
-      env: { ...process.env, ...(serverOnly ? {} : { LINKTERM_DEV_ORIGIN: 'http://localhost:5174' }) },
+      env: { ...process.env, LINKTERM_DEV_NATIVE_MODULE_ROOT: native.root, ...(serverOnly ? {} : { LINKTERM_DEV_ORIGIN: 'http://localhost:5174' }) },
       stdio: ['inherit', 'pipe', 'inherit', 'ipc'], windowsHide: true,
     });
     child.on('error', fail);

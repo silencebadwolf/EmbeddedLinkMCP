@@ -62,6 +62,31 @@ it('serves authenticated Web clients from one runtime and retains commands acros
     expect(pty.created).toHaveLength(1);
     const list = await (await send(second.clientId, command(CLIENT_CHANNELS.SESSION_LIST))).json() as { success: boolean; data: { sessions: unknown[] } };
     expect(list.success).toBe(true); expect(list.data.sessions).toHaveLength(1);
+    const passiveResize = await (await send(second.clientId, command(CLIENT_CHANNELS.SESSION_RESIZE, {
+      sessionId: created.data.sessionId, cols: 100, rows: 40,
+    }))).json() as { success: boolean; error?: { code: string } };
+    expect(passiveResize).toMatchObject({ success: false, error: { code: 'NOT_ACTIVE_CLIENT' } });
+    const resizeCount = pty.created[0].resizes.length;
+    const selectTarget = await fetch(server.url + '/api/ui-target', { method: 'POST', headers: {
+      Origin: origin, Cookie: cookie, 'X-Linkterm-Csrf': csrf, 'X-Linkterm-Client': second.clientId,
+    } });
+    expect(selectTarget.status).toBe(200);
+    const activeResize = await (await send(second.clientId, command(CLIENT_CHANNELS.SESSION_RESIZE, {
+      sessionId: created.data.sessionId, cols: 101, rows: 41,
+    }))).json() as { success: boolean };
+    expect(activeResize.success).toBe(true);
+    expect(pty.created[0].resizes).toHaveLength(resizeCount + 1);
+    expect(pty.created[0].resizes.at(-1)).toEqual({ cols: 101, rows: 41 });
+    expect(await (await send(first.clientId, command(CLIENT_CHANNELS.SESSION_RESIZE, {
+      sessionId: created.data.sessionId, cols: 80, rows: 24,
+    }))).json()).toMatchObject({ success: false, error: { code: 'NOT_ACTIVE_CLIENT' } });
+    for (const method of [CLIENT_CHANNELS.CONNECTIONS_LIST, CLIENT_CHANNELS.CONTROL_PROFILE_RECORDS_LIST, CLIENT_CHANNELS.SERIAL_LIST_PORTS]) {
+      const result = await (await send(first.clientId, command(method))).json() as { success: boolean; data: unknown[] };
+      expect(result).toMatchObject({ success: true, data: [] });
+    }
+    expect(await (await send(first.clientId, command(CLIENT_CHANNELS.READINESS_GET))).json()).toMatchObject({ success: true, data: { generation: expect.any(Number) } });
+    expect(await (await send(first.clientId, command(CLIENT_CHANNELS.ACTIVITY_STATUS))).json()).toMatchObject({ success: true, data: { status: expect.any(Object) } });
+    expect(await (await send(first.clientId, command(CLIENT_CHANNELS.JLINK_DEVICES_SEARCH, { query: 'STM32H7', limit: 1 }))).json()).toMatchObject({ success: true, data: expect.any(Object) });
     const agents = await (await send(first.clientId, command(CLIENT_CHANNELS.AGENT_INTEGRATIONS_LIST))).json() as { success: boolean; data: { id: string; locationLabel: string; transportLabel: string }[] };
     expect(agents).toMatchObject({ success: true, data: [{ id: 'codex', locationLabel: 'Server host', transportLabel: 'HTTP' }] });
     const installed = await (await send(first.clientId, command(CLIENT_CHANNELS.AGENT_INTEGRATIONS_INSTALL, { targetId: 'codex' }))).json() as { success: boolean };
@@ -94,6 +119,12 @@ it('serves authenticated Web clients from one runtime and retains commands acros
     expect((await response).result.success).toBe(true);
     expect(pty.created[0].writes).toEqual(['hello']);
     expect(server.runtime.sessionManager.read(created.data.sessionId, 0).events.find(event => event.type === 'data')?.origin).toBe('human');
+    const secondClosed = new Promise<void>(resolve => second.socket.once('close', () => resolve()));
+    second.socket.terminate();
+    await secondClosed;
+    expect(await (await send(first.clientId, command(CLIENT_CHANNELS.SESSION_RESIZE, {
+      sessionId: created.data.sessionId, cols: 102, rows: 42,
+    }))).json()).toMatchObject({ success: true });
     const status = await fetch(`${server.url}/api/requests/${create.id}`, { headers: { Cookie: cookie } });
     expect((await status.json() as { state: string }).state).toBe('completed');
     const workspaceList = await fetch(server.url + '/api/workspaces', { headers: { Cookie: cookie } });

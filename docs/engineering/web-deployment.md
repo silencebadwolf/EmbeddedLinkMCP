@@ -13,6 +13,8 @@ pnpm dev:web
 
 Open `http://localhost:5174`. Vite proxies the API to the Node service on `127.0.0.1:8711`. The service's login token is stored in its data directory (`~/.linkterm-server/access-token` by default); `pnpm dev:web` prints the data directory and token-file path. `pnpm dev:server` starts the backend alone. Set `LINKTERM_SERVER_DATA_DIR` to an isolated absolute directory when testing.
 
+Development startup prepares a private physical dependency tree for the Node host and removes it on normal shutdown. `pnpm dev:desktop` prepares a separate Electron tree, so their PTY and serial native bindings do not share a workspace rebuild directory.
+
 ## Production on one machine
 
 Build a portable service directory with `pnpm pack:server`, then copy that entire generated `release/linkterm-server-<platform>-<arch>-<timestamp>/` directory to the target machine. From that directory run `node dist/index.js` with a compatible Node installation. On first start it creates private `access-token` and `credential-key` files in the configured data directory. The default listener is `127.0.0.1:8711`; open `http://127.0.0.1:8711` on the same machine and enter the token from `access-token`. The browser does not require Electron to be running.
@@ -35,6 +37,8 @@ Give the service a dedicated ordinary OS account with access only to the devices
 For remote access, terminate TLS at a reverse proxy and forward the original `Host` header, HTTP requests and WebSocket upgrades to the loopback service. Set `LINKTERM_PUBLIC_ORIGIN` to the exact public `https://` origin and keep the Node listener on `127.0.0.1`. A non-loopback Node bind requires an explicit HTTPS public origin. Browser cookies are HttpOnly, SameSite Strict and Secure for HTTPS deployments; mutating API calls require Origin and CSRF checks. Do not put the token in a URL, static file or browser localStorage.
 
 The MCP endpoint is `<origin>/mcp` using `Authorization: Bearer <access-token>`. It exposes the same 63 tools and runtime as the Web UI. Configure an MCP client on the machine where that client runs; do not assume the browser can install local Agent configuration on its own computer. Browser UI patch operations go to the selected authenticated tab; screenshots are unavailable in Web mode.
+
+When several browser tabs are open, the selected UI-target tab also controls terminal PTY size. The first connected tab is selected initially; use the Web header button in another tab to take over terminal sizing and UI patch delivery. All authenticated tabs can still view sessions and send terminal input.
 
 The Agent integration screen can install a Codex HTTP MCP entry for the **server account** at `~/.codex/config.toml`. It points to `<origin>/mcp` and names `LINKTERM_MCP_TOKEN` as the bearer-token environment variable; it never writes the token into Codex's config file. Set that variable in the Codex process environment on the server host. For remote hosting, the configured public HTTPS origin must be reachable from that host too.
 

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { buildElectronStartEnv, electronLaunchCommand, isDirectCliRun } from './start-electron.mjs';
+import { prepareDevNative } from './prepare-dev-native.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 
@@ -58,7 +59,10 @@ export async function startDesktopDevelopment() {
     const [code] = await once(child, 'exit');
     if (code !== 0) throw new Error(`Initial desktop build failed (${code})`);
   }
-  const server = await createServer({ configFile: join(root, 'apps/desktop/vite.config.ts') });
+  const native = await prepareDevNative('desktop');
+  let server;
+  try { server = await createServer({ configFile: join(root, 'apps/desktop/vite.config.ts') }); }
+  catch (error) { await native.cleanup(); throw error; }
   let compilerWatcher, assetWatcher, desktop;
   let closing = false,
     restart = Promise.resolve(),
@@ -68,9 +72,11 @@ export async function startDesktopDevelopment() {
     closing = true;
     assetWatcher?.close();
     compilerWatcher?.kill();
-    await restart.catch(() => {});
-    await stopDesktopChild(desktop);
-    await server.close();
+    try {
+      await restart.catch(() => {});
+      await stopDesktopChild(desktop);
+      await server.close();
+    } finally { await native.cleanup(); }
   };
   const refresh = async () => {
     if (closing) return;
@@ -79,7 +85,7 @@ export async function startDesktopDevelopment() {
     await stopDesktopChild(desktop);
     if (closing) return;
     const launch = electronLaunchCommand(root);
-    const env = { ...buildElectronStartEnv(process.env), LINKTERM_FORCE_DIST: '0' };
+    const env = { ...buildElectronStartEnv(process.env), LINKTERM_FORCE_DIST: '0', LINKTERM_DEV_NATIVE_MODULE_ROOT: native.root };
     desktop = spawn(launch.executable, [...launch.argsPrefix, 'apps/desktop'], {
       cwd: root,
       env,

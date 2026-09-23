@@ -86,7 +86,11 @@ export async function startServer(options: ServerOptions): Promise<LinkTermServe
     const parsed = WebRequestSchema.safeParse(input);
     if (!parsed.success) throw new HttpError(400, 'INVALID_REQUEST');
     if (!requests.has(parsed.data.method)) throw new HttpError(404, 'METHOD_NOT_FOUND');
-    return ledger.execute(peer.sessionId, parsed.data, async () => requests.invoke(parsed.data.method, { sender: peer }, await authorizeWebPayload(parsed.data.method, parsed.data.payload, workspaces, firmware)));
+    return ledger.execute(peer.sessionId, parsed.data, async () => {
+      if (parsed.data.method === CLIENT_CHANNELS.SESSION_RESIZE && peer !== uiTarget)
+        return failure('NOT_ACTIVE_CLIENT', 'Select this browser as the UI target before resizing a terminal');
+      return requests.invoke(parsed.data.method, { sender: peer }, await authorizeWebPayload(parsed.data.method, parsed.data.payload, workspaces, firmware));
+    });
   };
   const peerForRequest = (request: IncomingMessage, sessionId: string): NetworkPeer => {
     const clientId = request.headers['x-linkterm-client'];
@@ -170,7 +174,10 @@ export async function startServer(options: ServerOptions): Promise<LinkTermServe
         const peer = new NetworkPeer(nextPeerId++, session.id, ws);
         peers.set(peer.clientId, peer);
         uiTarget ??= peer;
-        peer.once('destroyed', () => { peers.delete(peer.clientId); if (uiTarget === peer) uiTarget = undefined; });
+        peer.once('destroyed', () => {
+          peers.delete(peer.clientId);
+          if (uiTarget === peer) uiTarget = [...peers.values()].find(candidate => !candidate.isDestroyed() && !!auth.getSession(candidate.sessionId));
+        });
         peer.sendFrame({ type: 'hello', protocol: WEB_PROTOCOL_VERSION, clientId: peer.clientId, runtime: runtimeInfo() });
         ws.on('message', (raw, binary) => {
           let request: WebRequest;
