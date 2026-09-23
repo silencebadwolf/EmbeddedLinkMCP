@@ -50,7 +50,7 @@ globalThis.__linktermElectronMock = electronMock;
 vi.mock('electron', () => ({ default: electronMock, ...electronMock }));
 vi.mock('node:child_process', () => ({ execFile: execFileMock }));
 vi.mock('node:fs/promises', () => ({ readFile: readFileMock, readdir: readdirMock }));
-vi.mock('@linkterm/mcp/surfaces/control-workflow/workflow-runner', () => ({
+vi.mock('@linkterm/runtime/core/control-workflow/workflow-runner', () => ({
   runControlWorkflow: runControlWorkflowMock,
 }));
 vi.mock('@linkterm/runtime/services/current-deployment-evidence', () => ({

@@ -24,6 +24,9 @@ export type ConnectionProfileId = string;
 
 /** 加解密 SSH 凭据的最小接口；主进程实现使用 Electron safeStorage。 */
 export interface SecretCodec {
+  /** Omission retains the existing Electron safeStorage format. */
+  readonly provider?: 'electron-safeStorage' | 'server-aes-256-gcm';
+  readonly keyId?: string;
   /** 当前平台是否可安全加密。 */
   isAvailable(): boolean;
   /** 加密 UTF-8 字符串，返回可写入 JSON 的 base64 文本。 */
@@ -81,11 +84,10 @@ export type SavedConnectionConfig =
   | RttLogSavedConnectionConfig;
 
 /** 加密后的凭据引用；不包含明文或凭据类型字符串。 */
-export interface EncryptedCredentialBlob {
-  provider: 'electron-safeStorage';
+export type EncryptedCredentialBlob = {
   version: 1;
   ciphertextBase64: string;
-}
+} & ({ provider: 'electron-safeStorage' } | { provider: 'server-aes-256-gcm'; keyId: string });
 
 /** 落盘 profile；仅主进程/core 可读取完整对象。 */
 export interface SavedConnectionProfile {

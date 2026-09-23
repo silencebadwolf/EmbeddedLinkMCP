@@ -2,6 +2,7 @@
   "name": "@linkterm/desktop",
   "version": "0.1.0",
   "private": true,
+  "author": "LinkTerm contributors",
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "description": "LinkTerm v2 — Electron/TypeScript desktop terminal & MCP automation platform",
@@ -12,7 +13,7 @@
   ],
   "scripts": {
     "dev": "node ../../scripts/dev-desktop.mjs",
-    "build": "node ../../scripts/copy-ui-assets.mjs && tsc -b && vite build",
+    "build": "node ../../scripts/build-app.mjs desktop",
     "start": "node ../../scripts/start-electron.mjs apps/desktop",
     "build:main": "tsc -b tsconfig.main.json",
     "build:renderer": "vite build"

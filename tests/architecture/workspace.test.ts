@@ -61,7 +61,14 @@ describe('workspace package boundaries', () => {
         }
       }
       expect(source).not.toContain('declare global');
-      expect(source).not.toContain('IPC_CHANNELS');
+      const inspectHostAccess = (node: ts.Node): void => {
+        if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
+          expect(node.expression.text, `${name}: host API access`).not.toBe('contextBridge');
+          expect(node.expression.text === 'window' && node.name.text === 'linkterm', name).toBe(false);
+        }
+        ts.forEachChild(node, inspectHostAccess);
+      };
+      inspectHostAccess(ast);
     }
   });
 });

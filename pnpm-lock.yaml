@@ -179,6 +179,46 @@ importers:
         version: 42.4.0
 
 
+  apps/server:
+    dependencies:
+      '@linkterm/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@linkterm/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@linkterm/mcp':
+        specifier: workspace:*
+        version: link:../../packages/mcp
+      node-pty:
+        specifier: ^1.0.0
+        version: 1.1.0
+      serialport:
+        specifier: ^13.0.0
+        version: 13.0.0
+      ws:
+        specifier: ^8.21.0
+        version: 8.21.0
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+
+  apps/web:
+    dependencies:
+      '@linkterm/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@linkterm/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.7
+        version: 19.2.7(react@19.2.7)
+
   packages/contracts:
     dependencies:
       zod:

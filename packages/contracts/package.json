@@ -6,25 +6,94 @@
   "license": "AGPL-3.0-or-later",
   "description": "Browser-safe LinkTerm client contracts, data types and validation schemas",
   "sideEffects": false,
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./client-api": { "types": "./dist/client-api.d.ts", "import": "./dist/client-api.js" },
-    "./types": { "types": "./dist/types.d.ts", "import": "./dist/types.js" },
-    "./constants": { "types": "./dist/constants.d.ts", "import": "./dist/constants.js" },
-    "./limits": { "types": "./dist/limits.d.ts", "import": "./dist/limits.js" },
-    "./error-codes": { "types": "./dist/error-codes.d.ts", "import": "./dist/error-codes.js" },
-    "./preload-api": { "types": "./dist/preload-api.d.ts", "import": "./dist/preload-api.js" },
-    "./agent-integrations": { "types": "./dist/agent-integrations.d.ts", "import": "./dist/agent-integrations.js" },
-    "./activity-contract": { "types": "./dist/activity-contract.d.ts", "import": "./dist/activity-contract.js" },
-    "./audit-contract": { "types": "./dist/audit-contract.d.ts", "import": "./dist/audit-contract.js" },
-    "./control-workflow-contract": { "types": "./dist/control-workflow-contract.d.ts", "import": "./dist/control-workflow-contract.js" },
-    "./first-signal-contract": { "types": "./dist/first-signal-contract.d.ts", "import": "./dist/first-signal-contract.js" },
-    "./readiness-contract": { "types": "./dist/readiness-contract.d.ts", "import": "./dist/readiness-contract.js" },
-    "./jlink-rtt-draft": { "types": "./dist/jlink-rtt-draft.d.ts", "import": "./dist/jlink-rtt-draft.js" },
-    "./jlink-target-name": { "types": "./dist/jlink-target-name.d.ts", "import": "./dist/jlink-target-name.js" },
-    "./serial-connection-draft": { "types": "./dist/serial-connection-draft.d.ts", "import": "./dist/serial-connection-draft.js" },
-    "./transcript-ipc-types": { "types": "./dist/transcript-ipc-types.d.ts", "import": "./dist/transcript-ipc-types.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./client-api": {
+      "types": "./dist/client-api.d.ts",
+      "import": "./dist/client-api.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js"
+    },
+    "./constants": {
+      "types": "./dist/constants.d.ts",
+      "import": "./dist/constants.js"
+    },
+    "./limits": {
+      "types": "./dist/limits.d.ts",
+      "import": "./dist/limits.js"
+    },
+    "./error-codes": {
+      "types": "./dist/error-codes.d.ts",
+      "import": "./dist/error-codes.js"
+    },
+    "./preload-api": {
+      "types": "./dist/preload-api.d.ts",
+      "import": "./dist/preload-api.js"
+    },
+    "./agent-integrations": {
+      "types": "./dist/agent-integrations.d.ts",
+      "import": "./dist/agent-integrations.js"
+    },
+    "./activity-contract": {
+      "types": "./dist/activity-contract.d.ts",
+      "import": "./dist/activity-contract.js"
+    },
+    "./audit-contract": {
+      "types": "./dist/audit-contract.d.ts",
+      "import": "./dist/audit-contract.js"
+    },
+    "./control-workflow-contract": {
+      "types": "./dist/control-workflow-contract.d.ts",
+      "import": "./dist/control-workflow-contract.js"
+    },
+    "./first-signal-contract": {
+      "types": "./dist/first-signal-contract.d.ts",
+      "import": "./dist/first-signal-contract.js"
+    },
+    "./readiness-contract": {
+      "types": "./dist/readiness-contract.d.ts",
+      "import": "./dist/readiness-contract.js"
+    },
+    "./jlink-rtt-draft": {
+      "types": "./dist/jlink-rtt-draft.d.ts",
+      "import": "./dist/jlink-rtt-draft.js"
+    },
+    "./jlink-target-name": {
+      "types": "./dist/jlink-target-name.d.ts",
+      "import": "./dist/jlink-target-name.js"
+    },
+    "./serial-connection-draft": {
+      "types": "./dist/serial-connection-draft.d.ts",
+      "import": "./dist/serial-connection-draft.js"
+    },
+    "./transcript-ipc-types": {
+      "types": "./dist/transcript-ipc-types.d.ts",
+      "import": "./dist/transcript-ipc-types.js"
+    },
+    "./client-protocol": {
+      "types": "./dist/client-protocol.d.ts",
+      "import": "./dist/client-protocol.js"
+    },
+    "./client-transport": {
+      "types": "./dist/client-transport.d.ts",
+      "import": "./dist/client-transport.js"
+    },
+    "./create-client": {
+      "types": "./dist/create-client.d.ts",
+      "import": "./dist/create-client.js"
+    },
+    "./web-protocol": {
+      "types": "./dist/web-protocol.d.ts",
+      "import": "./dist/web-protocol.js"
+    }
   },
   "scripts": {
     "build": "tsc -b",

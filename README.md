@@ -1,5 +1,7 @@
 # LinkTerm v2
 
+> **Desktop + Web monorepo migration in progress.** The existing desktop behavior is preserved under `apps/desktop`; an independently deployable single-user Web service is now implemented under `apps/server` and `apps/web`. See the [current migration status](docs/engineering/desktop-web-migration-status.md), [project structure](docs/engineering/desktop-web-project-structure.md) and [Web deployment guide](docs/engineering/web-deployment.md). The historical desktop documentation below still describes the pre-migration `src/` paths and should not be used as the new package layout.
+
 LinkTerm v2 是一个基于 Electron + TypeScript 的桌面终端与 MCP 自动化平台，作为旧 Qt/C++ 终端的重写版本。它在单一运行时内同时服务四类用户：**桌面终端用户**（本地 Shell / SSH / 串口）、**嵌入式固件开发者**（终端模式 + sendAndWait + RTT/J-Link 工作流）、**AI Host / MCP 客户端**（通过生产运行时的 63 个 MCP 工具读写同一会话、抓取截图、烧录调试），以及**项目维护者**（pure-TS core、依赖注入式 transport、双向许可证校验）。
 
 更换 J-Link 后串口丢失或需要显式启用 VCOM 时，参见 [J-Link VCOM 串口恢复](docs/jlink-vcom-recovery.md)。

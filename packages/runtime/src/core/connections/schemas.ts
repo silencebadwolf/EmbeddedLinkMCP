@@ -72,7 +72,7 @@ export const savedConnectionConfigSchema = z.discriminatedUnion('type', [
   rttLogSavedConfigSchema,
 ]);
 
-const encryptedCredentialSchema = z
+const legacyEncryptedCredentialSchema = z
   .object({
     provider: z.literal('electron-safeStorage'),
     version: z.literal(1),
@@ -82,6 +82,16 @@ const encryptedCredentialSchema = z
       .max(256 * 1024),
   })
   .strict();
+
+const encryptedCredentialSchema = z.discriminatedUnion('provider', [
+  legacyEncryptedCredentialSchema,
+  z.object({
+    provider: z.literal('server-aes-256-gcm'),
+    version: z.literal(1),
+    keyId: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+    ciphertextBase64: z.string().min(1).max(256 * 1024),
+  }).strict(),
+]);
 
 export const savedConnectionProfileSchema = z
   .object({

@@ -1,6 +1,6 @@
 # LinkTerm pnpm monorepo 双端重构计划
 
-日期：2026-09-21。状态：实施中；workspace 与 contracts 已迁移并通过质量检查，后续阶段持续推进。实际进度和验收记录见 [迁移状态](./desktop-web-migration-status.md)。
+日期：2026-09-21。状态：实施中；桌面、独立 Web、服务端和两种发布路径已建立，剩余功能边界与跨平台验收持续推进。实际进度和验收记录见 [迁移状态](./desktop-web-migration-status.md)。
 
 本版替代此前以根目录 src 分层为最终布局的方案。目标仍是：保留 Electron 桌面端，新增可独立部署的单用户 Web 端，后端可运行在本机或服务器。完整文件结构见 [monorepo 文件框架](./desktop-web-project-structure.md)。
 
@@ -174,7 +174,7 @@ Electron 与 Node 的原生 ABI 可能不同，使用分别装配的开发 / 发
 
 ## 8. 计划中的根命令
 
-以下是迁移后的目标命令，目前尚未实现：
+以下命令已接入根 workspace；具体完成与验证范围见迁移状态：
 
 ~~~text
 pnpm install
@@ -187,6 +187,7 @@ pnpm build:server       # Node 后端及依赖构建
 pnpm build              # 全仓构建
 pnpm start:server       # 启动已构建服务，提供已装配的网页
 pnpm pack:server        # 装配 server + web + 生产依赖
+pnpm pack:desktop       # 装配 unpacked Electron 并运行发布 smoke
 pnpm dist:desktop      # 桌面安装包
 pnpm ci:check           # 完整质量门禁
 ~~~
@@ -195,7 +196,7 @@ pnpm ci:check           # 完整质量门禁
 
 ## 9. 当前分析限制与扩展
 
-本计划根据已有源码静态检查制定。当前会话仍无可调用的 GitNexus MCP 工具；仓库缺少此前 AGENTS.md 指定的本地 runner / 技能文件，未获得符号影响分析结果。实施前恢复并更新索引，按 AGENTS.md 在编辑符号前执行 upstream impact，报告直接调用方、影响流程和风险；HIGH / CRITICAL 先明确告知。重命名使用 GitNexus rename；提交前 detect_changes，并与 main 比较回归范围。本次仅更新规划文档，不涉及符号编辑或提交。
+GitNexus 本地 CLI 已恢复并用于每阶段的符号影响分析和提交前变更审查。图谱存在流程枚举上限，新增符号在增量索引前可能显示 UNKNOWN；这些结果由源码引用检查和集成测试补充，不能把无流程记录解释为无影响。
 
 此前用户指定的 TypeSafe AI 技能继续用于后续可选诊断 / 推荐能力设计。未来可在 packages/runtime/src/advisors 中提供 SemanticAdvisor，密钥留后端，样本验证后再决定阈值与数据范围。双端基础改造由类型契约、schema 与确定性业务代码完成，不把模型调用放入终端写入、身份认证或烧录路径。
 

@@ -1,0 +1,20 @@
+{
+  "name": "@linkterm/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node ../../scripts/build-app.mjs web",
+    "dev": "node ../../scripts/dev-web.mjs"
+  },
+  "dependencies": {
+    "@linkterm/contracts": "workspace:*",
+    "@linkterm/ui": "workspace:*",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  }
+}

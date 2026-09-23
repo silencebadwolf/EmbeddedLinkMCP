@@ -443,6 +443,82 @@
     "./transports/types": {
       "types": "./dist/transports/types.d.ts",
       "import": "./dist/transports/types.js"
+    },
+    "./services/terminal-input": {
+      "types": "./dist/services/terminal-input.d.ts",
+      "import": "./dist/services/terminal-input.js"
+    },
+    "./services/control-profile-serial": {
+      "types": "./dist/services/control-profile-serial.d.ts",
+      "import": "./dist/services/control-profile-serial.js"
+    },
+    "./services/client/ports": {
+      "types": "./dist/services/client/ports.d.ts",
+      "import": "./dist/services/client/ports.js"
+    },
+    "./services/client": {
+      "types": "./dist/services/client/index.d.ts",
+      "import": "./dist/services/client/index.js"
+    },
+    "./services/client/index": {
+      "types": "./dist/services/client/index.d.ts",
+      "import": "./dist/services/client/index.js"
+    },
+    "./services/client/activity-ipc": {
+      "types": "./dist/services/client/activity-ipc.d.ts",
+      "import": "./dist/services/client/activity-ipc.js"
+    },
+    "./services/client/agent-integrations-ipc": {
+      "types": "./dist/services/client/agent-integrations-ipc.d.ts",
+      "import": "./dist/services/client/agent-integrations-ipc.js"
+    },
+    "./services/client/audit-ipc": {
+      "types": "./dist/services/client/audit-ipc.d.ts",
+      "import": "./dist/services/client/audit-ipc.js"
+    },
+    "./services/client/connection-profiles-ipc": {
+      "types": "./dist/services/client/connection-profiles-ipc.d.ts",
+      "import": "./dist/services/client/connection-profiles-ipc.js"
+    },
+    "./services/client/control-profile-ipc": {
+      "types": "./dist/services/client/control-profile-ipc.d.ts",
+      "import": "./dist/services/client/control-profile-ipc.js"
+    },
+    "./services/client/first-signal-ipc": {
+      "types": "./dist/services/client/first-signal-ipc.d.ts",
+      "import": "./dist/services/client/first-signal-ipc.js"
+    },
+    "./services/client/jlink-device-catalog-ipc": {
+      "types": "./dist/services/client/jlink-device-catalog-ipc.d.ts",
+      "import": "./dist/services/client/jlink-device-catalog-ipc.js"
+    },
+    "./services/client/readiness-ipc": {
+      "types": "./dist/services/client/readiness-ipc.d.ts",
+      "import": "./dist/services/client/readiness-ipc.js"
+    },
+    "./services/client/rtt-log-session-ipc": {
+      "types": "./dist/services/client/rtt-log-session-ipc.d.ts",
+      "import": "./dist/services/client/rtt-log-session-ipc.js"
+    },
+    "./services/client/serial-ipc": {
+      "types": "./dist/services/client/serial-ipc.d.ts",
+      "import": "./dist/services/client/serial-ipc.js"
+    },
+    "./services/client/session-create-handler": {
+      "types": "./dist/services/client/session-create-handler.d.ts",
+      "import": "./dist/services/client/session-create-handler.js"
+    },
+    "./services/client/session-ipc": {
+      "types": "./dist/services/client/session-ipc.d.ts",
+      "import": "./dist/services/client/session-ipc.js"
+    },
+    "./services/client/rtt-log-open-helper": {
+      "types": "./dist/services/client/rtt-log-open-helper.d.ts",
+      "import": "./dist/services/client/rtt-log-open-helper.js"
+    },
+    "./services/ownership": {
+      "import": "./dist/services/ownership.js",
+      "types": "./dist/services/ownership.d.ts"
     }
   },
   "scripts": {

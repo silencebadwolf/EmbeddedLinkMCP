@@ -40,19 +40,18 @@ jobs:
         run: |
           pnpm run ci:check
           pnpm audit --prod --audit-level=moderate
-      - name: Build unsigned package
-        run: pnpm exec electron-builder --publish never
-      - name: Generate SBOM and checksums
-        shell: bash
-        run: |
-          pnpm run sbom -- release/sbom.cdx.json
-          pnpm run release:checksums -- release
+      - name: Build and smoke desktop package
+        run: pnpm run dist:desktop
+      - name: Build and smoke independent Web server package
+        run: pnpm run pack:server
       - name: Upload unsigned candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: linkterm-${{ inputs.version }}-${{ matrix.os }}-unsigned
+          name: linkterm-desktop-web-${{ inputs.version }}-${{ matrix.os }}-unsigned
           path: |
             release/
-            !release/*-unpacked/
+            !release/**/win-unpacked/
+            !release/**/linux-unpacked/
+            !release/**/mac/
           if-no-files-found: error
           retention-days: 14

@@ -32,9 +32,22 @@ import { SerialDiscovery } from './transports/serial/serial-discovery.js';
 import { createAndOpenSession } from './services/session-open.js';
 import { createRuntimeReadinessService } from './services/readiness.js';
 import type { RuntimeOptions } from './ports.js';
+import { acquireRuntimeOwnership } from './services/ownership.js';
 
 /** One host-owned application runtime, shared by every UI and MCP adapter. */
 export async function createRuntime(options: RuntimeOptions) {
+  const ownership = await acquireRuntimeOwnership(options.dataDir);
+  try {
+    const runtime = await createOwnedRuntime(options);
+    let disposing: Promise<void> | undefined;
+    return { ...runtime, dispose: () => disposing ??= (async () => {
+      await runtime.dispose();
+      await ownership.release();
+    })() };
+  } catch (error) { await ownership.release(); throw error; }
+}
+
+async function createOwnedRuntime(options: RuntimeOptions) {
   const dataDir = path.resolve(options.dataDir);
   const serialDiscovery = new SerialDiscovery({ listFn: options.nativeBindings.listSerialPorts });
   const sessionManager = new SessionManager({

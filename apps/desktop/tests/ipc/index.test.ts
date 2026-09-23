@@ -3,6 +3,11 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+// This composition unit fixture mocks storage; ownership has separate real-filesystem tests.
+vi.mock('@linkterm/runtime/services/ownership', () => ({
+  acquireRuntimeOwnership: vi.fn(async () => ({ release: vi.fn(async () => undefined) })),
+}));
+
 const {
   appMock,
   buildTargetsMock,

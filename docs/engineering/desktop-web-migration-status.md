@@ -3,8 +3,8 @@
 Started: 2026-09-21. Branch: `codex/desktop-web-monorepo`.
 
 The accepted scope is recorded in [the migration plan](./desktop-web-refactor-plan.md).
-This file records completed work and remaining acceptance checks; it does not imply
-that the Web application is already available.
+This file records completed work and remaining acceptance checks. The independent
+Web application now runs, but the full accepted release scope is not yet complete.
 
 ## P0 — Baseline
 
@@ -174,10 +174,89 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   74 flows; its 1000-symbol list is truncated, so phase-local reports and the
   complete staged file diff were also reviewed.
 
-## Remaining phases
+## P4 — Independent Web runtime (implemented; regression review continuing)
 
-- P2: runtime and MCP packages with injected host services.
-- P4: independently runnable Node server and Web client.
-- P5: full feature parity within the accepted Web scope.
-- P6: authentication, file boundaries, reconnect, lifecycle and resource ownership.
-- P7: independent native dependency staging, distributions, CI and deployment documentation.
+- Moved desktop IPC behavior into 12 runtime client services with host ports;
+  Electron handlers remain compatibility adapters. Contracts now provide one
+  validated ClientAPI factory for desktop IPC and Web HTTP/WS. The browser bundle
+  does not import Electron, runtime, MCP or native bindings.
+- Added a Node server that owns one runtime, serves the Web bundle, and proxies an
+  authenticated `/mcp` endpoint to the same runtime. HTTP commands use bounded
+  request IDs and result lookup; WS carries terminal input and events. Browser
+  disconnect does not destroy sessions or background jobs.
+- Browser smoke on Windows validated token login, actual local-shell creation,
+  PTY input/output, refresh restoration, server workspace selection and logout.
+  An SDK Streamable HTTP client saw the browser-created session and all 63 MCP
+  tools through the public Bearer endpoint. No hardware connection was opened.
+- `pnpm dev:web`, `dev:server`, `start:server` and `pack:server` are available.
+  The production Node service serves its own static Web assets; no Electron or
+  Vite process is required after packaging.
+
+## P5 — Host-specific Web behavior (partially implemented)
+
+- Shared UI uses a browser-host workspace picker and firmware upload. The server
+  limits picker IDs and real paths to configured roots, validates uploads and
+  resolves opaque resource IDs when saving control profiles. Browser picker and
+  control-profile root selection were verified in the real UI; synthetic firmware
+  bytes were verified through API tests. No user file was uploaded during UI smoke.
+- Server credentials use a dedicated AES-256-GCM key with provider/key ID metadata;
+  desktop safeStorage format remains readable by desktop. A stopped-server
+  migration CLI previews/imports connection metadata and strips old ciphertext.
+- The server exposes activity, readiness, first-signal, connections, control
+  profiles, J-Link/RTT and workflow services through the shared client service
+  registrations. The corresponding full Web feature matrix, server-local Agent
+  integration and hardware behavior still need individual acceptance checks.
+
+## P6 — Network and resource boundaries (partially implemented)
+
+- Single-owner data-directory lock, cookie/CSRF/Origin/Host checks, loopback by
+  default, explicit HTTPS public origin, login rate limiting, bounded request
+  bodies/uploads, WS backpressure and command deduplication are implemented.
+  Existing-file symlink escape tests pass. The runtime refuses to steal stale
+  owner locks after a crash.
+- Reconnect leaves uncertain writes unresent and offers request-status lookup.
+  Snapshot/WS race, runtime replacement, slow-client and shutdown fault
+  injection still need dedicated verification and any resulting fixes.
+
+## P7 — Distribution (partially implemented)
+
+- Windows `pnpm pack:server` produced a relocatable Node/Web directory with 160
+  physical package copies, 125 CycloneDX components and 7036 checksums. It was
+  copied to another path and passed startup, page, auth, native PTY loading,
+  graceful shutdown and owner-lock release.
+- Windows `pnpm dist:desktop` produced NSIS and portable executables from a
+  separate physical dependency tree (257 package copies, 178 CycloneDX
+  components). A relocated packaged `app.asar` passed preload, shared UI and
+  real PTY input/output. Four release-file checksums were generated. Native
+  Electron and Node dependencies were never rebuilt in the shared workspace.
+- Release-candidate CI now invokes both package/smoke commands. A Web deployment
+  guide covers localhost, remote HTTPS proxy, data paths, credentials and
+  connection metadata migration. Cross-platform release jobs and real hardware
+  remain unverified on this Windows host.
+- Full quality gate passed at normal host permissions: lint, both application
+  builds, 183 test files / 2047 tests and license attribution. A restricted
+  sandbox run passed 2044/2047; its three audit-export/child-process failures
+  also passed in a targeted normal-permission rerun (58/58).
+- Before P4/P5 edits, 183 service/adapter targets were analyzed: 143 LOW,
+  24 UNKNOWN, 1 MEDIUM, 11 HIGH and 4 CRITICAL. The preload invocation had 38
+  direct callers / 3 flows, and serial lifecycle broadcast had 3 direct callers
+  / 3 flows. HIGH/CRITICAL findings were reported before edits. Additional
+  credential and Web entry analyses likewise preceded changes; new unindexed
+  resources were supplemented with source and integration checks.
+- The refreshed graph has 47,909 nodes, 94,733 edges and 591 enumerated flows.
+  Pre-commit `detect_changes(scope=all)` reports 103 staged files, 1048 changed
+  symbols and 179 affected flows; comparison with `main` reports 542 files,
+  1769 symbols and 237 flows across P1–P7. Both symbol lists are truncated, so
+  the complete staged file diff and phase-local impact reports were reviewed.
+  Graph flow enumeration itself is budget-limited and must not be treated as a
+  complete runtime call trace.
+
+## Remaining acceptance work
+
+- Complete Web-specific Agent integration and verify each supported service
+  surface, including reconnect and background job recovery.
+- Exercise lifecycle fault paths, multi-tab event races, slow clients and stale
+  owner recovery; ensure interrupted server shutdown cannot corrupt a data dir.
+- Validate dev-time physical native isolation and desktop legacy stdio behavior.
+- Run full quality and release gates across Windows, Linux and macOS; verify
+  real serial/J-Link/RTT/firmware workflows with hardware when available.

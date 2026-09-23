@@ -3,7 +3,7 @@ import type { TranslationTable } from './en.js';
 /** 中文翻译表（与 en.ts 同构）。 */
 export const zh: TranslationTable = {
   'app.title': 'LinkTerm v2',
-  'app.subtitle': '桌面终端与 MCP 自动化平台',
+  'app.subtitle': '终端与 MCP 自动化平台',
   'header.locale.en': 'EN',
   'header.locale.zh': '中文',
   'tabs.new': '新建',

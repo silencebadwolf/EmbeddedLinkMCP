@@ -1,0 +1,29 @@
+{
+  "name": "@linkterm/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "public"
+  ],
+  "scripts": {
+    "build": "node ../../scripts/build-app.mjs server",
+    "start": "node dist/index.js",
+    "dev": "node ../../scripts/dev-web.mjs --server-only",
+    "migrate:connections": "node dist/migrate-connections.js"
+  },
+  "dependencies": {
+    "@linkterm/contracts": "workspace:*",
+    "@linkterm/runtime": "workspace:*",
+    "@linkterm/mcp": "workspace:*",
+    "node-pty": "^1.0.0",
+    "serialport": "^13.0.0",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  }
+}

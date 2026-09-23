@@ -1,3 +1,4 @@
+import { defaultOpenSerial } from '@linkterm/runtime/services/control-profile-serial';
 import type {
   ControlProfileSerialActivation,
   ControlProfileOpenSerial,
@@ -42,10 +43,7 @@ import {
 } from '@linkterm/runtime/core/session/serial-session-coordinator';
 import type { IJLinkBackend } from '@linkterm/runtime/jlink/types';
 import type { JLinkDeviceCatalog, JLinkDeviceInfo } from '@linkterm/runtime/jlink/device-catalog';
-import type { SerialSessionConfig } from '@linkterm/contracts/types';
-import type { SessionCreateRequestConfig } from '@linkterm/contracts/preload-api';
 import { classifyJLinkTargetName } from '@linkterm/contracts/jlink-target-name';
-import { buildSession } from '@linkterm/runtime/core/session/factory';
 import { ERROR_CODES } from '@linkterm/contracts/error-codes';
 import { registerTool, ToolError, type ToolHandlerResult } from '../../registry.js';
 import { runJLink } from '../debug/error-translate.js';
@@ -346,33 +344,8 @@ export function registerControlProfileTools(
     },
   });
 }
+export { defaultOpenSerial } from '@linkterm/runtime/services/control-profile-serial';
 
-/**
- * 构造默认串口激活函数。
- *
- * @param sessionManager 主进程共享 SessionManager
- * @returns 可打开串口 session 的函数
- */
-export function defaultOpenSerial(
-  sessionManager: SessionManager,
-  serialSessionCoordinator: SerialSessionCoordinator = new SerialSessionCoordinator(sessionManager),
-): ControlProfileOpenSerial {
-  return async (config: SerialSessionConfig): Promise<ControlProfileSerialActivation> => {
-    const createConfig = config as SessionCreateRequestConfig;
-    return serialSessionCoordinator.openOrReuse(config, async () => {
-      const session = await sessionManager.createAndOpen(
-        (id) => (sessionManager.sessionFactory ?? buildSession)(id, createConfig),
-        {
-          connectionType: 'serial',
-          label: config.label,
-          createdBy: 'ai',
-          serial: { port: config.port, baudRate: config.baudRate, mode: config.mode },
-        },
-      );
-      return { sessionId: session.id, state: session.state };
-    });
-  };
-}
 
 /**
  * 尝试按 profile 打开串口；未启用时返回 undefined。

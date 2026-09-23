@@ -210,15 +210,15 @@ export class ConnectionProfileManager {
   ): EncryptedCredentialBlob | undefined {
     if (input.config.type !== 'ssh' || input.saveCredentials !== true) return undefined;
     if (!this.#secretCodec.isAvailable()) throw new CredentialStorageUnavailableError();
-    return {
-      provider: 'electron-safeStorage',
-      version: 1,
-      ciphertextBase64: this.#secretCodec.encryptUtf8(JSON.stringify(input.config.credentials)),
-    };
+    return this.#encodeCredential(input.config.credentials);
   }
 
   #decryptCredential(blob: EncryptedCredentialBlob): SshCredentialsPayload {
     try {
+      if (blob.provider !== (this.#secretCodec.provider ?? 'electron-safeStorage') ||
+        blob.provider === 'server-aes-256-gcm' && blob.keyId !== this.#secretCodec.keyId) {
+        throw new Error('Credential provider or key does not match this host');
+      }
       const raw = this.#secretCodec.decryptUtf8(blob.ciphertextBase64);
       return parseSshCredentials(JSON.parse(raw));
     } catch {
@@ -237,11 +237,17 @@ export class ConnectionProfileManager {
       throw new Error('Replacing credentials requires SSH credentials');
     }
     if (!this.#secretCodec.isAvailable()) throw new CredentialStorageUnavailableError();
-    return {
-      provider: 'electron-safeStorage',
-      version: 1,
-      ciphertextBase64: this.#secretCodec.encryptUtf8(JSON.stringify(input.config.credentials)),
-    };
+    return this.#encodeCredential(input.config.credentials);
+  }
+
+  #encodeCredential(credentials: SshCredentialsPayload): EncryptedCredentialBlob {
+    const ciphertextBase64 = this.#secretCodec.encryptUtf8(JSON.stringify(credentials));
+    if (this.#secretCodec.provider === 'server-aes-256-gcm') {
+      const keyId = this.#secretCodec.keyId;
+      if (!keyId || !/^sha256:[a-f0-9]{64}$/u.test(keyId)) throw new CredentialStorageUnavailableError();
+      return { provider: 'server-aes-256-gcm', version: 1, keyId, ciphertextBase64 };
+    }
+    return { provider: 'electron-safeStorage', version: 1, ciphertextBase64 };
   }
 
   async #readFileOrDefault(): Promise<ConnectionsFile> {

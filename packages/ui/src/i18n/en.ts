@@ -5,7 +5,7 @@
  */
 export const en = {
   'app.title': 'LinkTerm v2',
-  'app.subtitle': 'Desktop Terminal & MCP Automation Platform',
+  'app.subtitle': 'Terminal & MCP Automation Platform',
   'header.locale.en': 'EN',
   'header.locale.zh': '中文',
   'tabs.new': 'New',

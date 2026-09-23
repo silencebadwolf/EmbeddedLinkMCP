@@ -18,6 +18,12 @@
     },
     {
       "path": "./tsconfig.main.json"
+    },
+    {
+      "path": "./apps/server"
+    },
+    {
+      "path": "./apps/web"
     }
   ]
 }
