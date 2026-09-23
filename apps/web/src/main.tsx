@@ -18,6 +18,7 @@ function WebApp(): React.ReactElement {
   const [runtime, setRuntime] = React.useState<WebRuntimeInfo>();
   const [token, setToken] = React.useState('');
   const [loginError, setLoginError] = React.useState('');
+  const [expiredUncertain, setExpiredUncertain] = React.useState(0);
   const [pickingWorkspace, setPickingWorkspace] = React.useState(false);
   const workspaceResolver = React.useRef<((root: string | null) => void) | null>(null);
   React.useEffect(() => {
@@ -30,6 +31,10 @@ function WebApp(): React.ReactElement {
     return () => { cancelled = true; };
   }, []);
   function activate(session: { csrf: string; runtime: WebRuntimeInfo }): void {
+    if (transport?.status === 'auth-required') {
+      setExpiredUncertain(transport.uncertainRequests.length + transport.unrecoverableRequests.length);
+      transport.close();
+    }
     const next = new WebTransport(session.csrf, session.runtime);
     configureLinktermClient(() => createClientAPI(next));
     next.setWorkspacePicker(() => new Promise(resolve => { workspaceResolver.current = resolve; setPickingWorkspace(true); }));
@@ -48,10 +53,11 @@ function WebApp(): React.ReactElement {
   async function logout(): Promise<void> {
     workspaceResolver.current?.(null); workspaceResolver.current = null; setPickingWorkspace(false);
     await transport?.logout().catch(() => undefined);
-    configureLinktermClient(() => null); setTransport(undefined); setStatus('connecting'); setGeneration(0);
+    configureLinktermClient(() => null); setTransport(undefined); setStatus('connecting'); setGeneration(0); setExpiredUncertain(0);
   }
-  if (!transport) return <main className="web-login"><form onSubmit={event => void login(event)}>
+  if (!transport || status === 'auth-required') return <main className="web-login"><form onSubmit={event => void login(event)}>
     <h1>LinkTerm Web</h1><p>连接此服务端的终端、串口和 J-Link 设备。</p>
+    {status === 'auth-required' && <p role="alert">登录会话已失效，请重新登录。{transport && transport.uncertainRequests.length + transport.unrecoverableRequests.length > 0 ? '先前未确认的命令结果无法通过旧会话查询，请检查目标状态后再决定是否重试。' : ''}</p>}
     <label htmlFor="token">访问令牌</label><input id="token" type="password" autoComplete="off" required value={token} onChange={event => setToken(event.target.value)} />
     {loginError && <p role="alert" className="web-error">{loginError}</p>}
     <button type="submit">登录</button>
@@ -61,6 +67,8 @@ function WebApp(): React.ReactElement {
       <button type="button" onClick={() => void transport.activateUiTarget()}>用此浏览器控制终端尺寸和 UI 操作</button>
       <button type="button" onClick={() => void logout()}>退出</button></header>
     {status === 'connected' ? <App key={generation} reconcileMissingSessions /> : <div className="web-disconnected" role="status">连接已中断，正在重新连接。会话和任务保留在服务端；结果不确定的命令不会自动重发。</div>}
+    {transport.runtimeReplaced && <aside className="web-uncertain" role="alert">服务端已重启，旧会话已重新核对。{transport.unrecoverableRequests.length > 0 ? `${transport.unrecoverableRequests.length} 个先前命令的结果无法从新服务进程确认；检查目标状态后再决定是否重试。` : ''}</aside>}
+    {expiredUncertain > 0 && <aside className="web-uncertain" role="alert">重新登录前有 {expiredUncertain} 个命令结果未确认；旧会话已失效，请先检查目标状态。</aside>}
     {transport.uncertainRequests.length > 0 && <aside className="web-uncertain" role="alert">有 {transport.uncertainRequests.length} 个命令需要确认结果。重新连接后会查询其状态。</aside>}
     {pickingWorkspace && <WorkspacePicker transport={transport} onSelect={root => { workspaceResolver.current?.(root); workspaceResolver.current = null; setPickingWorkspace(false); }} onCancel={() => { workspaceResolver.current?.(null); workspaceResolver.current = null; setPickingWorkspace(false); }} />}
   </div>;

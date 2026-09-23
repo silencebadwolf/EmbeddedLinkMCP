@@ -206,3 +206,32 @@ it('drains an accepted Web command before disposing the runtime', async () => {
     await rm(dataDir, { recursive: true, force: true });
   }
 }, 30_000);
+
+it('requires a fresh browser login after the server runtime restarts', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'linkterm-web-restart-'));
+  const publicDir = join(dataDir, 'public');
+  await mkdir(publicDir);
+  await writeFile(join(publicDir, 'index.html'), 'ready');
+  const pty = createMockPtyFactory();
+  const token = randomBytes(32).toString('base64');
+  const options = { runtime: { dataDir,
+    nativeBindings: { createPty: pty.factory, createSerialPort: () => { throw new Error('No hardware'); }, listSerialPorts: async () => [] },
+    secretCodec: new ServerSecretCodec(randomBytes(32)), jlinkBackend: new NullJLinkBackend(),
+  }, accessToken: token, publicDir, host: '127.0.0.1', port: 0, agentConfigHome: join(dataDir, 'agent-home') } as const;
+  let server = await startServer(options);
+  try {
+    const login = await fetch(server.url + '/api/login', { method: 'POST', headers: { Origin: server.url, 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+    const oldCookie = login.headers.get('set-cookie')!.split(';')[0];
+    expect((await fetch(server.url + '/api/session', { headers: { Cookie: oldCookie } })).status).toBe(200);
+    const oldRuntimeId = server.runtimeId;
+    await server.close();
+    server = await startServer(options);
+    expect(server.runtimeId).not.toBe(oldRuntimeId);
+    expect((await fetch(server.url + '/api/session', { headers: { Cookie: oldCookie } })).status).toBe(401);
+    const freshLogin = await fetch(server.url + '/api/login', { method: 'POST', headers: { Origin: server.url, 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+    expect(freshLogin.status).toBe(200);
+  } finally {
+    await server.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+}, 30_000);

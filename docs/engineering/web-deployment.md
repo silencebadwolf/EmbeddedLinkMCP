@@ -54,4 +54,6 @@ Add `--apply` to import into a server directory without an existing `connections
 
 If a process crashes, `.runtime-owner.json` may remain. Verify the recorded PID is no longer running **and** no other process owns the data directory before removing that file; the service never silently steals a lock. If the credential key is lost, existing encrypted credentials cannot be recovered from the profiles alone. Restore the matching data-directory backup or reenter the credentials.
 
+Restarting the Node service invalidates browser login sessions and in-memory command results. The Web page asks for the access token again. If a write or workflow command was interrupted around the restart, inspect the device or job state before choosing whether to issue it again; the page never resends it automatically.
+
 Hardware, SSH endpoints and firmware writes must be validated on the actual deployment machine before relying on them. The automated smoke checks use local PTY and synthetic fixtures only.

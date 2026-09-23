@@ -17,10 +17,10 @@ class FakeSocket extends EventTarget {
   readyState = 0;
   constructor(readonly url: URL) { super(); sockets.push(this); }
   send(data: string): void { this.sent.push(data); }
-  open(): void {
+  open(serverRuntime: WebRuntimeInfo = runtime): void {
     this.readyState = FakeSocket.OPEN;
     this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({
-      type: 'hello', protocol: WEB_PROTOCOL_VERSION, clientId: 'peer-one', runtime,
+      type: 'hello', protocol: WEB_PROTOCOL_VERSION, clientId: 'peer-one', runtime: serverRuntime,
     }) }));
   }
   close(): void {
@@ -34,6 +34,7 @@ beforeEach(() => {
   sockets = [];
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('location', { href: 'http://localhost:5174/' });
+  vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true, json: async () => ({}) })));
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -74,6 +75,48 @@ it('keeps an interrupted terminal write uncertain and does not resend it after r
   transport.close();
 });
 
+it('keeps old command outcomes visibly unrecoverable after a server restart', async () => {
+  vi.useFakeTimers();
+  const fetchStatus = vi.fn(async (_url: string) => ({ status: 200 }));
+  vi.stubGlobal('fetch', fetchStatus);
+  const transport = new WebTransport('csrf', runtime);
+  transport.connect(); sockets[0].open();
+  const writing = transport.invoke(CLIENT_CHANNELS.SESSION_WRITE, { sessionId: 'sess_one', dataBase64: 'YQ==' });
+  const request = JSON.parse(sockets[0].sent[0]) as { request: { id: string } };
+  sockets[0].close();
+  await writing;
+
+  await vi.advanceTimersByTimeAsync(500);
+  sockets[1].open({ ...runtime, id: 'runtime-two' });
+  expect(transport.status).toBe('connected');
+  expect(transport.runtimeReplaced).toBe(true);
+  expect(transport.uncertainRequests).toHaveLength(0);
+  expect(transport.unrecoverableRequests).toContain(request.request.id);
+  expect(sockets[1].sent).toHaveLength(0);
+  expect(fetchStatus).toHaveBeenCalledWith('/api/session', expect.anything());
+  expect(fetchStatus.mock.calls.some(([url]) => String(url).startsWith('/api/requests/'))).toBe(false);
+  transport.close();
+});
+
+it('returns to login when the server rejects the old browser session', async () => {
+  vi.useFakeTimers();
+  const checkSession = vi.fn(async () => ({ status: 401 }));
+  vi.stubGlobal('fetch', checkSession);
+  const transport = new WebTransport('csrf', runtime);
+  transport.connect(); sockets[0].open();
+  const writing = transport.invoke(CLIENT_CHANNELS.SESSION_WRITE, { sessionId: 'sess_one', dataBase64: 'YQ==' });
+  sockets[0].close();
+  await writing;
+  await Promise.resolve(); await Promise.resolve();
+
+  expect(transport.status).toBe('auth-required');
+  expect(transport.uncertainRequests).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(sockets).toHaveLength(1);
+  expect(checkSession).toHaveBeenCalledWith('/api/session', expect.anything());
+  transport.close();
+});
+
 it('bounds a half-open WebSocket command and marks its result uncertain', async () => {
   vi.useFakeTimers();
   const transport = new WebTransport('csrf', runtime);
@@ -90,9 +133,11 @@ it('bounds a half-open WebSocket command and marks its result uncertain', async 
 
 it('aborts a stalled HTTP command without automatically repeating it', async () => {
   vi.useFakeTimers();
-  const fetchCommand = vi.fn((_url: string, init: RequestInit) => new Promise<never>((_, reject) => {
+  const fetchCommand = vi.fn((url: string, init: RequestInit) => url === '/api/session'
+    ? Promise.resolve({ status: 200 })
+    : new Promise<never>((_, reject) => {
     init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
-  }));
+    }));
   vi.stubGlobal('fetch', fetchCommand);
   const transport = new WebTransport('csrf', runtime);
   transport.connect(); sockets[0].open();
@@ -102,7 +147,7 @@ it('aborts a stalled HTTP command without automatically repeating it', async () 
   await vi.advanceTimersByTimeAsync(30_000);
   await expect(listing).resolves.toMatchObject({ success: false, error: { code: 'CONNECTION_LOST' } });
   expect(transport.uncertainRequests).toContain(request.id);
-  expect(fetchCommand).toHaveBeenCalledTimes(1);
+  expect(fetchCommand.mock.calls.filter(([url]) => url === '/api/request')).toHaveLength(1);
   expect(sockets[0].readyState).toBe(3);
   transport.close();
 });

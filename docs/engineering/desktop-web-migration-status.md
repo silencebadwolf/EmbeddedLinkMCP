@@ -228,11 +228,21 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   a snapshot are not overwritten by it. Shutdown waits for accepted Web
   commands before unregistering handlers or disposing runtime resources;
   an in-flight PTY write test verifies that order. Runtime fault tests verify
-  PTY/audit cleanup and retain the owner lock if disposal fails. Slow-client,
-  runtime replacement and multi-tab races still need deeper acceptance checks.
+  PTY/audit cleanup and retain the owner lock if disposal fails. Long-running
+  slow-client behavior and multi-tab event races still need deeper acceptance
+  checks.
   A two-client server test now verifies that only the selected UI-target tab
   may resize the shared PTY, and that selecting another tab transfers that
   authority without interrupting the session.
+  A reconnect test also changes the runtime ID during a pending write: the Web
+  transport never queries the new process for the old command, never resends
+  it, and shows that its outcome cannot be recovered automatically.
+  A slow-peer test verifies that the 4 MiB WebSocket backpressure cap closes
+  that peer with code 1013 before queuing more event bytes.
+  A real server restart test confirms the old browser cookie is rejected and
+  a fresh login succeeds. The Web transport now checks `/api/session` after a
+  WS disconnect; a 401 returns the browser to login without an endless retry
+  loop, while preserving a warning for commands whose outcomes were unknown.
 
 ## P7 — Distribution (partially implemented)
 
@@ -240,7 +250,7 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   physical package copies, 125 CycloneDX components and 7036 checksums. It was
   copied to another path and passed startup, page, auth, native PTY loading,
   graceful shutdown and owner-lock release. The latest verified directory is
-  `release/linkterm-server-win32-x64-1790136369276`.
+  `release/linkterm-server-win32-x64-1790137319403`.
 - Windows `pnpm dist:desktop` produced NSIS and portable executables from a
   separate physical dependency tree (257 package copies, 178 CycloneDX
   components). A relocated packaged `app.asar` passed preload, shared UI and
@@ -261,7 +271,7 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
 - The legacy standalone desktop stdio MCP entry passed a separate SDK client
   smoke: it advertised its 48 available tools and opened/closed a local PTY.
 - Full quality gate passed at normal host permissions: lint, both application
-  builds, 184 test files / 2056 tests and license attribution. A prior
+  builds, 185 test files / 2060 tests and license attribution. A prior
   restricted sandbox run passed 2044/2047; its three audit-export/child-process
   failures also passed in a targeted normal-permission rerun (58/58).
 - Before P4/P5 edits, 183 service/adapter targets were analyzed: 143 LOW,
@@ -291,6 +301,12 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   The CRITICAL rating includes the expected Web server, native host loaders
   and development supervisors, and was checked against their targeted and
   full quality tests plus both relocated release smokes.
+- The restart/relogin follow-up refreshed the graph to 48,359 nodes and 95,772
+  edges. Its phase-local staged detection reports 7 files, 33 symbols and zero
+  enumerated affected flows (LOW); this is a graph budget limit, not evidence
+  that Web reconnect has no callers. The cumulative `main` comparison reports
+  545 files, 1834 symbols and 252 flows. Fault tests, the 2060-test quality
+  gate and the latest relocated Web package smoke provide runtime coverage.
 
 ## Remaining acceptance work
 

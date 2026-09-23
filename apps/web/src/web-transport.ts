@@ -2,7 +2,7 @@ import { CLIENT_CHANNELS } from '@linkterm/contracts/client-protocol';
 import type { ClientTransport } from '@linkterm/contracts/client-transport';
 import { WEB_PROTOCOL_VERSION, type WebRequest, type WebRuntimeInfo, type WebServerFrame } from '@linkterm/contracts/web-protocol';
 
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'closed';
+export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'auth-required' | 'closed';
 export interface DirectoryChoice { readonly id: string; readonly name: string; readonly path: string; }
 export interface DirectoryListing { readonly current: DirectoryChoice | null; readonly directories: readonly DirectoryChoice[]; }
 type Listener = (event: unknown, payload: unknown) => void;
@@ -16,6 +16,7 @@ export class WebTransport implements ClientTransport {
   readonly #statusListeners = new Set<(status: ConnectionStatus) => void>();
   readonly #pending = new Map<string, { resolve: (result: unknown) => void; timeout: number }>();
   readonly #uncertain = new Set<string>();
+  readonly #unrecoverable = new Set<string>();
   #socket?: WebSocket;
   #clientId?: string;
   #csrf: string;
@@ -25,6 +26,7 @@ export class WebTransport implements ClientTransport {
   #attempts = 0;
   #clockOffset = 0;
   #generation = 0;
+  #runtimeReplaced = false;
   #workspacePicker?: () => Promise<string | null>;
   constructor(csrf: string, runtime: WebRuntimeInfo) {
     this.#csrf = csrf; this.#runtime = runtime; this.#clockOffset = runtime.serverTime - Date.now();
@@ -33,6 +35,8 @@ export class WebTransport implements ClientTransport {
   get status(): ConnectionStatus { return this.#status; }
   get generation(): number { return this.#generation; }
   get uncertainRequests(): readonly string[] { return [...this.#uncertain]; }
+  get unrecoverableRequests(): readonly string[] { return [...this.#unrecoverable]; }
+  get runtimeReplaced(): boolean { return this.#runtimeReplaced; }
   setWorkspacePicker(picker: () => Promise<string | null>): void { this.#workspacePicker = picker; }
   onStatus(listener: (status: ConnectionStatus) => void): () => void {
     this.#statusListeners.add(listener); listener(this.#status);
@@ -59,10 +63,17 @@ export class WebTransport implements ClientTransport {
       if (frame.type === 'hello') {
         if (frame.protocol !== WEB_PROTOCOL_VERSION || typeof frame.clientId !== 'string' || !frame.runtime || frame.runtime.protocol !== WEB_PROTOCOL_VERSION) { socket.close(1008, 'Protocol mismatch'); return; }
         clearTimeout(handshakeTimeout);
+        const replaced = frame.runtime.id !== this.#runtime.id;
+        if (replaced) {
+          this.#runtimeReplaced = true;
+          for (const id of this.#uncertain) this.#unrecoverable.add(id);
+          this.#uncertain.clear();
+        }
         this.#runtime = frame.runtime; this.#clockOffset = frame.runtime.serverTime - Date.now();
         this.#clientId = frame.clientId; this.#attempts = 0; this.#generation++;
         this.#setStatus('connected');
-        void this.#checkUncertainRequests(); return;
+        if (!replaced) void this.#checkUncertainRequests();
+        return;
       }
       if (frame.type === 'event' && typeof frame.channel === 'string') {
         for (const listener of this.#listeners.get(frame.channel) ?? []) listener(undefined, frame.payload);
@@ -81,10 +92,20 @@ export class WebTransport implements ClientTransport {
         pending.resolve(failure('CONNECTION_LOST', `Command ${id} may have run; check its status after reconnecting`));
       }
       this.#pending.clear();
-      if (this.#status !== 'closed') {
-        this.#setStatus('disconnected');
-        this.#reconnectTimer = window.setTimeout(() => this.connect(), Math.min(8_000, 500 * 2 ** Math.min(this.#attempts++, 4)));
-      }
+      if (this.#status === 'closed') return;
+      this.#setStatus('disconnected');
+      void (async () => {
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 3_000);
+        try {
+          const response = await fetch('/api/session', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
+          if (this.#status === 'closed') return;
+          if (response.status === 401) { this.#setStatus('auth-required'); return; }
+        } catch { /* The server may be offline; continue reconnecting. */ }
+        finally { clearTimeout(timeout); }
+        if (this.#status !== 'closed')
+          this.#reconnectTimer = window.setTimeout(() => this.connect(), Math.min(8_000, 500 * 2 ** Math.min(this.#attempts++, 4)));
+      })();
     });
   }
   async invoke(method: string, payload?: unknown): Promise<unknown> {
