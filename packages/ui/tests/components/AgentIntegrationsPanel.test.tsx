@@ -86,6 +86,49 @@ describe('AgentIntegrationsPanel', () => {
     expect(screen.getByText('Install / Repair writes this config in the server account, not on this browser device.')).toBeInTheDocument();
   });
 
+  it('can remove an installed HTTP config when its token is missing', async () => {
+    mock.spies.agentIntegrations.list.mockResolvedValueOnce({
+      success: true,
+      data: [{
+        id: 'codex',
+        label: 'Codex (server host)',
+        configPath: 'C:/server-home/.codex/config.toml',
+        configKind: 'codex-config-toml',
+        locationLabel: 'Server host',
+        transportLabel: 'HTTP',
+        status: 'needs-update',
+        configured: false,
+        canInstall: true,
+        message: 'Set LINKTERM_MCP_TOKEN before starting Codex',
+      }],
+    });
+    mock.spies.agentIntegrations.uninstall.mockResolvedValueOnce({
+      success: true,
+      data: {
+        status: {
+          id: 'codex',
+          label: 'Codex (server host)',
+          configPath: 'C:/server-home/.codex/config.toml',
+          configKind: 'codex-config-toml',
+          locationLabel: 'Server host',
+          transportLabel: 'HTTP',
+          status: 'not-configured',
+          configured: false,
+          canInstall: true,
+        },
+      },
+    });
+
+    render(<AgentIntegrationsPanel open onOpenChange={onOpenChange} />);
+
+    const remove = await screen.findByRole('button', { name: 'Remove' });
+    expect(remove).not.toBeDisabled();
+    fireEvent.click(remove);
+    await waitFor(() => expect(mock.spies.agentIntegrations.uninstall).toHaveBeenCalledWith({ targetId: 'codex' }));
+    expect(await screen.findByText('Not configured')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeDisabled();
+  });
+
   it('installs selected integration and refreshes row status', async () => {
     mock.spies.agentIntegrations.install.mockResolvedValueOnce({
       success: true,

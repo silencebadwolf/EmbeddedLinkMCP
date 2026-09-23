@@ -238,7 +238,7 @@ export function AgentIntegrationsPanel({
                     type="button"
                     size="sm"
                     variant="outline"
-                    disabled={loading || !status.configured || removingId === status.id}
+                    disabled={loading || (status.status !== 'needs-update' && !status.configured) || removingId === status.id}
                     onClick={() => void uninstall(status.id)}
                   >
                     {removingId === status.id ? t('agent.removing') : t('agent.remove')}

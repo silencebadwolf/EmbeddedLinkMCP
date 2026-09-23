@@ -213,9 +213,13 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   A real browser login opened the Agent integration panel against an isolated
   server account and confirmed the Codex server-host target, HTTP transport,
   config path and explicit notice that Install / Repair writes to the server
-  account rather than the browser device. No Agent config was installed in the
-  UI smoke; the isolated API integration test covers config writes. The rest
-  of the Web feature matrix and hardware behavior still need individual checks.
+  account rather than the browser device. A subsequent browser smoke installed
+  the Codex HTTP config in that isolated account, then removed it and verified
+  the file was empty with a backup retained. This exposed a missing-token case:
+  the config existed but the UI disabled Remove because the integration was
+  marked `needs-update`. Remove is now available for that state, with a UI
+  regression test. The rest of the Web feature matrix and hardware behavior
+  still need individual checks.
 
 ## P6 — Network and resource boundaries (partially implemented)
 
@@ -328,12 +332,18 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
 - The terminal reconnect acceptance test passes through a real Web server and
   WebSocket with a mocked PTY. Full quality gate after this addition passes:
   lint, both builds, 185 test files / 2062 tests and license attribution.
+- The Agent removal follow-up passed a real browser install/removal cycle in an
+  isolated server account. Full quality gate passes: lint, both builds, 185
+  test files / 2063 tests and license attribution.
+  Its refreshed graph has 48,420 nodes, 95,882 edges and 595 budget-limited
+  flows. Phase-local detection reports 3 files, 5 indexed symbols and 3 Agent
+  panel flows (MEDIUM); comparison with `main` reports 545 files, 1839 symbols
+  and 254 flows (CRITICAL, truncated).
 
 ## Remaining acceptance work
 
 - Verify the remaining Web service surfaces, including background job recovery
-  and service-specific reconnect paths; complete the Agent install/removal UI
-  check in an isolated account.
+  and service-specific reconnect paths.
 - Exercise lifecycle fault paths, multi-tab event races, slow clients and stale
   owner recovery; ensure interrupted server shutdown cannot corrupt a data dir.
 - Repeat development native-binding and legacy stdio smoke on Linux/macOS and
