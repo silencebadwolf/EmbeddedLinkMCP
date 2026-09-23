@@ -280,13 +280,15 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
   physical package copies, 125 CycloneDX components and 7036 checksums. It was
   copied to another path and passed startup, page, auth, native PTY loading,
   graceful shutdown and owner-lock release. The latest verified directory is
-  `release/linkterm-server-win32-x64-1790137319403`.
+  `release/linkterm-server-win32-x64-1790145739687`, rebuilt after the latest
+  Web download and reconnect changes.
 - Windows `pnpm dist:desktop` produced NSIS and portable executables from a
   separate physical dependency tree (257 package copies, 178 CycloneDX
   components). A relocated packaged `app.asar` passed preload, shared UI and
   real PTY input/output. Four release-file checksums were generated. Native
   Electron and Node dependencies were never rebuilt in the shared workspace.
-  The latest verified directory is `release/linkterm-desktop-win32-x64-1790136492886`.
+  The latest verified directory is `release/linkterm-desktop-win32-x64-1790145878597`,
+  rebuilt after the latest shared UI change.
 - Release-candidate CI now invokes both package/smoke commands. A Web deployment
   guide covers localhost, remote HTTPS proxy, data paths, credentials and
   connection metadata migration. Cross-platform release jobs and real hardware
@@ -301,7 +303,7 @@ indexed callers and is retained unchanged. Full local analysis is in the ignored
 - The legacy standalone desktop stdio MCP entry passed a separate SDK client
   smoke: it advertised its 48 available tools and opened/closed a local PTY.
 - Full quality gate passed at normal host permissions: lint, both application
-  builds, 185 test files / 2061 tests and license attribution. A prior
+  builds, 185 test files / 2067 tests and license attribution. A prior
   restricted sandbox run passed 2044/2047; its three audit-export/child-process
   failures also passed in a targeted normal-permission rerun (58/58).
 - Before P4/P5 edits, 183 service/adapter targets were analyzed: 143 LOW,
